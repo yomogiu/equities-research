@@ -20,8 +20,9 @@ The CLI accepts private paths and refuses to render a report inside this checkou
 Record run ID, task/session identity when exposed, stage, source cutoff, artifact
 locations/hashes, review status, superseded report, and next retry time. Use the
 storage service's conditional writes or a single-writer queue to prevent two tasks
-from publishing competing accepted versions. Cross-task locking and storage adapters
-are not implemented in this bootstrap repository.
+from publishing competing accepted versions. The workspace implements local file locks, fenced leases and fast-forward Git claim
+publication before dispatch. Use one coordinator; this is not a general distributed
+queue or exactly-once execution engine. See [workspace.md](workspace.md).
 
 Acceptance needs all three: an agent's substantive rubric review, exact-source/schema
 validation, and verified private persistence. A stopped task, a successful CLI exit,

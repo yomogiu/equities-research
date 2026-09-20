@@ -20,6 +20,7 @@ does not create a scheduler, persistent research storage, or a running agent ser
 
 ## Start here
 
+- [Unified catalog, packets and durable handoffs](docs/workspace.md)
 - [Deterministic collection and private cloud execution](docs/deterministic-collection.md)
 - [Cloud environment setup](docs/cloud-setup.md)
 - [Calendar task](tasks/calendar.md)

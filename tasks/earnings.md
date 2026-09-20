@@ -5,14 +5,18 @@ Load the private queue and resumable stage receipts. Select due, unfinished even
 within the approved run capacity. No queue or persistence connection means blocked,
 not an empty earnings calendar. Retrieve the current accepted packet before collecting.
 
-1. **Collect.** Use roles/collector.md. Read private collection/analysis-queue.json,
-   document-index.json, source-gaps.json and the referenced source text first.
+1. **Collect.** Use roles/collector.md. Read docs/workspace.md and the unified private library/catalog.json,
+   library/review-queue.json, issuer inventory and source gaps first. Use workspace
+   search/read for bounded source spans. Older collection indexes are importer inputs.
    Reuse deterministic downloads; search only to resolve a specific gap. Confirm
    period and completeness before promoting manifests to an accepted packet.
    Assemble the release, full transcript,
    applicable quarterly/annual filing, annual background, and material presentation.
    Record each availability state separately. Preserve full lawful source text and
    precise locators. Missing transcripts are explicit gaps, not fabricated summaries.
+   Save explicit source/period/language qualifications and build a versioned workspace
+   packet. Route selected translation and independent translation review when needed.
+   Keep originals and precise source spans. Research requires config.json.enabled.
    Validate and fingerprint the packet with the CLI. If its content and relevant
    metadata have not changed, record the check and skip repeat analysis.
 2. **Analyze independently.** Give an extractor and a commentator the same original
@@ -38,3 +42,7 @@ documents daily through day 60, extending only for a specific documented need. N
 source evidence can reopen analysis. Identical blocked packets cannot silently become
 accepted. Notify only for meaningful new research, a material change, or an actionable
 failure. No external email, Slack, or portfolio actions.
+
+Use workspace plans and fenced claims for role assignment. Claims must be persisted
+before dispatch. Use active_inputs rather than superseded drafts. Commit and push
+completed artifacts before dependent work, then run workspace verify before acceptance.
