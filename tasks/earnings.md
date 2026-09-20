@@ -5,7 +5,11 @@ Load the private queue and resumable stage receipts. Select due, unfinished even
 within the approved run capacity. No queue or persistence connection means blocked,
 not an empty earnings calendar. Retrieve the current accepted packet before collecting.
 
-1. **Collect.** Use roles/collector.md. Search for the release, full transcript,
+1. **Collect.** Use roles/collector.md. Read private collection/analysis-queue.json,
+   document-index.json, source-gaps.json and the referenced source text first.
+   Reuse deterministic downloads; search only to resolve a specific gap. Confirm
+   period and completeness before promoting manifests to an accepted packet.
+   Assemble the release, full transcript,
    applicable quarterly/annual filing, annual background, and material presentation.
    Record each availability state separately. Preserve full lawful source text and
    precise locators. Missing transcripts are explicit gaps, not fabricated summaries.

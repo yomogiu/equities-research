@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "issuers": {
+    "FAKE": {
+      "cik": "0000000001",
+      "allowed_hosts": ["ir.example.test", "documents.example.test"],
+      "pages": [{"url": "https://ir.example.test/earnings", "format": "html"}],
+      "documents": []
+    }
+  }
+}

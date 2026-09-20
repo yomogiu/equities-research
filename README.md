@@ -6,8 +6,8 @@ subscription authentication. This public repository holds code and instructions.
 
 The workflow is agent-led:
 
-1. A calendar agent discovers and reconciles issuer earnings dates.
-2. A collector retrieves releases, transcripts, quarterly/annual filings, and background.
+1. Deterministic collectors fetch configured sources; a calendar agent reconciles date gaps.
+2. Scripts retrieve releases, transcripts, quarterly/annual filings, and background; agents resolve remaining source gaps.
 3. Independent agents extract exact quotes/data and interpret the investment evidence.
 4. A reviewer challenges both against original sources and a rubric.
 5. Authors repair material findings, with at most two cross-review revision rounds.
@@ -20,6 +20,7 @@ does not create a scheduler, persistent research storage, or a running agent ser
 
 ## Start here
 
+- [Deterministic collection and private cloud execution](docs/deterministic-collection.md)
 - [Cloud environment setup](docs/cloud-setup.md)
 - [Calendar task](tasks/calendar.md)
 - [Collection, analysis, and cross-review task](tasks/earnings.md)
@@ -48,8 +49,8 @@ the coordinator and reviewer must substantiate those properties.
 
 ## Deployment status
 
-The initial repository provides role/task prompts, the neutral analytical framework,
-source-contract checks, a private-output renderer, and offline tests. It has no model
-API backend and no research-bearing GitHub Actions workflow. Cloud environment
-connection, private storage, independent-agent availability, live source retrieval,
-and hosted scheduling must be verified before unattended production runs.
+The repository provides deterministic SEC/IR collectors, conditional caching, a private
+analysis queue, role/task prompts, the analytical framework, contract checks, and
+offline tests. Private GitHub Actions can run the downloader without any model calls.
+Research-bearing workflows and inputs belong in the private data repository.
+Unattended Codex analysis and its scheduling remain separate deployment work.

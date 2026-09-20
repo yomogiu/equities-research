@@ -5,6 +5,11 @@ The task's private inputs must supply a reviewed issuer watchlist and a durable
 private workspace. If either is unavailable, report the missing input once and
 do not substitute public GitHub storage or guess which companies the user owns.
 
+First read collection/calendar-candidates.json and collection/source-gaps.json from
+the private deterministic collector. Reuse its fetched sources and date provenance.
+Investigate only missing, conflicting, or stale dates; avoid re-searching every issuer.
+Candidates require fiscal-period reconciliation before entering the accepted queue.
+
 Reconcile the next 45 days and prior 14 days of earnings events. Prefer issuer IR
 confirmation. Record fiscal period, report date, call time/timezone, confirmation
 status, and source. Every watchlist issuer needs an explicit coverage status.
