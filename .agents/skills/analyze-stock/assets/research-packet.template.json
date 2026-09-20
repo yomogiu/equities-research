@@ -1,0 +1,138 @@
+{
+  "schema_version": "1.0",
+  "security": {
+    "issuer": "",
+    "ticker": "",
+    "exchange": "",
+    "security_class": "",
+    "currency": "",
+    "fiscal_year_end": "",
+    "analysis_date": "",
+    "price": null,
+    "price_as_of": ""
+  },
+  "intake": {
+    "decision": "",
+    "horizon": "",
+    "exposure": "",
+    "mode": "",
+    "decision_hinge": "",
+    "artifact": ""
+  },
+  "underwriting": {
+    "stage": "",
+    "research_posture": "",
+    "variant_perception": "",
+    "what_is_priced_in": "",
+    "decision_hinge": "",
+    "evidence_confidence": "",
+    "largest_gap": ""
+  },
+  "capitalization": {
+    "basic_shares": null,
+    "diluted_shares": null,
+    "dilution_items": [],
+    "market_cap": null,
+    "cash_and_investments": null,
+    "debt": null,
+    "leases": null,
+    "minority_interest": null,
+    "preferred_equity": null,
+    "other_ev_adjustments": [],
+    "enterprise_value": null,
+    "reconciliation_notes": []
+  },
+  "business": {
+    "products": [],
+    "customers": [],
+    "revenue_model": [],
+    "segments": [],
+    "geographies": [],
+    "value_chain": [],
+    "competitors": [],
+    "moat_evidence": [],
+    "industry_structure": [],
+    "sector_overlays_used": []
+  },
+  "financials": {
+    "annual_periods": [],
+    "quarterly_periods": [],
+    "reported_metrics": [],
+    "normalized_metrics": [],
+    "operating_kpis": [],
+    "earnings_quality_adjustments": [],
+    "capital_allocation": [],
+    "balance_sheet_risks": []
+  },
+  "forecast": {
+    "base_period": "",
+    "drivers": [],
+    "assumptions": [],
+    "consensus_comparison": [],
+    "model_gaps": []
+  },
+  "valuation": {
+    "primary_method": "",
+    "cross_checks": [],
+    "current_price_backsolve": [],
+    "capitalization_basis": "",
+    "assumptions": [],
+    "sensitivities": []
+  },
+  "scenarios": [
+    {
+      "name": "bear",
+      "probability": null,
+      "operating_assumptions": [],
+      "valuation_assumptions": [],
+      "value_per_share": null,
+      "signposts": []
+    },
+    {
+      "name": "base",
+      "probability": null,
+      "operating_assumptions": [],
+      "valuation_assumptions": [],
+      "value_per_share": null,
+      "signposts": []
+    },
+    {
+      "name": "bull",
+      "probability": null,
+      "operating_assumptions": [],
+      "valuation_assumptions": [],
+      "value_per_share": null,
+      "signposts": []
+    }
+  ],
+  "thesis": {
+    "pillars": [],
+    "catalysts": [],
+    "risks": [],
+    "falsifiers": [],
+    "monitoring_items": []
+  },
+  "evidence": [
+    {
+      "id": "SRC-001",
+      "claim_or_metric": "",
+      "value": null,
+      "units": "",
+      "currency": "",
+      "period": "",
+      "as_of": "",
+      "source_title": "",
+      "source_url": "",
+      "source_type": "",
+      "accessed_at": "",
+      "evidence_class": "reported",
+      "calculation": "",
+      "confidence": "",
+      "conflicts": []
+    }
+  ],
+  "open_questions": [],
+  "source_conflicts": [],
+  "assumptions": [],
+  "next_diligence": []
+}

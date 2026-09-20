@@ -1,0 +1,11 @@
+{
+  "source": "Canonical analyze-stock methodology; neutral snapshot with trailing whitespace normalized",
+  "sha256": {
+    "SKILL.md": "2a148f22a4904a1efbcaad26940082b49c6697e0ec2c2467d29a681086428b59",
+    "references/sector-overlays.md": "6087d436b15acf79fad7668889b9f07a0591516f934198e00643ea2da8be2562",
+    "references/output-contract.md": "32199ba3adde4b3156d0d34674610b7e941bd859153f6d094c9bfd1df272333d",
+    "references/research-contract.md": "c08f04ba11ef2646aef8fc8a036164e55fbed09ae6b688ad03b1276af7a70a5d",
+    "references/intake.md": "c1ef61ae6fcb9b38ed0e1bdb39795294ef11417cda19d13239e83efd8bf1b44e",
+    "assets/research-packet.template.json": "092018f1109d1d0457fca2f1b261e3724afeb07310c2ae8f4b7afbe6037a22de"
+  }
+}
