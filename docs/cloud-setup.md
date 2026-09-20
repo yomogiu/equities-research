@@ -27,12 +27,24 @@ research storage. [Environment documentation](https://learn.chatgpt.com/docs/env
 
 ## First cloud task: code-only smoke check
 
+For a separate private GitHub data repository, create a **second Codex environment**
+whose checked-out repository is that private workspace. Its setup can fetch a pinned
+commit of this public code into an ignored `.workflow/` directory and run
+`.workflow/scripts/setup.sh`. Read/write research artifacts outside that public code
+directory, inside the private checkout. This avoids needing to copy a private watchlist
+into the public code repository. Verify authenticated private write-back separately;
+a task's local file changes do not by themselves establish cross-task persistence.
+
 Use this prompt before any real issuer research:
 
 > Read AGENTS.md. Run bash scripts/setup.sh. Validate examples/watchlist.fake.json.
 > Confirm the checks pass without credentials, network research, or real portfolio
 > inputs. Describe the configured environment and report any unavailable capabilities.
 > Do not create or enable schedules, research real issuers, or publish reports.
+
+Cloud checkouts can use a local branch named `work`. Validate the checked-out commit
+against the selected repository revision; do not require a local branch named `main`
+or switch branches merely to run the tests.
 
 Then test one approved real event privately. Verify actual source retrieval, separate
 analysis contexts, exact-source validation, rubric-driven revision, and a private
