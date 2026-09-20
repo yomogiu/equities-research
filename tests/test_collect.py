@@ -40,6 +40,15 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(a['document_id'], b['document_id'])
             self.assertEqual(len(collector.queue), 1)
 
+    def test_markup_only_change_does_not_requeue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = Client(tmp, {'ir.example.test'}, 'test', transport=lambda u,h:(200,{'Content-Type':'text/html'},BODY if u == URL else BODY.replace(b'<p>',b'<p id="new-tracking-id">'),u),sleep=lambda _:None)
+            collector = Collector([ROW], REGISTRY, tmp, client=client)
+            a = collector.fetch_document(ROW, URL, 'release')
+            b = collector.fetch_document(ROW, URL + '/alias', 'release')
+            self.assertEqual(a['document_id'], b['document_id'])
+            self.assertEqual(len(collector.queue), 1)
+
     def test_conditional_cache_and_missing_object(self):
         with tempfile.TemporaryDirectory() as tmp:
             headers_seen = []

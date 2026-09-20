@@ -59,7 +59,8 @@ partial, or blocked status. It never declares an accepted research packet.
 - `documents/`: immutable source manifests with hashes, retrieval time, publisher,
   filing metadata, and extraction/completeness status.
 - `document-index.json` and `analysis-queue.json`: changed documents only enter the
-  queue once; unchanged documents do not trigger another model analysis.
+  queue once; unchanged extracted text (including markup-only changes) does not
+  trigger another model analysis.
 - `calendar-candidates.json`: source-supported dates and observed date revisions.
 - `source-gaps.json`, `latest-run.json`, `runs/`: source failures and run receipts.
 - `http-cache.json`: ETag/Last-Modified cache, persisted across cloud runs.

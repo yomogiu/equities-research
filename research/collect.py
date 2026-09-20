@@ -164,7 +164,14 @@ class Collector:
             if kind == 'transcript' and (not checks['substantial_call_text'] or re.search(r'prepared.remark', title + ' ' + source, re.I)):
                 kind = 'prepared_remarks' if re.search(r'prepared.remark', title + ' ' + source, re.I) else 'transcript_candidate'
                 self.gap(row, source, 'full_transcript_not_verified', 'transcript')
-            document_id = hashlib.sha256((identity(row) + '\n' + kind + '\n' + entry['sha256']).encode()).hexdigest()
+            text_sha = hashlib.sha256(text.encode()).hexdigest()
+            document_id = hashlib.sha256((identity(row) + '\n' + kind + '\n' + text_sha).encode()).hexdigest()
+            # Preserve existing IDs during upgrades; markup-only changes need no new analysis.
+            for known_id, known in self.doc_index.items():
+                if (known['issuer_id'] == identity(row) and known['kind'] == kind
+                        and Path(known['text_path']).stem == text_sha):
+                    document_id = known_id
+                    break
             self.seen_documents.append((identity(row), kind))
             if document_id in self.doc_index:
                 return self.doc_index[document_id]
