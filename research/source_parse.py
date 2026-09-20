@@ -242,6 +242,19 @@ def calendar_events(body, url, format='html'):
         return events
     p = page(body, url)
     events = structured_events(p)
+    if format == 'dated_lines':
+        # Opt-in adapter for issuer calendars with a standalone date followed by title.
+        lines = p.text.splitlines()
+        for first, title in zip(lines, lines[1:]):
+            match = re.fullmatch(r'([A-Z][a-z]+ \d{1,2}, 20\d{2})(?: \([A-Za-z]+\))?', first)
+            if match and EARNINGS.search(title):
+                try:
+                    start = datetime.strptime(match[1], '%B %d, %Y').date().isoformat()
+                except ValueError:
+                    continue
+                events.append({'title': title, 'start': start, 'source_url': url,
+                               'date_status': 'issuer_published_date_block', 'fiscal_period': None,
+                               'timezone_label': None})
     # Restrict unstructured dates to a single table row with an earnings label.
     for row in p.rows:
         label = ' '.join(row['cells'])

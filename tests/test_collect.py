@@ -112,6 +112,12 @@ class CollectionTests(unittest.TestCase):
         ics = b'BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:Q3 Earnings\nDTSTART;TZID=America/New_York:20261022T163000\nEND:VEVENT\nEND:VCALENDAR'
         self.assertEqual(calendar_events(ics,URL,'ics')[0]['timezone_label'], 'America/New_York')
 
+    def test_opt_in_date_blocks(self):
+        body = b'<html><div>October 15, 2026 (Thu)</div><div>Example Q3 Earnings</div><div>November 10, 2026 (Tue)</div><div>Monthly sales</div></html>'
+        self.assertEqual(len(calendar_events(body, URL, 'dated_lines')), 1)
+        self.assertEqual(calendar_events(body, URL, 'dated_lines')[0]['start'], '2026-10-15')
+        self.assertEqual(calendar_events(body, URL), [])
+
     def test_table_fiscal_and_exhibit_links(self):
         p = page(b'<html><ix:nonnumeric name="dei:DocumentPeriodEndDate">2026-06-30</ix:nonnumeric><table><tr><td>Release</td><td><a href="release.htm">exhibit</a></td><td>EX-99.1</td></tr></table></html>', URL)
         self.assertIn('\t', p.text)

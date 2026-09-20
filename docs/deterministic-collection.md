@@ -41,7 +41,8 @@ IR adapters follow a bounded set of labeled release, transcript and presentation
 links, plus one event-page hop. Prepared remarks remain distinct from full calls.
 Transcript length, Q&A and speaker checks are only triage; completeness and fiscal
 period remain unverified until reviewed. Calendar dates come from explicit JSON-LD,
-iCalendar or unambiguous earnings table rows. Publication dates are never treated
+iCalendar or unambiguous earnings table rows. An opt-in `dated_lines` adapter
+also handles a standalone date immediately followed by an earnings title. Publication dates are never treated
 as earnings dates. Other layouts need a targeted adapter or gap investigation.
 
 Defaults cap each run at 160 requests, 64 MiB downloaded, 16 MiB per document,
