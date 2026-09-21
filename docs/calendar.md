@@ -18,7 +18,7 @@ Only unique, eligible US symbol matches with consistent company-name tokens are
 associated automatically. International tickers are never matched as US symbols.
 A provider error or changed schema becomes an explicit failure, not an empty calendar.
 
-The window includes 90 future days and 14 prior days. The provider covers future
+The window includes 100 future days and 14 prior days. The provider covers future
 estimates; issuer pages supply explicit dates, including recent events. Coverage
 distinguishes confirmed, estimated, identity/source review, no date found, stale and
 conflicting observations. A date not found does not establish that no earnings exist.
@@ -46,8 +46,9 @@ or event label without an explicit period, reconciliation may require manual rev
 
 ## Scheduling and acceptance
 
-The private `calendar.yml` workflow can run manually or daily at 07:00
-America/New_York. Two UTC triggers with an Eastern-hour guard handle daylight saving;
+The private `calendar.yml` workflow runs manually or quarterly on January, April,
+July and October 1, at 07:00 America/New_York. Two UTC triggers plus an Eastern-time
+check and durable successful-quarter marker handle daylight saving and duplicate runs;
 GitHub schedules are best effort and can be delayed. The private
 `ENABLE_EARNINGS_CALENDAR` variable gates recurrence. This is a GitHub Actions
 deterministic job, not a scheduled Codex model session. Investment-analysis and
@@ -57,3 +58,35 @@ Use the shared private-writer concurrency group, persist even partial results, a
 verify the remote commit. Inspect counts and source failures: workflow success does
 not mean every company has a confirmed upcoming date. Public code must contain no
 real watchlist, source registry or research outputs.
+
+## Retrieval failure hook
+
+After calendar and document retrieval, actual failed attempts create private
+`calendar/repair-queue.json` work, including partial runs whose process exits zero.
+Normal absence of an announced date, an optional transcript or a verified listing is
+not a retrieval failure. Failures are deduplicated by issuer, source, kind and quarter;
+repeated checks update evidence rather than multiplying agent tasks. A claim takes at
+most five items, expires after a bounded lease, and permits at most three attempts.
+Resolution requires evidence; unresolved blocks remain visible. Source text is untrusted.
+
+`research.calendar_repair` exposes enqueue, claim and finish commands. The consumer
+follows `tasks/calendar-repair.md`, persists its claim before work, repairs official
+source overrides, and runs `scripts/update_calendar.py --issuer STABLE_ID` in the private
+workspace. Targeted refresh preserves other issuers and provider evidence, scans only
+the affected issuer pages and leaves identity/analysis gates unchanged. Provider-wide
+failure is a separate single task, not one task per company.
+
+The hook is a durable handoff, not an authenticated model service. The private config
+records automatic dispatch separately. Without a connected consumer, work stays queued.
+The documented subscription cloud entry point is a GitHub PR comment addressed to
+Codex; merely enabling Actions does not connect a ChatGPT identity for its bot.
+See [Codex GitHub integration](https://learn.chatgpt.com/docs/third-party/github).
+No API key or cached subscription credential is copied into CI.
+
+Quarterly refresh is economical but can miss announcements made later in the quarter.
+The 100-day issuer window spans long quarters; the bulk provider still supplies only
+its three-month horizon. `freshness=current` means observed at `last_seen_at`, not
+verified today. Before collecting a due event, recompute its date window from the saved
+calendar and recheck that issuer; the saved collection-candidates file is only a snapshot
+and is not an active scheduler. Failure repair cannot discover a newly announced date
+for a company that has neither a saved date nor a retrieval attempt.

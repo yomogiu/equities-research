@@ -303,9 +303,11 @@ def render_report(result):
             'td,th{padding:10px;text-align:left;border-bottom:1px solid #ddd;vertical-align:top}input{padding:10px;width:340px}a{color:#165fb4}</style>'
             f'<h1>Earnings calendar · {esc(result["as_of"])}</h1><p>{len(result["coverage"])} tracked companies · '
             f'{esc(result["window_start"])} to {esc(result["window_end"])} · America/New_York</p>'
+            '<p>Full refresh: quarterly on January, April, July and October 1 at 07:00 Eastern. Failed retrievals create repair handoffs.</p>'
+            '<p>Snapshot freshness means observed at the recorded source timestamp; dates must be rechecked before collection.</p>'
             '<p>Estimated dates are not issuer confirmations. Identity, source, stale-date and fiscal-period gaps remain explicit. No analysis is dispatched.</p>'
             f'<p>{esc(json.dumps(result["counts"], sort_keys=True))}</p>'
-            '<p><a href="latest.json">Calendar JSON</a> · <a href="review-queue.json">Review queue</a> · <a href="changes.json">Changes</a></p>'
+            '<p><a href="latest.json">Calendar JSON</a> · <a href="review-queue.json">Review queue</a> · <a href="repair-queue.json">Retrieval repair queue</a> · <a href="changes.json">Changes</a></p>'
             '<input id="filter" placeholder="Filter company, ticker, status or date" aria-label="Filter calendar">'
             '<table><thead><tr><th>Company</th><th>Ticker</th><th>Exchange</th><th>Status</th><th>Next date</th><th>Evidence</th></tr></thead>'
             '<tbody>' + ''.join(rows) + '</tbody></table>'
@@ -313,18 +315,24 @@ def render_report(result):
             'document.querySelectorAll("tbody tr").forEach(r=>r.hidden=!r.textContent.toLowerCase().includes(q));});</script></html>')
 
 
-def run(root, universe_path, registry_path, as_of=None, days=90, workers=8, provider=True):
+def run(root, universe_path, registry_path, as_of=None, days=100, workers=8, provider=True, issuer_ids=None):
     root = private_root(root)
     require(1 <= days <= 180 and 1 <= workers <= 12, 'Bounded horizon/workers required')
     companies = read_json(root / universe_path)['companies']
     require(len({r['issuer_id'] for r in companies}) == len(companies), 'Duplicate issuer IDs')
     registry = read_json(root / registry_path)['issuers']
     require(set(registry) == {r['issuer_id'] for r in companies}, 'Registry must account for entire universe')
+    selected = set(issuer_ids or [])
+    require(not selected or selected <= set(registry), 'Unknown issuer ID')
+    require(len(selected) <= 5, 'Repair at most five issuers per run')
+    require(not selected or not provider, 'Targeted repairs do not refresh the bulk provider')
+    scanned = [r for r in companies if not selected or r['issuer_id'] in selected]
     as_of = as_of or datetime.now(ZoneInfo('America/New_York')).date()
     base = root / 'calendar'
     base.mkdir(exist_ok=True)
     with lock(base):
         previous = read_json(base / 'latest.json') if (base / 'latest.json').exists() else {}
+        require(not selected or bool(previous), 'Targeted repair requires a full calendar baseline')
         stamp = now()
         run_id = stamp.replace(':', '').replace('+', '_')
         events, provider_receipt = [], {'status': 'disabled', 'requests': 0}
@@ -344,9 +352,13 @@ def run(root, universe_path, registry_path, as_of=None, days=90, workers=8, prov
             except (FetchError, ValueError, UnicodeError) as exc:
                 provider_receipt = {'status': exc.code if isinstance(exc, FetchError) else 'invalid_provider_response',
                                     'source_url': PROVIDER_URL, 'requests': client.requests}
-        attempts = {}
+        attempts = {r['issuer_id']: {'source_status': r['issuer_source_status'], 'attempts': r['source_attempts']}
+                    for r in previous.get('coverage', [])} if selected else {}
+        if selected:
+            provider_receipt = previous.get('provider', provider_receipt)
+        scanned_attempts = {}
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(scan_issuer, owner, registry[owner['issuer_id']], base, as_of, days): owner for owner in companies}
+            futures = {pool.submit(scan_issuer, owner, registry[owner['issuer_id']], base, as_of, days): owner for owner in scanned}
             for future in as_completed(futures):
                 owner = futures[future]
                 try:
@@ -355,19 +367,35 @@ def run(root, universe_path, registry_path, as_of=None, days=90, workers=8, prov
                     receipt = {'issuer_id': owner['issuer_id'], 'events': [], 'attempts': [],
                                'source_status': 'worker_error', 'error_type': type(exc).__name__}
                 attempts[owner['issuer_id']] = receipt
+                scanned_attempts[owner['issuer_id']] = receipt
                 events.extend(receipt['events'])
                 save(base / 'checkpoints' / (digest(owner['issuer_id']) + '.json'), dict(receipt, run_id=run_id))
                 if len(attempts) % 50 == 0:
                     print(json.dumps({'calendar_companies_checked': len(attempts), 'total': len(companies)}), flush=True)
-        events, changes = reconcile(companies, events, previous, as_of, days)
+        if selected:
+            affected = {'events': [e for e in previous.get('events', [])
+                                   if e['issuer_id'] in selected and e.get('source_kind') != 'provider_estimate']}
+            # Preserve other companies and untouched provider observations byte-for-byte.
+            kept = [e for e in previous.get('events', [])
+                    if e['issuer_id'] not in selected or e.get('source_kind') == 'provider_estimate']
+            events, changes = reconcile(scanned, events, affected, as_of, days)
+            events += kept
+            events.sort(key=lambda e: (e['event_date'], e['issuer_id'], e['event_id']))
+        else:
+            events, changes = reconcile(companies, events, previous, as_of, days)
         coverage = coverage_rows(companies, events, attempts, as_of, provider_receipt['status'])
         result = {'schema_version': 1, 'run_id': run_id, 'generated_at': now(), 'as_of': as_of.isoformat(),
                   'window_start': (as_of-timedelta(days=14)).isoformat(), 'window_end': (as_of+timedelta(days=days)).isoformat(),
                   'timezone': 'America/New_York', 'tracked_companies': len(companies),
+                  'scope': 'targeted_repair' if selected else 'full_universe',
+                  'checked_issuer_ids': sorted(r['issuer_id'] for r in scanned),
+                  'baseline_as_of': previous.get('baseline_as_of', previous.get('as_of')) if selected else as_of.isoformat(),
+                  'provider_refreshed': provider,
+                  'freshness_definition': 'current means observed at last_seen_at, not verified today; recheck before collection',
                   'counts': dict(Counter(row['status'] for row in coverage)),
                   'provider': provider_receipt, 'events': events, 'coverage': coverage,
-                  'requests': provider_receipt.get('requests', 0) + sum(r.get('requests', 0) for r in attempts.values()),
-                  'worker_errors': sum(r['source_status'] == 'worker_error' for r in attempts.values()),
+                  'requests': (provider_receipt.get('requests', 0) if provider else 0) + sum(r.get('requests', 0) for r in scanned_attempts.values()),
+                  'worker_errors': sum(r['source_status'] == 'worker_error' for r in scanned_attempts.values()),
                   'model_calls': 0, 'analysis_dispatched': False,
                   'limitations': ['Calendar covers every tracked candidate; source and listing gaps are not date confirmations.',
                                   'Provider public demo has no availability guarantee; failures retain prior dates as stale.',
@@ -393,11 +421,12 @@ def main():
     p.add_argument('--universe', default='inputs/watchlist.catalog.json')
     p.add_argument('--registry', default='inputs/calendar-sources.json')
     p.add_argument('--as-of', type=date.fromisoformat)
-    p.add_argument('--days', type=int, default=90)
+    p.add_argument('--days', type=int, default=100)
     p.add_argument('--workers', type=int, default=8)
     p.add_argument('--no-provider', action='store_true')
+    p.add_argument('--issuer', action='append', help='Repair up to five stable issuer IDs; requires --no-provider')
     args = p.parse_args()
-    result = run(args.root, args.universe, args.registry, args.as_of, args.days, args.workers, not args.no_provider)
+    result = run(args.root, args.universe, args.registry, args.as_of, args.days, args.workers, not args.no_provider, args.issuer)
     if result['worker_errors']:
         raise SystemExit('Calendar persisted with worker errors; inspect private coverage and checkpoints.')
 

@@ -13,7 +13,7 @@ The workflow is agent-led:
 5. Authors repair material findings, with at most two cross-review revision rounds.
 6. Reviewed or explicitly incomplete reports are versioned in private storage.
 
-The calendar prompt targets 07:00 Eastern Time daily; collection targets two-hour
+The calendar prompt targets 07:00 Eastern Time on January, April, July and October 1; collection targets two-hour
 opportunities during earnings windows, with daily follow-ups for delayed filings.
 **These are prepared task prompts, not active schedules.** Creating this repository
 does not create a scheduler, persistent research storage, or a running agent service.

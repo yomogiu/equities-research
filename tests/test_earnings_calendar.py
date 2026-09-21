@@ -102,6 +102,33 @@ class CalendarTests(unittest.TestCase):
             self.assertFalse(result['analysis_dispatched'])
             self.assertEqual(json.loads((root/'calendar/collection-candidates.json').read_text())['events'],[])
 
+    def test_targeted_repair_preserves_other_issuers_and_provider_evidence(self):
+        second = dict(self.owner, issuer_id='fictitious:second')
+        owners = [self.owner, second]
+        provider = self.event(event_id='estimate', source_kind='provider_estimate', date_status='estimated', last_seen_at='old', freshness='current')
+        other = self.event(event_id='other', issuer_id=second['issuer_id'], last_seen_at='old', freshness='current')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            save(root/'inputs/universe.json', {'companies':owners})
+            save(root/'inputs/sources.json', {'issuers':{r['issuer_id']:{'pages':[]} for r in owners}})
+            baseline = {'events':[provider, other], 'coverage':[
+                dict(issuer_id=r['issuer_id'], issuer_source_status='checked', source_attempts=[]) for r in owners],
+                'provider':{'status':'fetched', 'requests':1}, 'as_of':'2026-09-19'}
+            save(root/'calendar/latest.json', baseline)
+            receipt = dict(issuer_id=self.owner['issuer_id'], events=[self.event(source_kind='issuer_page')],
+                           source_status='checked', attempts=[], requests=1)
+            with patch.object(cal, 'scan_issuer', return_value=receipt) as scan:
+                result = cal.run(root,'inputs/universe.json','inputs/sources.json',self.day,
+                                 provider=False,issuer_ids=[self.owner['issuer_id']])
+                self.assertEqual(scan.call_count, 1)
+            by_id = {e['event_id']:e for e in result['events']}
+            self.assertEqual(by_id['other'], other)
+            self.assertEqual(by_id['estimate'], provider)
+            self.assertEqual(len(result['coverage']), 2)
+            self.assertEqual(result['requests'], 1)
+            self.assertEqual(result['baseline_as_of'], '2026-09-19')
+            self.assertFalse(result['provider_refreshed'])
+
 
 if __name__ == '__main__':
     unittest.main()
