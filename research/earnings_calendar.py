@@ -332,7 +332,8 @@ def run(root, universe_path, registry_path, as_of=None, days=90, workers=8, prov
             client = CalendarClient(base / 'sources/provider', {'www.alphavantage.co'}, USER_AGENT,
                                     max_requests=2, max_bytes=8 * 1024 * 1024)
             try:
-                body, receipt = client.get(PROVIDER_URL, fresh_seconds=3600)
+                # One bulk request per run: revalidate provider access even after checkout.
+                body, receipt = client.get(PROVIDER_URL, fresh_seconds=0)
                 events, info = provider_events(body, companies, as_of, days)
                 provider_receipt = dict(info, status='fetched', public_demo=True,
                                         source_url=PROVIDER_URL, sha256=receipt['sha256'],
