@@ -40,6 +40,7 @@ def create_plan(root, packet, max_revisions=2):
     require(any(d['period'] == packet['period'] for d in packet['documents']), 'No evidence for requested fiscal period')
     rubric = (PUBLIC_ROOT / 'roles/rubric.md').read_bytes()
     policy_paths = [*sorted((PUBLIC_ROOT / '.agents/skills/analyze-stock').rglob('*.md')),
+                    *sorted((PUBLIC_ROOT / '.agents/skills/translate-documents').rglob('*.md')),
                     *sorted((PUBLIC_ROOT / 'roles').glob('*.md')), PUBLIC_ROOT / 'docs/operations.md']
     framework = json.dumps({str(p.relative_to(PUBLIC_ROOT)): p.read_text() for p in policy_paths},
                                          sort_keys=True, ensure_ascii=False).encode()

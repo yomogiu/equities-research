@@ -1,0 +1,4 @@
+interface:
+  display_name: "Translate Documents"
+  short_description: "Translate documents with traceable sources and review"
+  default_prompt: "Use $translate-documents to translate this document into English, preserving source references and reviewing material terminology and numbers."

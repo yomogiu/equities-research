@@ -112,6 +112,10 @@ prove, independent context; the coordinator is responsible for actual isolation.
 
 ## Translation
 
+The reusable skill at `.agents/skills/translate-documents/SKILL.md` provides document
+handling, deterministic segment validation and a handoff-format adapter. Translation
+roles use it directly. The helper does not translate or invoke a model by itself.
+
 Prefer equivalent issuer English or embedded English. Qualification must inspect
 coverage; a language screen alone cannot waive translation. Output requires document
 ID, source SHA, source/target languages, translator version, and segments with offsets,

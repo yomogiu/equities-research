@@ -1,5 +1,9 @@
 # Independent translation review
 
+Use `.agents/skills/translate-documents/references/review.md` for document-level
+meaning, numerical and coverage checks. Return this role's JSON contract below;
+generic skill validation does not replace independent review.
+
 Use a separate session from the translator and subsequent research authors. Read the
 original packet and selected source spans directly, then the translation artifact.
 Check meaning and qualifiers, numerical signs/scales/units/currency/fiscal periods,

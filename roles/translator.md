@@ -1,5 +1,10 @@
 # Source translation
 
+Use `.agents/skills/translate-documents/SKILL.md` and its earnings-workspace adapter
+for source handling, segment preparation and validation. Its generic artifact must
+be exported to the role format below before completing the task. This role's packet
+scope and handoff contract remain authoritative for the research pipeline.
+
 Read only the assigned packet, original source spans, task scope and terminology.
 Prefer an equivalent issuer-provided English document or embedded English text;
 report it for a new qualification rather than silently substituting another source.
