@@ -1,6 +1,7 @@
 """Offline contracts for the private workspace; every issuer and quote is fictitious."""
 import contextlib
 import copy
+from datetime import datetime, timedelta, timezone
 import gzip
 import io
 import json
@@ -10,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from research import handoffs, library, workspace
+from research import freshness, handoffs, library, workspace
 
 
 class WorkspaceTests(unittest.TestCase):
@@ -27,6 +28,7 @@ class WorkspaceTests(unittest.TestCase):
         self.document = {'raw_path': 'sources/report.pdf.gz', 'raw_sha256': library.sha(self.raw),
                          'text_path': 'sources/report.txt.gz', 'text_sha256': library.sha(self.text.encode()),
                          'url': 'https://example.com/fictitious-report', 'kind': 'release',
+                         'retrieved_at': datetime.now(timezone.utc).isoformat(),
                          'title': 'Fictitious Example FY2026-Q3', 'report_date': '2026-09-30'}
         self.audit = {'results': [{'issuer_id': self.iid, 'issuer': 'Fictitious Example',
                       'symbol': 'FAKE', 'exchange': 'TEST', 'identity_status': 'verified',
@@ -99,6 +101,80 @@ class WorkspaceTests(unittest.TestCase):
                 'criteria': {name: {'status': 'pass' if verdict == 'pass' else 'fail',
                                     'evidence': 'Checked fictitious original and output.'} for name in names},
                 'report_markdown': 'Fictitious independent review.'}
+
+    def test_cache_revalidation_preserves_retrieval_date_and_binds_exact_bytes(self):
+        old = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+        self.document['retrieved_at'] = old
+        library.save(self.root / 'audit.json', self.audit)
+        cache = {self.document['url']: {'sha256': library.sha(self.raw),
+                 'checked_at': datetime.now(timezone.utc).timestamp(),
+                 'last_modified': 'Wed, 01 Jul 2026 00:00:00 GMT', 'etag': 'fictitious-v1'}}
+        library.save(self.root / 'collection/http-cache.json', cache)
+        library.build_catalog(self.root, 'audit.json')
+        packet = self.packet()
+        doc = packet['documents'][0]
+        self.assertEqual(doc['retrieved_at'], old)
+        self.assertEqual(doc['etag'], 'fictitious-v1')
+        self.assertEqual(doc['source_check_status'], 'verified')
+        self.assertEqual(freshness.assess_packet(packet)['status'], 'ready')
+        cache[self.document['url']]['sha256'] = '0' * 64
+        library.save(self.root / 'collection/http-cache.json', cache)
+        library.build_catalog(self.root, 'audit.json')
+        changed = self.packet()
+        self.assertEqual(changed['documents'][0]['source_check_status'], 'content_changed')
+        self.assertIsNone(changed['documents'][0]['checked_at'])
+        self.assertEqual(freshness.assess_packet(changed)['status'], 'recheck_required')
+        self.assertNotEqual(packet['packet_id'], changed['packet_id'])
+        # A rebuilt catalog never mutates the historical packet/snapshot.
+        self.assertEqual(library.materialize(self.root, packet)['documents'][0]['etag'], 'fictitious-v1')
+
+    def test_missing_retrieval_time_is_not_inferred_from_audit_build_time(self):
+        self.document.pop('retrieved_at')
+        self.audit['generated_at'] = datetime.now(timezone.utc).isoformat()
+        library.save(self.root / 'audit.json', self.audit)
+        library.build_catalog(self.root, 'audit.json')
+        packet = self.packet()
+        self.assertIsNone(packet['documents'][0]['retrieved_at'])
+        self.assertEqual(freshness.assess_packet(packet)['documents'][0]['status'], 'unknown')
+        self.assertIn('text', library.materialize(self.root, packet)['documents'][0])
+
+    def test_packet_timestamps_cannot_be_rewritten_with_a_new_packet_hash(self):
+        packet = self.packet()
+        packet['documents'][0]['retrieved_at'] = '2099-01-01T00:00:00+00:00'
+        packet['packet_id'] = library.digest({k:v for k,v in packet.items() if k != 'packet_id'})
+        with self.assertRaisesRegex(ValueError, 'timestamps differ'):
+            library.materialize(self.root, packet)
+
+    def test_freshness_is_rechecked_at_claim_before_remote_write_or_lease(self):
+        plan = self.plan()
+        self.enabled()
+        verifier, publisher = unittest.mock.Mock(), unittest.mock.Mock()
+        later = datetime.now(timezone.utc) + timedelta(hours=25)
+        original = freshness.assess_packet
+        with patch('research.handoffs.assess_packet', side_effect=lambda p, c: original(p, c, now=later)):
+            with self.assertRaisesRegex(ValueError, 'freshness requires source recheck'):
+                handoffs.claim(self.root, plan['plan_id'], self.role_task(plan, 'extractor')['task_id'],
+                               'extractor-session', verifier=verifier, publisher=publisher)
+        verifier.assert_not_called()
+        publisher.assert_not_called()
+        self.assertEqual(self.current(plan)['status'], 'prepared')
+        task = self.claim(plan, 'extractor')
+        self.assertEqual(task['freshness_receipt']['status'], 'ready')
+        self.assertIn(f"library/snapshots/{self.cat['catalog_id']}.json", task['input_receipt']['paths'])
+
+    def test_fresh_source_alias_is_selected_and_old_packet_remains_readable(self):
+        fresh = copy.deepcopy(self.document)
+        fresh['url'] = 'https://example.com/fresh-alias'
+        self.document['retrieved_at'] = '2000-01-01T00:00:00+00:00'
+        self.audit['results'][0]['documents'].append(fresh)
+        library.save(self.root / 'audit.json', self.audit)
+        library.build_catalog(self.root, 'audit.json')
+        packet = self.packet()
+        self.assertEqual(packet['documents'][0]['source_url'], fresh['url'])
+        for key in ['catalog_id', 'freshness_policy']:
+            packet.pop(key)
+        packet['packet_id'] = library.digest({k:v for k,v in packet.items() if k != 'packet_id'})
+        self.assertEqual(library.materialize(self.root, packet)['freshness']['status'], 'recheck_required')
 
     def test_gzip_import_deduplicates_legacy_and_audit_with_provenance(self):
         self.write_bytes('collection/raw/report.pdf', self.raw)

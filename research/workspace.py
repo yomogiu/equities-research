@@ -3,6 +3,7 @@ import argparse
 import json
 
 from . import handoffs
+from .freshness import assess_packet
 from .library import (build_catalog, build_search, catalog, make_packet, materialize,
                       private_root, qualify, read_json, read_span, resolve, resolve_issuer, search, save)
 
@@ -36,6 +37,8 @@ def main():
     p = commands.add_parser('materialize')
     p.add_argument('packet_id')
     p.add_argument('--output', required=True, help='New private relative path')
+    p = commands.add_parser('freshness')
+    p.add_argument('packet_id')
     p = commands.add_parser('plan')
     p.add_argument('packet_id')
     for name in ['status', 'verify']:
@@ -67,7 +70,7 @@ def main():
             iid = resolve_issuer(cat, iid)
         result = [{'document_id': d['document_id'], 'issuer_id': d['issuer_id'],
                    'kind_candidates': d['kind_candidates'], 'period_end_candidates': d['period_end_candidates'],
-                   'titles': d['titles'], 'language': d['language'], 'source_qualified': d['source_qualified']}
+                   'titles': d['titles'], 'language': d['language'], 'source_qualified': d['source_qualified'], 'sources': d['sources']}
                   for d in cat['documents'].values()
                   if (not iid or d['issuer_id'] == iid)
                   and (not args.kind or args.kind in d['kind_candidates'])
@@ -82,10 +85,13 @@ def main():
     elif args.command == 'packet':
         data = read_json(resolve(root, args.input))
         value = make_packet(root, data['issuer_id'], data['period'], data['qualification_ids'], data.get('missing'))
-        result = {'packet_id': value['packet_id'], 'documents': len(value['documents']), 'translation_required': value['translation_required']}
-    elif args.command in {'plan', 'materialize'}:
+        result = {'packet_id': value['packet_id'], 'documents': len(value['documents']), 'translation_required': value['translation_required'], 'freshness': assess_packet(value)}
+    elif args.command in {'plan', 'materialize', 'freshness'}:
         value = read_json(resolve(root, f'library/packets/{args.packet_id}.json'))
-        if args.command == 'plan':
+        if args.command == 'freshness':
+            materialize(root, value)
+            result = assess_packet(value, read_json(root / 'config.json').get('packet_freshness', {}))
+        elif args.command == 'plan':
             result = handoffs.create_plan(root, value)
         else:
             output = resolve(root, args.output)

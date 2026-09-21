@@ -70,6 +70,52 @@ Changes create successors. Unknown issuer identities block plans. `materialize
 PACKET_ID --output new/private-packet.json` produces the existing research.cli packet
 format. Catalog IDs and compatible source-URL-plus-text evidence IDs are both retained.
 
+## Packet freshness
+
+Catalog source variants and packets preserve `retrieved_at` (recorded download time),
+`checked_at` (last successful HTTP check of the same raw SHA-256), `last_modified`,
+`etag`, `source_check_status`, and the cache path in `check_provenance`. Times are UTC.
+An HTTP 304 can advance `checked_at` without changing `retrieved_at`. A local cache
+read or catalog rebuild does not advance either. Missing legacy timestamps remain
+null; audit generation dates and filesystem times are never substituted. Server
+Last-Modified and ETag values are metadata, not publication or earnings dates.
+
+Private `config.json.packet_freshness` controls the defaults:
+
+```json
+{"event_max_age_hours": 24, "annual_background_max_age_hours": 720}
+```
+
+The rule checks source access age, not document age: earnings evidence must have a
+successful check within 24 hours; annual background within 30 days. Prefer
+`checked_at`, falling back to a recorded `retrieved_at` when no check exists. A check
+may precede the local save. Unknown/future timestamps, changed source bytes, or an
+expired window require rechecking. This does not prove the document is the latest
+release: issuer identity, fiscal period, completeness, subsequent filings and source
+availability still need separate qualification. A missing transcript remains a gap
+even when all included documents are fresh. Failed requests do not reset freshness.
+
+```sh
+python3 -m research.workspace --root /private/data freshness PACKET_ID
+```
+
+This command returns `ready` or `recheck_required`, per-document age, basis, limit
+and status. Packets snapshot the policy and immutable catalog evidence; rewriting a
+timestamp in a packet fails validation. Every role claim reevaluates time and the
+stricter of the packet/current policy **before** remote verification, lease writeback
+or agent dispatch. A successful claim records a `freshness_receipt`. Legacy packets
+without a policy remain readable but cannot be claimed. Materialization reports
+freshness without preventing historical reading.
+
+When blocked, use the deterministic collector to revalidate the selected source URLs
+(set its cache window appropriately), rebuild the catalog, and create a successor
+packet/plan. Reuse qualification only for unchanged source text; changed text needs
+new qualification. Persist the new snapshot, packet and evidence before claiming.
+Do not edit old packets or rerun models merely because a timestamp changed: compare
+content, qualification, availability and analytical scope before scheduling analysis.
+The gate neither downloads sources nor launches repairs by itself. Its 24-hour rule
+does not change the quarterly earnings-calendar schedule.
+
 ## Agent execution and review
 
 `plan PACKET_ID` prepares tasks without invoking agents. Translation and independent

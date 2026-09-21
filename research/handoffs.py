@@ -8,6 +8,8 @@ import time
 from .contracts import digest, require, validate_commentary, validate_extraction, validate_review
 from .library import PUBLIC_ROOT, load_bytes, lock, materialize, read_json, resolve, save, sha
 
+from .freshness import assess_packet
+
 ROLES = {'translation', 'translation_review', 'extractor', 'commentator', 'reviewer'}
 
 
@@ -98,6 +100,8 @@ def evidence_paths(root, plan):
         policy = read_json(root / path)
         require(policy['sha256'] == plan[key] and sha(policy['text'].encode()) == plan[key], 'Policy hash mismatch')
         paths.append(path)
+    if packet.get('catalog_id'):
+        paths.append(f"library/snapshots/{packet['catalog_id']}.json")
     for d in packet['documents']:
         load_bytes(root, d['raw_path'], d['raw_sha256'])
         qp = f"library/qualifications/{d['qualification_id']}.json"
@@ -154,6 +158,8 @@ def claim(root, pid, tid, worker_session, lease_seconds=1800, verifier=verify_re
             require(worker_session not in {x['worker_session'] for x in plan['tasks'].values() if x['role'] in {'reviewer', 'translation_review'}}, 'Author cannot reuse a reviewer session')
         deps = dependency_closure(plan, tid)
         packet = packet_for(root, plan)
+        freshness = assess_packet(packet, config.get('packet_freshness', {}))
+        require(freshness['status'] == 'ready', 'Packet freshness requires source recheck and a successor packet before agent work')
         for dep in deps:
             validate_artifact(root, plan, plan['tasks'][dep], packet)
         paths = evidence_paths(root, plan)
@@ -161,7 +167,7 @@ def claim(root, pid, tid, worker_session, lease_seconds=1800, verifier=verify_re
         receipt = verifier(root, sorted(set(paths)))
         token = secrets.token_hex(24)
         t.update(status='running', attempts=t['attempts'] + 1, worker_session=worker_session,
-                 lease_until=time.time() + lease_seconds, lease_token=token, input_receipt=receipt)
+                 lease_until=time.time() + lease_seconds, lease_token=token, input_receipt=receipt, freshness_receipt=freshness)
         plan['status'] = 'running'
         event_path = persist(root, plan, 'claim ' + tid)
         published = publisher(root, plan, event_path)

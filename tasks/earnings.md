@@ -17,6 +17,10 @@ not an empty earnings calendar. Retrieve the current accepted packet before coll
    Save explicit source/period/language qualifications and build a versioned workspace
    packet. Route selected translation and independent translation review when needed.
    Keep originals and precise source spans. Research requires config.json.enabled.
+   Run workspace freshness for the packet before dispatch. Preserve retrieved_at,
+   checked_at and source hashes; follow docs/workspace.md's packet freshness rule.
+   Revalidate stale/unknown evidence and create a successor packet rather than
+   editing timestamps. Fresh source access does not establish the latest fiscal period.
    Validate and fingerprint the packet with the CLI. If its content and relevant
    metadata have not changed, record the check and skip repeat analysis.
 2. **Analyze independently.** Give an extractor and a commentator the same original

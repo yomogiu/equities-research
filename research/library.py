@@ -12,6 +12,8 @@ import sqlite3
 import tempfile
 
 from .contracts import KINDS, digest, require, validate_packet
+from .freshness import timestamp, policy as freshness_policy, assess_packet, assess_document
+from datetime import datetime, timezone
 
 PUBLIC_ROOT = Path(__file__).resolve().parents[1]
 
@@ -100,6 +102,16 @@ def build_catalog(root, audit_path, language_path=None):
                ('issuer', 'symbol', 'exchange', 'identity_status', 'monitoring_eligible')} for r in audit['results']}
     records = {}
     imported = 0
+    # Use per-URL observations, never audit generation dates or file mtimes.
+    observations = {}
+    cache_paths = [root / 'collection/http-cache.json', *sorted((root / 'sources').rglob('http-cache.json'))]
+    for cache_path in cache_paths:
+        if not cache_path.is_file():
+            continue
+        for url, entry in read_json(cache_path).items():
+            checked = timestamp(entry.get('checked_at'))
+            if checked and (url not in observations or checked > observations[url][0]):
+                observations[url] = (checked, entry, str(cache_path.relative_to(root)))
 
     def add(owner, doc, base, provenance, qualified):
         nonlocal imported
@@ -118,6 +130,15 @@ def build_catalog(root, audit_path, language_path=None):
                    'text_path': text_path, 'text_sha256': text_hash, 'provenance': provenance,
                    'final_url': doc.get('final_url', source_url),
                    'discovery_url': doc.get('source_url') if doc.get('source_url') != source_url else None}
+        variant.update(retrieved_at=timestamp(doc.get('retrieved_at')),
+                       checked_at=None, last_modified=None, etag=None,
+                       source_check_status='unknown', check_provenance=None)
+        if source_url in observations:
+            checked, observed, cache_path = observations[source_url]
+            variant.update(source_check_status='verified' if observed.get('sha256') == raw_hash else 'content_changed',
+                           check_provenance=cache_path)
+            if observed.get('sha256') == raw_hash:
+                variant.update(checked_at=checked, last_modified=observed.get('last_modified'), etag=observed.get('etag'))
         period_end = doc.get('report_date') or doc.get('metadata', {}).get('reportDate')
         try:
             if period_end:
@@ -287,6 +308,8 @@ def make_packet(root, issuer, period, selections, missing=None):
     iid = issuer_id(issuer)
     require(iid in cat['issuers'] and re.fullmatch(r'FY\d{4}(?:-Q[1-4]|-H[12])?', period), 'Known issuer and fiscal period required')
     require(selections and len(selections) == len(set(selections)), 'Distinct qualification IDs required')
+    limits = freshness_policy(read_json(root / 'config.json').get('packet_freshness'))
+    moment = datetime.now(timezone.utc)
     docs = []
     for qid in selections:
         require(re.fullmatch('[a-f0-9]{64}', qid), 'Bad qualification ID')
@@ -296,7 +319,12 @@ def make_packet(root, issuer, period, selections, missing=None):
         require(d['issuer_id'] == iid and d['text_sha256'] == q['text_sha256'], 'Wrong issuer or stale qualification')
         background = q['kind'] == 'annual_background' and int(q['period'][2:6]) < int(period[2:6])
         require(q['period'] == period or background, 'Unrelated period; same-year annual background needs an explicitly matched annual packet')
-        source = d['sources'][0]
+        # Prefer a usable fresh observation of these exact bytes over an older alias.
+        def source_rank(source):
+            status = assess_document(dict(source, kind=q['kind']), limits, moment)['status']
+            return (status == 'fresh', status != 'content_changed',
+                    source.get('checked_at') or source.get('retrieved_at') or '')
+        source = max(d['sources'], key=source_rank)
         text = document_text(root, d)
         docs.append({'catalog_document_id': d['document_id'], 'document_id': digest([source['source_url'], text]),
                      'qualification_id': qid, 'kind': q['kind'], 'period': q['period'],
@@ -311,6 +339,7 @@ def make_packet(root, issuer, period, selections, missing=None):
         require(entry['status'] in {'pending', 'not_published', 'not_applicable', 'access_blocked'} and entry['reason'], 'Missing-source reason required')
         availability[kind] = entry['status']
     packet = {'schema_version': 1, 'issuer_id': iid, 'period': period,
+              'catalog_id': cat['catalog_id'], 'freshness_policy': limits,
               'identity_verified': cat['issuers'][iid].get('monitoring_eligible') is True,
               'documents': sorted(docs, key=lambda d: d['document_id']), 'availability': availability,
               'missing_reasons': missing or {}, 'scope': 'limited_event_update',
@@ -324,8 +353,16 @@ def make_packet(root, issuer, period, selections, missing=None):
 
 def materialize(root, packet):
     require(digest({k: v for k, v in packet.items() if k != 'packet_id'}) == packet['packet_id'], 'Packet hash mismatch')
+    snapshot = None
+    if packet.get('catalog_id'):
+        snapshot = read_json(resolve(root, f"library/snapshots/{packet['catalog_id']}.json"))
+        require(digest({k:v for k,v in snapshot.items() if k != 'catalog_id'}) == packet['catalog_id'], 'Catalog snapshot hash mismatch')
     docs = []
     for d in packet['documents']:
+        if snapshot is not None:
+            variants = snapshot['documents'][d['catalog_document_id']]['sources']
+            require(any(all(d.get(k) == v for k,v in source.items()) for source in variants),
+                    'Packet source timestamps differ from catalog evidence')
         text = load_bytes(root, d['text_path'], d['text_sha256']).decode('utf-8')
         load_bytes(root, d['raw_path'], d['raw_sha256'])
         require(d['document_id'] == digest([d['source_url'], text]), 'Inconsistent evidence document ID')
@@ -338,6 +375,6 @@ def materialize(root, packet):
             require(q[key] == d[key], 'Packet differs from source qualification')
         docs.append(dict(d, text=text))
     require(packet['translation_required'] == sorted(d['document_id'] for d in docs if d['english_coverage'] != 'full'), 'Translation routing mismatch')
-    expanded = dict(packet, documents=docs)
+    expanded = dict(packet, documents=docs, freshness=assess_packet(packet))
     validate_packet(expanded)
     return expanded
