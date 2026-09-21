@@ -5,8 +5,10 @@ The task's private inputs must supply a reviewed issuer watchlist and a durable
 private workspace. If either is unavailable, report the missing input once and
 do not substitute public GitHub storage or guess which companies the user owns.
 
-First read collection/calendar-candidates.json and collection/source-gaps.json from
-the private deterministic collector. Reuse its fetched sources and date provenance.
+First read calendar/latest.json, calendar/review-queue.json and calendar/changes.json
+from the full-universe deterministic updater. Reuse its fetched sources and provenance.
+The old collection/calendar-candidates.json covers only the core pilot and is not
+the authoritative whole-universe calendar. See docs/calendar.md for status meanings.
 Investigate only missing, conflicting, or stale dates; avoid re-searching every issuer.
 Candidates require fiscal-period reconciliation before entering the accepted queue.
 
@@ -22,6 +24,8 @@ Update the private event queue keyed by stable issuer and fiscal period. Preserv
 date revisions and old events needed for late filings. Do not overwrite prior reports.
 Persist the artifact and queue receipt to the private service, then verify read-back.
 
-The collection task consumes that queue automatically. Report meaningful date
+The deterministic updater emits collection candidates; actual collection dispatch
+must be separately connected and enabled. Do not claim this runs automatically from
+a candidate file alone. Report meaningful date
 changes, new near-term events, or failures; stay quiet on unchanged results.
 Do not send email or other external messages.
