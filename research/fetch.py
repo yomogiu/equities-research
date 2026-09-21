@@ -9,6 +9,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, parse_qsl
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+# Public-site compatibility syntax, retaining the actual automated client identity.
+# Regulator clients must continue supplying their required contact User-Agent.
+PUBLIC_USER_AGENT = 'Mozilla/5.0 (compatible; equities-research/0.1; +https://github.com/yomogiu/equities-research)'
+
 
 class FetchError(Exception):
     def __init__(self, code):

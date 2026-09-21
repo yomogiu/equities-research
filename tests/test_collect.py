@@ -82,6 +82,41 @@ class CollectionTests(unittest.TestCase):
             collector.sec(ROW)
             self.assertEqual(collector.gaps[-1]['code'], 'invalid_submissions_response')
 
+    def test_public_compatibility_and_sec_contact_headers_stay_separate(self):
+        from research.earnings_calendar import CalendarClient, USER_AGENT
+        with tempfile.TemporaryDirectory() as tmp:
+            seen = []
+            def transport(url, headers):
+                ua = headers['User-Agent']
+                seen.append((url, ua))
+                if 'data.sec.gov' in url:
+                    return 403, {}, b'', url
+                supported = ua.startswith('Mozilla/5.0 (compatible; equities-research/')
+                return (200 if supported else 403), {'Content-Type':'text/html'}, BODY, url
+            collector = Collector([ROW], REGISTRY, tmp, sec_user_agent='Research contact@example.test')
+            collector.client.transport = transport
+            collector.client.sleep = lambda _: None
+            self.assertEqual(collector.get(ROW, URL)[0], BODY)
+            with self.assertRaisesRegex(FetchError, 'access_blocked'):
+                collector.get(ROW, 'https://data.sec.gov/submissions/example.json')
+            self.assertEqual(collector.get(ROW, URL + '/next')[0], BODY)
+            self.assertEqual(seen[1][1], 'Research contact@example.test')
+            self.assertEqual(seen[0][1], seen[2][1])
+            calendar = CalendarClient(Path(tmp)/'calendar', {'ir.example.test'}, USER_AGENT,
+                                      transport=transport, sleep=lambda _: None)
+            with patch.object(calendar, '_request', side_effect=transport):
+                self.assertEqual(calendar.get(URL)[0], BODY)
+
+    def test_compatibility_header_does_not_accept_a_block_page(self):
+        from research.fetch import PUBLIC_USER_AGENT
+        with tempfile.TemporaryDirectory() as tmp:
+            client = Client(tmp, {'ir.example.test'}, PUBLIC_USER_AGENT,
+                            transport=lambda u,h:(200, {}, b'<title>Access Denied</title>',u),
+                            sleep=lambda _:None)
+            with self.assertRaisesRegex(FetchError, 'access_blocked'):
+                client.get(URL)
+            self.assertFalse(client.cache)
+
     def test_source_boundaries(self):
         for url in ('http://ir.example.test', 'https://other.test', 'https://a:b@ir.example.test', 'https://ir.example.test:99', 'https://ir.example.test/?token=x'):
             with self.assertRaises(FetchError):

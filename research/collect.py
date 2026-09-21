@@ -12,7 +12,7 @@ from urllib.parse import quote, urlsplit
 
 from .cli import ROOT, read
 from .contracts import require, watchlist
-from .fetch import Client, FetchError, check_url, save_json
+from .fetch import Client, FetchError, PUBLIC_USER_AGENT, check_url, save_json
 from .source_parse import EARNINGS, extract, feed_links, kind_for, page, structured_events, transcript_checks, calendar_events
 
 SEC_HOSTS = {'data.sec.gov', 'www.sec.gov'}
@@ -106,8 +106,7 @@ class Collector:
             hosts.update(h.lower() for h in entry.get('allowed_hosts', []))
             hosts.update(urlsplit(s['url']).hostname.lower()
                          for s in entry.get('pages', []) + entry.get('documents', []))
-        self.client = client or Client(self.root, hosts,
-            'equities-research/0.1 (+https://github.com/yomogiu/equities-research)')
+        self.client = client or Client(self.root, hosts, PUBLIC_USER_AGENT)
         self.doc_index_path = self.root / 'document-index.json'
         self.doc_index = read(self.doc_index_path) if self.doc_index_path.exists() else {}
         self.event_path = self.root / 'calendar-candidates.json'

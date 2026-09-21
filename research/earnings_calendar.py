@@ -20,13 +20,13 @@ from zoneinfo import ZoneInfo
 
 from .contracts import digest, require
 from .earnings_dates import DATE_TOKEN, parse_events
-from .fetch import Client, FetchError, Redirects, check_url
+from .fetch import Client, FetchError, PUBLIC_USER_AGENT, Redirects, check_url
 from .library import lock, private_root, read_json, save
 from .source_parse import page
 
 # Public example endpoint documented by the provider; 'demo' is not a user secret.
 PROVIDER_URL = 'https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=demo'
-USER_AGENT = 'equities-research/0.1 (+https://github.com/yomogiu/equities-research)'
+USER_AGENT = PUBLIC_USER_AGENT
 LINK_LABEL = re.compile(r'calendar|events?|to (?:report|announce)|will (?:report|announce)|earnings.call|financial.results|財務日曆|決算発表|財報', re.I)
 HOST_LOCKS, HOST_LAST, HOST_GUARD = {}, {}, threading.Lock()
 
