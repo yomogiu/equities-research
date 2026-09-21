@@ -353,6 +353,8 @@ def make_packet(root, issuer, period, selections, missing=None):
 
 def materialize(root, packet):
     require(digest({k: v for k, v in packet.items() if k != 'packet_id'}) == packet['packet_id'], 'Packet hash mismatch')
+    require('freshness_policy' not in packet or packet.get('catalog_id'),
+            'Freshness policy requires immutable catalog evidence')
     snapshot = None
     if packet.get('catalog_id'):
         snapshot = read_json(resolve(root, f"library/snapshots/{packet['catalog_id']}.json"))

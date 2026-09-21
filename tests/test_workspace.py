@@ -144,6 +144,10 @@ class WorkspaceTests(unittest.TestCase):
         packet['packet_id'] = library.digest({k:v for k,v in packet.items() if k != 'packet_id'})
         with self.assertRaisesRegex(ValueError, 'timestamps differ'):
             library.materialize(self.root, packet)
+        packet.pop('catalog_id')
+        packet['packet_id'] = library.digest({k:v for k,v in packet.items() if k != 'packet_id'})
+        with self.assertRaisesRegex(ValueError, 'requires immutable catalog'):
+            library.materialize(self.root, packet)
 
     def test_freshness_is_rechecked_at_claim_before_remote_write_or_lease(self):
         plan = self.plan()
