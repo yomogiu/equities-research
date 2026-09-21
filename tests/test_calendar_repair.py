@@ -79,6 +79,17 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(len(next_quarter['items']), 2)
         self.assertEqual(next_quarter['counts'], {'pending': 1, 'resolved': 1})
 
+    def test_new_failure_after_resolution_reopens_with_original_attempt_budget(self):
+        self.enqueue()
+        item = repair.claim_batch(self.root, 'worker', now=self.now)[0]
+        repair.finish(self.root, item['item_id'], item['lease_token'], 'resolved',
+                      'Verified fixture recovery.', [{'source_url':'https://example.com/calendar'}], now=self.now)
+        queue = self.enqueue(run='regression', now=self.now + timedelta(hours=1))
+        reopened = next(iter(queue['items'].values()))
+        self.assertEqual(reopened['state'], 'pending')
+        self.assertEqual(reopened['attempts'], 1)
+        self.assertEqual(reopened['history'][-1]['action'], 'failure_recurred')
+
     def test_third_explicit_retry_is_blocked(self):
         self.enqueue()
         for n in range(3):
@@ -104,6 +115,8 @@ class RepairTests(unittest.TestCase):
     def test_collection_filters_optional_absence(self):
         payload = {'gaps': [self.failure, dict(self.failure, code='full_transcript_not_observed_this_run')]}
         self.assertEqual(repair.failures_from(payload, 'collection'), [self.failure])
+        invalid = dict(self.failure, code='invalid_submissions_response')
+        self.assertEqual(repair.failures_from({'gaps':[invalid]}, 'collection'), [invalid])
 
     def test_explicit_run_and_timezone_required(self):
         with self.assertRaises(ValueError):

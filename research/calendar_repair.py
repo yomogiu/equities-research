@@ -17,7 +17,7 @@ from .library import issuer_id, lock, private_root, read_json, resolve, save
 QUEUE = 'calendar/repair-queue.json'
 FAILURES = {
     'access_blocked', 'network_error', 'dns_error', 'parse_error', 'invalid_provider_response',
-    'worker_error', 'provider_error', 'cache_integrity_error', 'retry_later', 'host_backoff',
+    'worker_error', 'provider_error', 'invalid_submissions_response', 'cache_integrity_error', 'retry_later', 'host_backoff',
     'size_limit', 'sec_contact_required', 'unapproved_url', 'credential_url',
     'unapproved_issuer_host', 'non_public_address',
 }
@@ -87,6 +87,11 @@ def enqueue(root, failures, observed_at, run_id):
                 'last_seen_at': moment.isoformat(), 'history': [],
             })
             if run_id not in item['source_run_ids']:
+                if (item['state'] == 'resolved' and item.get('finished_at')
+                        and moment > stamp(item['finished_at'])):
+                    item['state'] = 'pending' if item['attempts'] < 3 else 'blocked'
+                    item['history'].append({'action': 'failure_recurred', 'at': moment.isoformat(),
+                                            'source_run_id': run_id})
                 item['source_run_ids'].append(run_id)
                 item['occurrences'] += 1
             if code not in item['failure_codes']:

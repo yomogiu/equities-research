@@ -67,7 +67,8 @@ Normal absence of an announced date, an optional transcript or a verified listin
 not a retrieval failure. Failures are deduplicated by issuer, source, kind and quarter;
 repeated checks update evidence rather than multiplying agent tasks. A claim takes at
 most five items, expires after a bounded lease, and permits at most three attempts.
-Resolution requires evidence; unresolved blocks remain visible. Source text is untrusted.
+Resolution requires evidence; a later failed check reopens the item within its original
+attempt budget, while unresolved blocks remain visible. Source text is untrusted.
 
 `research.calendar_repair` exposes enqueue, claim and finish commands. The consumer
 follows `tasks/calendar-repair.md`, persists its claim before work, repairs official
