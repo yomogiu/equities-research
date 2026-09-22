@@ -341,8 +341,10 @@ def run(root, as_of=None):
     normalized_review = {}
     for item in review:
         doc = cat['documents'].get(item.get('document_id'))
+        latest_period = rows.get(item.get('issuer_id'), {}).get('period')
         item = dict(item, catalog_id=cat['catalog_id'],
-                    monitoring_eligible=cat['issuers'].get(item.get('issuer_id'), {}).get('monitoring_eligible') is True)
+                    monitoring_eligible=cat['issuers'].get(item.get('issuer_id'), {}).get('monitoring_eligible') is True,
+                    is_latest_observed_period=latest_period is not None and item.get('period') == latest_period)
         if doc:
             item.update(text_sha256=doc['text_sha256'], source_variants=doc['sources'])
         item['qualification_ids'] = ([item['qualification_id']] if item.get('qualification_id') else [])

@@ -93,6 +93,9 @@ class PublishedQuarterTests(unittest.TestCase):
         self.catalog()
         _, row = self.run_tracker()
         self.assertEqual(row['period'], 'FY2026-Q2')
+        queue = library.read_json(self.root / 'published/review-queue.json')
+        self.assertEqual({item['period']: item['is_latest_observed_period'] for item in queue},
+                         {'FY2026-Q1': False, 'FY2026-Q2': True})
 
     def test_future_dated_report_excluded(self):
         self.add('Fictitious Example Reports Q2 FY2026 Results.', report_date='2026-06-30')
