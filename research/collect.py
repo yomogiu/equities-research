@@ -117,6 +117,7 @@ class Collector:
         self.failed_hosts = set()
         self.seen_documents = []
         self.current_events = 0
+        self.issuer_results = []
 
     def gap(self, row, source, code, kind=None):
         value = {'issuer_id': identity(row), 'symbol': row['symbol'], 'source_url': source,
@@ -172,7 +173,8 @@ class Collector:
                     document_id = known_id
                     break
             self.seen_documents.append((identity(row), kind))
-            if document_id in self.doc_index:
+            existing = self.doc_index.get(document_id)
+            if existing and existing['raw_sha256'] == entry['sha256']:
                 return self.doc_index[document_id]
             text_path = self.client.object(text.encode(), 'txt')
             document = {'document_id': document_id, 'issuer_id': identity(row), 'symbol': row['symbol'],
@@ -185,13 +187,17 @@ class Collector:
                         'metadata': metadata or {}, 'completeness': 'unverified',
                         'transcript_checks': checks if kind.startswith('transcript') or kind == 'prepared_remarks' else None,
                         'period_assignment': 'needs_review'}
-            manifest = f'documents/{identity(row)}/{document_id}.json'
+            # Changed markup/raw bytes with identical extracted text gets a new
+            # provenance version, without scheduling another analysis of the text.
+            suffix = '-' + entry['sha256'] if existing else ''
+            manifest = f'documents/{identity(row)}/{document_id}{suffix}.json'
             save_json(self.root / manifest, document)
             brief = {k: document[k] for k in ('document_id', 'issuer_id', 'symbol', 'kind', 'title',
                                              'source_url', 'raw_sha256', 'text_path', 'retrieved_at')}
             brief['manifest_path'] = manifest
             self.doc_index[document_id] = brief
-            self.new_documents.append(brief)
+            if not existing:
+                self.new_documents.append(brief)
             # Keep uncertainty work separate from substantive analysis. No full-text LLM search.
             self.queue.setdefault(document_id, {'status': 'pending', 'document': brief,
                                                'next_stage': 'period_and_completeness_review'})
@@ -317,10 +323,22 @@ class Collector:
 
     def run(self):
         for row in self.universe:
+            if self.client.requests >= self.client.max_requests or self.client.bytes >= self.client.max_bytes:
+                break
+            before = (len(self.gaps), len(self.seen_documents), self.client.requests)
             self.checked.append(identity(row))
             if self.mode != 'calendar':
                 self.sec(row)
             self.ir(row)
+            gaps = self.gaps[before[0]:]
+            codes = sorted({g['code'] for g in gaps})
+            self.issuer_results.append({'issuer_id': identity(row),
+                'documents_checked': len(self.seen_documents) - before[1],
+                'requests': self.client.requests - before[2], 'gap_codes': codes,
+                'budget_deferred': 'run_budget_exhausted' in codes})
+            # Checkpoint immutable manifests/indexes so a interrupted batch can resume.
+            save_json(self.doc_index_path, self.doc_index)
+            save_json(self.queue_path, self.queue)
         save_json(self.doc_index_path, self.doc_index)
         save_json(self.queue_path, self.queue)
         save_json(self.event_path, self.events)
@@ -332,6 +350,7 @@ class Collector:
                    'calendar_candidates': len(self.events), 'gaps': len(self.gaps),
                    'requests': self.client.requests, 'cache_hits': self.client.cache_hits,
                    'bytes_downloaded': self.client.bytes, 'model_calls': 0,
+                   'issuer_results': self.issuer_results,
                    'change_ids': [r['document_id'] for r in self.new_documents]}
         save_json(self.root / 'latest-run.json', receipt)
         run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
@@ -364,14 +383,17 @@ def main():
         print(json.dumps({'mode': 'plan', 'issuers': len(universe), 'model_calls': 0,
                           'network_calls': 0, 'configured_ir_issuers': sum(bool(registry['issuers'].get(r['symbol'], {}).get('pages')) for r in universe)}))
         return
-    collector = Collector(universe, registry, a.output, a.as_of,
-                          sec_user_agent=os.environ.get('SEC_USER_AGENT'), mode=a.mode,
-                          max_filings=a.max_filings, max_links=a.max_links)
-    with (collector.root / '.collector.lock').open('w') as lock:
+    output = a.output.resolve()
+    require(output != ROOT and ROOT not in output.parents, 'Collection data must remain outside the public checkout')
+    output.mkdir(parents=True, exist_ok=True)
+    with (output / '.collector.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        collector = Collector(universe, registry, output, a.as_of,
+                              sec_user_agent=os.environ.get('SEC_USER_AGENT'), mode=a.mode,
+                              max_filings=a.max_filings, max_links=a.max_links)
         receipt = collector.run()
     # Never expose the watchlist or document text in public console output.
-    print(json.dumps({k: v for k, v in receipt.items() if k != 'change_ids'}))
+    print(json.dumps({k: v for k, v in receipt.items() if k not in {'change_ids', 'issuer_results'}}))
 
 
 if __name__ == '__main__':

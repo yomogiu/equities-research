@@ -48,6 +48,10 @@ class CollectionTests(unittest.TestCase):
             b = collector.fetch_document(ROW, URL + '/alias', 'release')
             self.assertEqual(a['document_id'], b['document_id'])
             self.assertEqual(len(collector.queue), 1)
+            self.assertNotEqual(a['manifest_path'], b['manifest_path'])
+            self.assertNotEqual(a['raw_sha256'], b['raw_sha256'])
+            self.assertTrue((Path(tmp) / a['manifest_path']).exists())
+            self.assertTrue((Path(tmp) / b['manifest_path']).exists())
 
     def test_conditional_cache_and_missing_object(self):
         with tempfile.TemporaryDirectory() as tmp:

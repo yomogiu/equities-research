@@ -102,6 +102,51 @@ class WorkspaceTests(unittest.TestCase):
                                     'evidence': 'Checked fictitious original and output.'} for name in names},
                 'report_markdown': 'Fictitious independent review.'}
 
+    def test_foreign_collector_alias_imports_under_audited_stable_identity(self):
+        foreign_id = 'issuer:fictitious-foreign'
+        collector_id = 'f1c71710f1c71710'
+        self.audit['results'].append({'issuer_id': foreign_id, 'issuer': 'Fictitious Foreign',
+                                     'symbol': 'FAKE-F', 'exchange': 'TEST-F',
+                                     'identity_status': 'verified_non_us_listing',
+                                     'monitoring_eligible': True, 'documents': []})
+        library.save(self.root / 'audit.json', self.audit)
+        self.write_bytes('collection/objects/foreign.pdf', self.raw)
+        self.write_bytes('collection/objects/foreign.txt', self.text.encode())
+        manifest = {**self.document, 'issuer_id': collector_id, 'document_id': 'fictitious-collector-document',
+                    'raw_path': 'objects/foreign.pdf', 'text_path': 'objects/foreign.txt'}
+        library.save(self.root / 'collection/manifests/foreign.json', manifest)
+        library.save(self.root / 'collection/document-index.json', {
+            'fictitious-collector-document': {'manifest_path': 'manifests/foreign.json'}})
+        library.save(self.root / 'pipeline/source-coverage.json', {'schema_version': 1, 'companies': [
+            {'issuer_id': foreign_id, 'collector_issuer_id': collector_id, 'status': 'ready'}]})
+        rebuilt = library.build_catalog(self.root, 'audit.json')
+        imported = [d for d in rebuilt['documents'].values() if d['issuer_id'] == foreign_id]
+        self.assertEqual(len(imported), 1)
+        self.assertEqual(imported[0]['document_id'], library.digest([foreign_id, library.sha(self.text.encode())]))
+        self.assertEqual(imported[0]['collector_ids'], ['fictitious-collector-document'])
+        self.assertFalse(imported[0]['source_qualified'])
+        self.assertNotIn(collector_id, rebuilt['issuers'])
+        self.assertEqual(len(rebuilt['documents']), 2)
+
+    def test_ambiguous_collector_alias_rejected_without_replacing_catalog(self):
+        other_id = 'issuer:fictitious-other'
+        self.audit['results'].append({'issuer_id': other_id, 'documents': []})
+        library.save(self.root / 'audit.json', self.audit)
+        library.save(self.root / 'collection/document-index.json', {})
+        library.save(self.root / 'pipeline/source-coverage.json', {'schema_version': 1, 'companies': [
+            {'issuer_id': self.iid, 'collector_issuer_id': 'fictitious-alias'},
+            {'issuer_id': other_id, 'collector_issuer_id': 'fictitious-alias'}]})
+        with self.assertRaisesRegex(ValueError, 'Ambiguous collector identity mapping'):
+            library.build_catalog(self.root, 'audit.json')
+        self.assertEqual(library.catalog(self.root)['catalog_id'], self.cat['catalog_id'])
+
+    def test_collector_alias_cannot_add_issuer_outside_audited_universe(self):
+        library.save(self.root / 'collection/document-index.json', {})
+        library.save(self.root / 'pipeline/source-coverage.json', {'schema_version': 1, 'companies': [
+            {'issuer_id': 'issuer:fictitious-not-audited', 'collector_issuer_id': 'fictitious-alias'}]})
+        with self.assertRaisesRegex(ValueError, 'Mapped collector issuer missing from audited universe'):
+            library.build_catalog(self.root, 'audit.json')
+
     def test_cache_revalidation_preserves_retrieval_date_and_binds_exact_bytes(self):
         old = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
         self.document['retrieved_at'] = old

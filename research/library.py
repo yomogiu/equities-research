@@ -176,9 +176,18 @@ def build_catalog(root, audit_path, language_path=None):
             add(company['issuer_id'], document, '', audit_path, True)
     index_path = root / 'collection/document-index.json'
     if index_path.exists():
+        mapping = {}
+        mapping_path = root / 'pipeline/source-coverage.json'
+        if mapping_path.exists():
+            for row in read_json(mapping_path)['companies']:
+                key, value = row.get('collector_issuer_id'), row['issuer_id']
+                if key:
+                    require(key not in mapping or mapping[key] == value, 'Ambiguous collector identity mapping')
+                    require(value in issuers, 'Mapped collector issuer missing from audited universe')
+                    mapping[key] = value
         for brief in read_json(index_path).values():
             manifest = read_json(resolve(root, 'collection/' + brief['manifest_path']))
-            iid = issuer_id(manifest['issuer_id'])
+            iid = mapping.get(manifest['issuer_id'], issuer_id(manifest['issuer_id']))
             require(iid in issuers, 'Collector issuer missing from audited universe')
             add(iid, manifest, 'collection', 'collection/' + brief['manifest_path'], False)
     for row in records.values():

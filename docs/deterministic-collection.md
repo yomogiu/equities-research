@@ -89,3 +89,47 @@ downloader's execution and persistence, not that Codex analysis runs unattended.
 References: [SEC APIs](https://www.sec.gov/search-filings/edgar-application-programming-interfaces),
 [SEC developer access](https://www.sec.gov/about/developer-resources),
 [GitHub workflow token](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token).
+
+## Whole-universe pipeline
+
+`python3 -m research.pipeline --root /private/data --mode collect --limit 25`
+replaces the pilot's fixed universe with resumable batches. `--mode plan` prepares
+source coverage and the due queue without downloading; `--mode reconcile` rebuilds
+the catalog and published-period tracker without downloading. Private
+`config.json.earnings_pipeline.enabled` gates collection independently of investment
+analysis. All tracked companies stay in coverage; only verified, unambiguous issuer
+identities enter collection. Approved issuer sources are reused; other SEC-verified
+companies use SEC submissions while their issuer-source candidates await review.
+Observed calendar URLs do not automatically authorize source ownership.
+
+The initial baseline visits every eligible issuer. Subsequently, confirmed or
+estimated calendar dates trigger discovery from day -1 through day 7 every two
+hours, then incomplete packets daily through day 60. Calendar estimates never assign
+accepted fiscal periods. Outside those windows, weekly discovery catches missed or
+rescheduled releases. Each run recomputes dates from calendar/latest.json, instead
+of trusting an old collection-candidates file. At least one third of batch capacity
+is available for the unfinished baseline. Three failed issuer attempts back off for
+one week and retain a repair handoff. Budget-exhausted/unvisited names are deferred,
+not counted as completed baseline work. A baseline attempt does not mean a complete
+packet. Repeated unchanged text does not add another analysis item.
+
+The runner uses one writer and a shared HTTP cache, capped at 240 requests and
+192 MiB per batch. Pipeline state is in pipeline/state.json, due work in
+pipeline/collection-queue.json, and per-run receipts under pipeline/runs/. Interrupted
+work can safely retry immutable objects and checkpointed manifests. The private
+workflow persists partial results before reporting failures.
+
+After collection, research.published_quarters records the latest observed fiscal
+period in published/latest.json and queues exact evidence in published/review-queue.json.
+Original SEC inline-XBRL fiscal facts and explicit actual-results clauses can suggest
+a period; dates alone cannot. Conflicting dates, annual-versus-quarterly ambiguity,
+missing language/completeness and unresolved identities stay in review. Fiscal years
+follow each issuer, never a month-to-quarter conversion. `discovery_complete: false`
+means this is the latest observed evidence, not proof every public source was found.
+
+A separate bounded private Codex PR handoff reviews original evidence and writes
+qualifications. Reconciliation assembles immutable packets from accepted qualifications,
+with freshness and missing-document states. Agent invocation acknowledgment is not
+qualification completion; the private main-branch evidence is authoritative. This
+pipeline does not automatically run investment analysis or treat unreviewed period
+candidates as accepted earnings packets.

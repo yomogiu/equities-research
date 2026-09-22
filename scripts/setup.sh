@@ -8,3 +8,4 @@ python3 -m research.cli --help
 python3 -m research.collect --help
 python3 -m research.workspace --help
 python3 -m research.earnings_calendar --help
+python3 -m research.pipeline --help
