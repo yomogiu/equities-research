@@ -22,6 +22,16 @@ class PipelineTests(unittest.TestCase):
         return {'events': [{'issuer_id': ROWS[0]['issuer_id'], 'event_id': 'fictitious',
                 'event_date': (NOW - timedelta(days=days)).date().isoformat(), 'date_status': status}]}
 
+    def test_new_qualifications_request_source_refresh_once_then_back_off(self):
+        published = {'issuers': {ROWS[0]['issuer_id']: {'packet_id': 'fictitious', 'qualification_ids': ['q1']}}}
+        state = self.state(hours=3)
+        due = due_queue(ROWS, state, {}, published, NOW)
+        self.assertEqual(due[0]['reason'], 'packet_source_revalidation')
+        state['issuers'][ROWS[0]['issuer_id']]['packet_refresh_attempt'] = due[0]['qualification_key']
+        self.assertEqual(due_queue(ROWS, state, {}, published, NOW), [])
+        state['issuers'][ROWS[0]['issuer_id']]['qualified_packet_checked'] = due[0]['qualification_key']
+        self.assertEqual(due_queue(ROWS, state, {}, published, NOW + timedelta(hours=25)), [])
+
     def test_busy_earnings_window_does_not_starve_baseline(self):
         rows = [{'issuer_id': str(i), 'reason': 'earnings_window'} for i in range(100)]
         rows += [{'issuer_id': 'baseline', 'reason': 'initial_baseline'}]

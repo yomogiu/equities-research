@@ -64,6 +64,11 @@ def due_queue(coverage, state, calendar, published, now=None):
                     reason, cadence, priority = 'late_documents', 24, 2
         if not prior.get('baseline_attempted_at'):
             reason, cadence, priority = 'initial_baseline', 0, 1
+        current = published.get('issuers', {}).get(iid, {})
+        qualification_key = digest(current.get('qualification_ids', [])) if current.get('packet_id') and current.get('qualification_ids') else None
+        if qualification_key and prior.get('qualified_packet_checked') != qualification_key:
+            reason, priority = 'packet_source_revalidation', 0
+            cadence = 24 if prior.get('packet_refresh_attempt') == qualification_key else 0
         if 0 < prior.get('consecutive_failures', 0) < 3:
             reason, cadence, priority = 'repair_retry', 2, 2
         if prior.get('consecutive_failures', 0) >= 3:
@@ -78,7 +83,7 @@ def due_queue(coverage, state, calendar, published, now=None):
                      'symbol': row['symbol'], 'reason': reason, 'cadence_hours': cadence,
                      'priority': priority, 'last_attempt_at': last,
                      'calendar_event_ids': sorted(e.get('event_id', '') for _, e in active),
-                     'calendar_dates_are_discovery_hints': True})
+                     'calendar_dates_are_discovery_hints': True, 'qualification_key': qualification_key})
     # Oldest never-attempted company wins within a priority; stable IDs break ties.
     return sorted(rows, key=lambda x: (x['priority'], x['last_attempt_at'] or '', x['issuer_id']))
 
@@ -100,6 +105,8 @@ def update_state(state, selected, receipt, now=None):
             continue
         prior.update(last_attempt_at=now.isoformat(), baseline_attempted_at=prior.get('baseline_attempted_at') or now.isoformat(),
                      gap_codes=result['gap_codes'], reason=row['reason'], retry_after=None)
+        if row.get('qualification_key'):
+            prior['packet_refresh_attempt'] = row['qualification_key']
         if result['documents_checked']:
             prior.update(last_successful_retrieval_at=now.isoformat(), consecutive_failures=0,
                          status='partial' if result['gap_codes'] else 'collected')
@@ -171,6 +178,12 @@ def run(root, mode='plan', limit=25, symbols=None, now=None, collector_factory=C
                           cfg.get('languages', 'reports/retrieval/2026-09-20/universe/language-review.json'))
             build_search(root)
             publication = published_run(root, as_of=now.astimezone(ZoneInfo('America/New_York')).date())
+        latest = optional(root, 'published/latest.json', {'issuers': {}})
+        if mode != 'plan':
+            for iid, row in latest.get('issuers', {}).items():
+                if row.get('packet_id') and (row.get('freshness') or {}).get('status') == 'ready':
+                    state['issuers'].setdefault(iid, {})['qualified_packet_checked'] = digest(row['qualification_ids'])
+            save(root / 'pipeline/state.json', state)
         remaining = due_queue(coverage, state, calendar,
                               optional(root, 'published/latest.json', {'issuers': {}}), now)
         receipt = {'schema_version': 1, 'at': now.isoformat(), 'mode': mode,

@@ -101,6 +101,9 @@ analysis. All tracked companies stay in coverage; only verified, unambiguous iss
 identities enter collection. Approved issuer sources are reused; other SEC-verified
 companies use SEC submissions while their issuer-source candidates await review.
 Observed calendar URLs do not automatically authorize source ownership.
+Newly qualified packets request a targeted source refresh when needed; unsuccessful
+packet refreshes back off to daily checks. Revalidating timestamps alone does not
+schedule repeat investment analysis.
 
 The initial baseline visits every eligible issuer. Subsequently, confirmed or
 estimated calendar dates trigger discovery from day -1 through day 7 every two
