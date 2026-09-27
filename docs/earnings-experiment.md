@@ -163,3 +163,31 @@ Synthetic tests exercise numerical contexts, units, provenance, unsupported form
 query safety, transcript spans, role artifacts and rejection paths. Passing those
 tests does not establish report quality; a real source-backed pilot and independent
 review are separate evidence.
+
+## Explicit interrupted-session recovery
+
+`research.earnings_recovery` is a separate, narrow adapter for an initial extractor
+that hit the original timeout and whose saved session demonstrably ends aborted.
+It preserves the original executor and evidence hashes. It does not silently retry
+an uncertain or still-running task. Only one resume of that exact session is
+permitted, with a separately frozen continuation and a 600-second limit.
+
+```sh
+python3 -m research.earnings_recovery recover --output /private/runtime/run
+python3 -m research.earnings_recovery continue \
+  --case /private/runtime/case.json --output /private/runtime/run
+python3 -m research.earnings_recovery verify --output /private/runtime/run
+```
+
+The adapter retains original failed receipts and snapshots the session before
+resumption. Verification checks that the saved session only appends to those
+original bytes, retains its identity, receives exactly the allowed continuation,
+and completes with the actual captured JSON. The successful resumed process has
+its own receipt; the original timeout is never rewritten as success. Completed
+other-role outputs remain reusable only after normal verification. All original
+source, independent-review, exact-report and two-correction-round requirements
+remain active. After this recovery, use the adapter verifier: the original verifier
+correctly rejects the unchanged aborted attempt.
+
+This is an explicitly reconciled experiment recovery, not a general cloud scheduler
+or an unlimited retry policy. A second interruption requires investigation.
