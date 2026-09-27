@@ -204,3 +204,12 @@ Use `reconcile --output <run> --job <role-rN> --inactive <absolute-receipt-path>
 then this module's `continue` and `verify` commands. It composes with the initial
 extractor recovery adapter. Nested RLM sessions must be included in usage accounting;
 a parent's final answer does not imply that every child completed successfully.
+
+`research.earnings_editor_recovery` covers a different, explicitly observed failure:
+the revision-one editor exits 1 with `fetch failed` and its journal ends in that
+provider error. Its `recover` command permits one 600-second continuation of the
+same session, retaining the original draft context, failed receipts and dependency
+hashes. Use this module's `continue` and `verify` commands afterward; it composes
+the previous adapters. A draft visible in tool output is not a completed editor
+response, and recovery never bypasses the fresh final reviewer. A failed second
+attempt remains blocked rather than entering an unlimited retry loop.
