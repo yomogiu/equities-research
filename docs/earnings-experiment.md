@@ -191,3 +191,16 @@ correctly rejects the unchanged aborted attempt.
 
 This is an explicitly reconciled experiment recovery, not a general cloud scheduler
 or an unlimited retry policy. A second interruption requires investigation.
+
+A headless timeout can also occur after a role has produced a complete response but
+before its wrapper delivers stdout. `research.earnings_reconcile` handles this
+separate case without a new model call. It requires the exact terminal journal
+answer, original prompt/dependencies, a post-timeout inactive-runtime observation,
+and verified hashes. Completion timing comes from the outer journal event, not the
+model response-start timestamp. Late completion is explicitly retained as late.
+The original CLI receipt remains uncertain; reconciliation does not invent exit zero.
+
+Use `reconcile --output <run> --job <role-rN> --inactive <absolute-receipt-path>`,
+then this module's `continue` and `verify` commands. It composes with the initial
+extractor recovery adapter. Nested RLM sessions must be included in usage accounting;
+a parent's final answer does not imply that every child completed successfully.
