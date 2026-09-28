@@ -213,3 +213,37 @@ hashes. Use this module's `continue` and `verify` commands afterward; it compose
 the previous adapters. A draft visible in tool output is not a completed editor
 response, and recovery never bypasses the fresh final reviewer. A failed second
 attempt remains blocked rather than entering an unlimited retry loop.
+
+## Matched native Codex arm
+
+`research.earnings_native` runs the same frozen case, five role prompts, validation
+rubrics, parallel initial authors and two shared quality-correction rounds through
+the installed native Codex CLI. It explicitly selects `gpt-5.6-sol` with `max`
+reasoning and uses the existing ChatGPT sign-in. It neither reads nor copies auth.
+The original correction handoff is retained for comparison, including its limited
+prior-review dependency. This is a runtime comparison, not a redesigned prompt arm.
+
+```sh
+python3 -m research.earnings_native prepare \
+  --case /private/runtime/case.json --prime-run /private/runtime/runs/prime \
+  --output /private/runtime/runs/native --codex /path/to/codex
+python3 -m research.earnings_native run --output /private/runtime/runs/native
+python3 -m research.earnings_native verify --output /private/runtime/runs/native
+```
+
+Preparation launches no role. It freezes source/code/runtime hashes and actual CLI
+arguments. Each role runs in a fresh read-only session with web expansion disabled.
+Native JSONL events, actual process outcome, final response, usage, and the exact
+thread's rollout are retained privately. Verification checks observed model/effort,
+prompt identity, distinct role sessions, complete correction history, dependencies,
+source spans and exact final-report bytes. A recorded launch cannot silently retry.
+
+System prompts, tools and sandbox behavior remain runtime differences. Compare
+quality using fresh blinded source-backed reviewers; keep their usage outside the
+report-generation totals. Normalize cached-token accounting and report recovery
+interventions separately from substantive corrections. A single case does not prove
+general superiority, identical server-side model revisions, or unattended operation.
+The native runtime currently locates captured rollouts in the default
+`~/.codex/sessions` directory. Keep all real cases, traces and comparisons private.
+
+The CLI event mechanism is documented in [OpenAI's non-interactive mode guide](https://learn.chatgpt.com/docs/non-interactive-mode).
