@@ -13,7 +13,10 @@ from pathlib import Path
 import subprocess
 import time
 
-VERSION = 'earnings-experiment-v1'
+VERSION = 'earnings-experiment-concise-v2'
+MODEL = 'gpt-5.6-sol'
+EFFORT = 'max'
+TIMEOUT = 1800
 SUBSTANTIVE = ('source_fidelity', 'question_answer_fidelity', 'financial_context',
                'technical_reasoning', 'counterevidence', 'coverage_scope')
 EDITORIAL = ('source_fidelity', 'summary_fidelity', 'materiality', 'technical_clarity',
@@ -52,6 +55,8 @@ def validate_case(case):
     for key in ('financial_path','transcript_index_path','transcript_path'):
         if str(Path(case[key]).resolve()) not in frozen:
             raise ValueError('Role input not frozen: '+key)
+    if case.get('writing_standard_path') and str(Path(case['writing_standard_path']).resolve()) not in frozen:
+        raise ValueError('Writing standard is not frozen')
     kinds = {s['kind'] for s in case['sources']}
     if 'transcript' not in kinds or 'filing' not in kinds:
         raise ValueError('Transcript-led case requires transcript and filing')
@@ -119,6 +124,8 @@ Use only these role dependencies, plus the frozen case inputs: {json.dumps({k:st
 Scope: transcript-led event_update, no prices, consensus, portfolio, prior-call comparisons or external technical assertions unless supplied in the case. Explain which missing inputs limit conclusions. Facts, company claims and inference remain separate. Focus on technical mechanisms, operational indicators, economic consequences, disconfirming evidence and specific next tests. Assess non-answers without attributing motives. Do not penalize candid uncertainty or force a bullish/bearish recommendation.
 Code for read-only helpers is at {Path(__file__).resolve().parents[1]}. The financial JSON contains exact decimal strings and full contexts; the SQLite projection is optional. Do not print the whole financial artifact; select relevant contexts. Transcript index contains source offsets and exchange IDs. Exact short quotes can be located using text.find and verified against exchange spans.
 '''
+    if case.get('writing_standard_path'):
+        common += '\nRequired writing standard (applies to drafts and both reviews):\n' + Path(case['writing_standard_path']).read_text() + '\n'
     if role == 'extractor':
         return common + '''Return {"selected_fact_ids":[...],"financial_checks":[{"claim":"...","fact_ids":[...],"source_check":"specific original source context and reconciliation"}],"gaps":[...]}.
 Check a small material set: consolidated and segment revenue, margins/operating income, cash flow/capex and guidance evidence when available. Distinguish quarter/YTD, prior-year comparison, GAAP/non-GAAP and source publication period. Explain rather than discard discrepancies. Cite exact observation IDs; do not invent identifiers or metrics. Read original table context for selected facts.'''
@@ -129,7 +136,7 @@ Choose roughly 5-8 material findings with short exact management/analyst quotes.
         criteria = SUBSTANTIVE if role=='reviewer' else EDITORIAL
         return common + f'''Independently inspect original sources and each supplied output. Do not approve because schemas pass or authors agree. For substantive review check all significant claims, financial context and material omitted exchanges. For final review inspect actual composed report including its summary, tables and citations; polished unsupported assertions fail. Style must be clear, technically specific, non-repetitive and useful for an engineering-informed investor. Findings require exact problematic passages and concrete repairs, not vague stylistic preferences.
 Return {{"verdict":"pass|revise|blocked","criteria":{{each of {json.dumps(criteria)}:{{"status":"pass|fail|unavailable","evidence":"specific checked source/output location and conclusion"}}}},"findings":[{{"target":"extractor|commentator|editor","severity":"material|minor","claim":"specific disputed passage","evidence":"source location and reason","required_change":"specific repair"}}]}}. Pass requires ALL criteria pass and no material finding. For final_reviewer also return report_sha256 computed from actual report bytes. Do not fix the report yourself or ignore material defects to save revisions.'''
-    return common + '''Return {"report_markdown":"complete Markdown report"}. Compose 900-1500 words, fewer if evidence warrants. Lead with the decision hinge and 3-5 key findings. Center on consequential Q&A exchanges, evidenced claims, unresolved questions, operating economics and next tests. Include a compact financial corroboration table. Use short exact quotes with named speaker and [exchange:ID] references; associate facts with [fact:ID]. Add a compact source register with supplied original URLs and an honest scope/gaps note. Provide a concise opening summary consistent with the body. Incorporate both accepted author outputs without repetitive stitched-together sections. Do not invent facts, quotations, prior-call comparisons or analyst motives. Avoid canned disclaimers, jargon without explanation and generic monitoring advice. No execution IDs or internal review chatter in main narrative.'''
+    return common + '''Return {"report_markdown":"complete Markdown report"}. Compose roughly 650-900 words including the financial table and follow-up list, fewer if evidence warrants. Lead with substantive figures or a consequential Q&A finding. Avoid repeating key findings in a second narrative. Center on consequential Q&A exchanges, evidenced claims, unresolved questions, operating economics and next tests. Include a compact financial corroboration table. Use short exact quotes with named speaker and [exchange:ID] references; associate facts with [fact:ID]. Add a compact source register with supplied original URLs and an honest scope/gaps note. Provide a concise opening summary consistent with the body. Incorporate both accepted author outputs without repetitive stitched-together sections. Do not invent facts, quotations, prior-call comparisons or analyst motives. Avoid canned disclaimers, jargon without explanation and generic monitoring advice. No execution IDs or internal review chatter in main narrative.'''
 
 
 def parse_response(text):
@@ -224,11 +231,11 @@ def run_role(run, role, revision, case_path, case, dependencies):
         raise ValueError('Existing launch must be reconciled before retry: '+str(job))
     (job/'prompt.txt').write_text(prompt)
     save(job/'launch.json',{'started_at':time.time(),'request_sha256':digest(request),'status':'launched'})
-    cmd=['prime-agent','--offline','--provider','openai-codex','--no-extensions','--no-skills','--no-prompt-templates','--no-context-files','--tools','ipython','--session-dir',str(job/'sessions'),'-p']
+    cmd=['prime-agent','--offline','--provider','openai-codex','--model',MODEL,'--thinking',EFFORT,'--no-extensions','--no-skills','--no-prompt-templates','--no-context-files','--tools','ipython','--session-dir',str(job/'sessions'),'-p']
     start=time.monotonic()
     with (job/'stdout.txt').open('w') as stdout, (job/'stderr.txt').open('w') as stderr:
         try:
-            result=subprocess.run(cmd,input=prompt,text=True,stdout=stdout,stderr=stderr,cwd=job,timeout=900)
+            result=subprocess.run(cmd,input=prompt,text=True,stdout=stdout,stderr=stderr,cwd=job,timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
             save(job/'execution.json',{'status':'launch_uncertain','elapsed_seconds':time.monotonic()-start})
             raise ValueError('Timed out; reconcile actual Prime session before retry')

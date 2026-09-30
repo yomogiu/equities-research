@@ -16,10 +16,10 @@ import time
 from . import earnings_experiment as base
 from . import financial_evidence, transcript_evidence
 
-VERSION = 'earnings-native-v1'
+VERSION = 'earnings-native-concise-v2'
 MODEL = 'gpt-5.6-sol'
 EFFORT = 'max'
-TIMEOUT = 900
+TIMEOUT = 1800
 # Reuse the frozen evidence and prompt implementations without modifying globals.
 read, save, sha, digest = base.read, base.save, base.sha, base.digest
 inside, validate_case, validate_content = base.inside, base.validate_case, base.validate_content

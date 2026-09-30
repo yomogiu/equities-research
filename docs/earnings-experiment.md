@@ -247,3 +247,16 @@ The native runtime currently locates captured rollouts in the default
 `~/.codex/sessions` directory. Keep all real cases, traces and comparisons private.
 
 The CLI event mechanism is documented in [OpenAI's non-interactive mode guide](https://learn.chatgpt.com/docs/non-interactive-mode).
+
+## Concise second-company protocol
+
+The `concise-v2` experiment version loads `writing_standard_path` from a frozen
+case artifact into all five role prompts in both runtimes. Changed or unbound
+standards invalidate the case. Editors target 650–900 words including the table
+and follow-up list, subject to material evidence. The original v1 checkout and
+benchmark remain unchanged.
+
+Both arms explicitly select `gpt-5.6-sol`/`max`, retain two shared correction
+rounds, and allow 1,800 seconds per role to reduce wrapper interruptions. Runtime
+settings, tools and resource usage still require observation in actual sessions.
+Private policy files and issuer-specific results stay outside this repository.
