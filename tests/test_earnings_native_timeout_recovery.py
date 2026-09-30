@@ -36,18 +36,18 @@ def setup(root):
         rollout(job,sid,input,'unused')
         ev=recovery.entries(job/'session.jsonl')[:-1];ev.append(tokens(usage(1000,100)))
         jsonl(job/'session.jsonl',ev)
-        raise subprocess.TimeoutExpired(argv,900)
-    with patch.object(native.subprocess,'run',side_effect=fail),patch.object(native.time,'monotonic',side_effect=[1,901.1]):
+        raise subprocess.TimeoutExpired(argv,timeout)
+    with patch.object(native.subprocess,'run',side_effect=fail),patch.object(native.time,'monotonic',side_effect=[1,1+native.TIMEOUT+0.1]):
         with unittest.TestCase().assertRaisesRegex(ValueError,'uncertain'):
             native.run_role(run,'commentator',2,path,case,deps)
     rec=job/'recovery';rec.mkdir();(rec/'prompt.txt').write_text('Finish the original fictitious JSON in this same session.')
     argv=native.command(base.read(run/'config.json')['codex'],job)[:-1]
     argv[argv.index('-o')+1]=str(rec/'final.txt');argv+=['resume','--json','-o',str(rec/'final.txt'),sid,'-']
-    req={'session_id':sid,'model':native.MODEL,'reasoning_effort':native.EFFORT,'argv':argv,'timeout_seconds':900,
+    req={'session_id':sid,'model':native.MODEL,'reasoning_effort':native.EFFORT,'argv':argv,'timeout_seconds':native.TIMEOUT,
          'prompt_sha256':base.sha(rec/'prompt.txt'),'original_request_sha256':base.sha(job/'request.json'),
          'original_session_sha256':base.sha(job/'session.jsonl'),
          'original_files':{n:base.sha(job/n) for n in recovery.ORIGINALS}}
-    write(rec/'request.json',req);start=base.read(job/'launch.json')['started_at']+910
+    write(rec/'request.json',req);start=base.read(job/'launch.json')['started_at']+native.TIMEOUT+10
     write(rec/'launch.json',{'started_at':start,'request_sha256':base.digest(req),'argv_sha256':base.digest(argv)})
     write(rec/'inactive-before-resume.json',{'checked_at':start-1,'matching_original_role_pids':[],'session_id':sid})
     final=json.dumps(valid);(rec/'final.txt').write_text(final+'\n');(rec/'stderr.txt').write_text('')
@@ -67,6 +67,10 @@ def setup(root):
 
 class TimeoutRecoveryTests(unittest.TestCase):
     def setUp(self):
+        # This historical recovery adapter binds a 900-second request and a
+        # 600-second watchdog cap. Test that explicit legacy variant rather
+        # than inheriting the new experiment's 1,800-second role timeout.
+        timeout=patch.object(native,'TIMEOUT',900);timeout.start();self.addCleanup(timeout.stop)
         capture=patch.object(native,'capture_rollout');capture.start();self.addCleanup(capture.stop)
 
     def test_resume_acceptance_retains_failure_and_counts_cumulative_once(self):
