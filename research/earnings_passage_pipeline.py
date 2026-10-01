@@ -123,11 +123,12 @@ def run(output):
                   'issues': selection_issues.get(role)}
         job = root / 'jobs' / f'{role}-r{round_number}'
         job.mkdir(parents=True, exist_ok=True)
-        base.save(job / 'inputs.json', inputs)
+        input_path = root / 'inputs' / f'{role}-r{round_number}.json'
+        base.save(input_path, inputs)
         text = prompt(role, bundle, writing, inputs['dependencies'], inputs['feedback'], catalog,
                       inputs['prior'], inputs['issues'])
         result = run_role(job, text, *MODELS[role], {'protocol_sha256': base.sha(root / 'protocol.json'),
-                          'role': role, 'round': round_number, 'inputs_sha256': base.sha(job / 'inputs.json')}, timeout=1200)
+                          'role': role, 'round': round_number, 'inputs_sha256': base.sha(input_path)}, timeout=1200)
         record = {'role': role, 'round': round_number, 'mode': 'selection_patch' if repair else 'full',
                   'path': str(job), 'receipt': result['receipt']}
         return result['content'], record, inputs
@@ -207,7 +208,8 @@ def verify(output):
         path = root / 'jobs' / f'{role}-r{number}'
         if Path(job['path']).resolve() != path:
             raise ValueError('Unexpected job path')
-        inputs = base.read(path / 'inputs.json'); request = base.read(path / 'request.json'); value = verify_job(path)
+        input_path = root / 'inputs' / f'{role}-r{number}.json'
+        inputs = base.read(input_path); request = base.read(path / 'request.json'); value = verify_job(path)
         if value['receipt'] != job['receipt'] or (request['model'], request['effort']) != MODELS[role]:
             raise ValueError('Receipt/model mismatch')
         sid = value['receipt']['session']['id']
@@ -215,7 +217,7 @@ def verify(output):
             raise ValueError('Fresh independent sessions required')
         identities.add(sid)
         if request['bindings'] != {'protocol_sha256': base.sha(root / 'protocol.json'), 'role': role,
-                                   'round': number, 'inputs_sha256': base.sha(path / 'inputs.json')}:
+                                   'round': number, 'inputs_sha256': base.sha(input_path)}:
             raise ValueError('Job input binding mismatch')
         round_snapshots.setdefault(number, copy.deepcopy(deps))
         expected_deps = round_snapshots[number] if role in ('financial', 'retrieval') else deps

@@ -193,5 +193,20 @@ class PipelineTests(PassageFixture, unittest.TestCase):
             pipe.load(self.output)
 
 
+class RealRunnerStartupTests(PassageFixture, unittest.TestCase):
+    def test_coordinator_keeps_new_job_empty_until_runner_launch(self):
+        from research import earnings_mixed_runner as runner
+        writing = self.root / 'writing.txt'; writing.write_text('Fictional standard')
+        output = self.root / 'real-startup'; pipe.freeze(self.casepath, output, writing)
+        # Exercise the actual runner's request/directory checks without starting a provider.
+        with patch.object(runner, '_runtime_paths', side_effect=RuntimeError('runtime reached')) as runtime:
+            with self.assertRaisesRegex(RuntimeError, 'runtime reached'):
+                pipe.run(output)
+            self.assertEqual(runtime.call_count, 2)
+        for role in ('financial', 'retrieval'):
+            self.assertEqual(list((output / 'jobs' / f'{role}-r0').iterdir()), [])
+            self.assertTrue((output / 'inputs' / f'{role}-r0.json').exists())
+
+
 if __name__ == '__main__':
     unittest.main()
