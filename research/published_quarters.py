@@ -180,11 +180,15 @@ def _dei_candidates(root, doc):
     return results
 
 
-def _qualifications(root, cat):
+def _qualifications(root, cat, issuer_ids=None):
     result, errors = {}, []
     for path in sorted((root / 'library/qualifications').glob('*.json')):
+        owner = None
         try:
             q = library.read_json(path)
+            owner = cat['documents'].get(q.get('document_id'), {}).get('issuer_id')
+            if issuer_ids is not None and owner is not None and owner not in issuer_ids:
+                continue
             require(digest(q) == path.stem, 'Qualification hash mismatch')
             doc = cat['documents'].get(q['document_id'])
             require(doc and doc['text_sha256'] == q['text_sha256'], 'Qualification has no matching current source')
@@ -197,7 +201,8 @@ def _qualifications(root, cat):
                 require(type(span['start']) is int and type(span['end']) is int and 0 <= span['start'] < span['end'] <= len(text) and text[span['start']:span['end']] == span['text'], 'Qualification citation mismatch')
             result.setdefault(doc['document_id'], []).append(dict(q, qualification_id=path.stem))
         except (ValueError, KeyError, TypeError, OSError) as exc:
-            errors.append({'qualification_id': path.stem, 'status': 'qualification_invalid', 'reason': str(exc)})
+            errors.append({'qualification_id': path.stem, 'issuer_id': owner,
+                           'status': 'qualification_invalid', 'reason': str(exc)})
     return result, errors
 
 
@@ -255,20 +260,45 @@ def _latest(candidates):
     return period, [c for c in usable if c['period'] == period]
 
 
-def run(root, as_of=None):
+def run(root, as_of=None, issuer_ids=None):
     """Prepare latest-observed periods and packets in private storage.
 
     Writes published/latest.json, published/review-queue.json and a small receipt.
+    issuer_ids limits source reads and packet rebuilding when a matching baseline
+    exists. Unchanged issuer rows retain their original issuer_as_of timestamps.
     No network requests, qualification invention, model calls or execution toggles.
     """
     root = library.private_root(root)
     cutoff = _cutoff(as_of)
     cat = library.catalog(root)
-    qualifications, review = _qualifications(root, cat)
+    build_policy = digest(library.read_json(root / 'config.json').get('packet_freshness'))
+    requested = None if issuer_ids is None else set(issuer_ids)
+    require(requested is None or (requested and requested <= set(cat['issuers'])),
+            'Rebuild scope must contain known issuers')
+    baseline_result, previous_review = None, []
+    rebuild_issuers = set(cat['issuers'])
+    # A changed catalog or missing baseline needs a full rebuild. Never retain
+    # rows whose source/identity inventory may have changed.
+    if requested is not None:
+        try:
+            baseline = library.read_json(root / 'published/latest.json')
+            queue = library.read_json(root / 'published/review-queue.json')
+            if (baseline['schema_version'] == VERSION
+                    and baseline['catalog_id'] == cat['catalog_id']
+                    and baseline.get('build_policy') == build_policy
+                    and set(baseline['issuers']) == set(cat['issuers'])
+                    and isinstance(queue, list)
+                    and all(item.get('catalog_id') == cat['catalog_id'] for item in queue)):
+                baseline_result, previous_review, rebuild_issuers = baseline, queue, requested
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    qualifications, review = _qualifications(root, cat, rebuild_issuers)
     by_issuer = {iid: [] for iid in cat['issuers']}
     document_counts = Counter()
     for doc in cat['documents'].values():
         iid = doc['issuer_id']
+        if iid not in rebuild_issuers:
+            continue
         document_counts[iid] += 1
         try:
             candidates = inspect_document(root, doc, qualifications.get(doc['document_id'], []), cutoff)
@@ -282,8 +312,10 @@ def run(root, as_of=None):
                            'required_checks': ['fiscal_period', 'issuer_and_source', 'completeness', 'language_and_english_coverage']})
         for candidate in candidates:
             review.append(dict(candidate, issuer_id=iid))
-    rows = {}
+    rows = {iid: row for iid, row in baseline_result['issuers'].items() if iid not in rebuild_issuers} if baseline_result else {}
     for iid, owner in cat['issuers'].items():
+        if iid not in rebuild_issuers:
+            continue
         candidates = by_issuer[iid]
         period, selected = _latest(candidates)
         confirmed_period, _ = _latest([c for c in candidates if c['status'] == 'qualified'])
@@ -356,12 +388,20 @@ def run(root, as_of=None):
             previous['qualification_ids'] = sorted(set(previous['qualification_ids'] + item['qualification_ids']))
         else:
             normalized_review[item['review_id']] = item
+    for item in previous_review:
+        if item.get('issuer_id') is not None and item['issuer_id'] not in rebuild_issuers:
+            normalized_review[item['review_id']] = item
     review = sorted(normalized_review.values(), key=lambda item: item['review_id'])
+    issuer_as_of = {iid: (cutoff.isoformat() if iid in rebuild_issuers else
+                         baseline_result.get('issuer_as_of', {}).get(iid, baseline_result['as_of']))
+                    for iid in rows}
     result = {'schema_version': VERSION, 'as_of': cutoff.isoformat(), 'catalog_id': cat['catalog_id'],
-              'issuers': rows, 'discovery_complete': False,
+              'issuers': rows, 'build_policy': build_policy, 'issuer_as_of': issuer_as_of, 'discovery_complete': False,
               'rule': 'Fiscal labels require source evidence; publication/period-end evidence orders reports; calendar and access dates do not assign fiscal quarters.'}
     receipt = {'schema_version': VERSION, 'as_of': cutoff.isoformat(), 'catalog_id': cat['catalog_id'],
-               'issuers': len(rows), 'documents': sum(document_counts.values()),
+               'issuers': len(rows), 'documents': sum(row['document_count'] for row in rows.values()),
+               'rebuild_mode': 'incremental' if baseline_result else 'full',
+               'rebuilt_issuer_ids': sorted(rebuild_issuers), 'documents_inspected': sum(document_counts.values()),
                'statuses': dict(sorted(Counter(r['status'] for r in rows.values()).items())),
                'packets_prepared': sum(r['packet_id'] is not None for r in rows.values()),
                'review_items': sum(item['status'] != 'qualified' for item in review), 'download_requests': 0, 'model_calls': 0,

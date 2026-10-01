@@ -49,6 +49,63 @@ class PublishedQuarterTests(unittest.TestCase):
             'reviewer_session': 'fictitious-reviewed-session', 'rationale': 'Fictitious original fiscal-results evidence.',
             'source_spans': [{'start': 0, 'end': min(150, len(text)), 'text': text[:150]}], **changes})
 
+    def two_issuer_baseline(self):
+        first = self.add('Fictitious Example Reports Q2 FY2026 Results.', report_date='2026-06-30')
+        second = self.add('Fictitious Other Reports Q2 FY2026 Results.', report_date='2026-06-30')
+        self.owners[0]['documents'].pop()
+        other = 'sec:0000000043'
+        self.owners.append({'issuer_id': other, 'issuer': 'Fictitious Other', 'symbol': 'FAKE2',
+                            'monitoring_eligible': True, 'documents': [second]})
+        cat = self.catalog()
+        self.qualify(cat, second, 'FY2026-Q2')
+        published.run(self.root, '2026-09-21')
+        return first, second, other, cat
+
+    def test_incremental_skips_other_sources_and_preserves_rows_and_queue(self):
+        from unittest.mock import patch
+        first, second, other, cat = self.two_issuer_baseline()
+        before = library.read_json(self.root / 'published/latest.json')
+        queue = library.read_json(self.root / 'published/review-queue.json')
+        self.qualify(cat, first, 'FY2026-Q2')
+        original = library.load_bytes
+        forbidden = {second['raw_path'], second['text_path']}
+        def bounded(root, path, checksum):
+            self.assertNotIn(path, forbidden, 'Unchanged source read during scoped rebuild')
+            return original(root, path, checksum)
+        with patch.object(library, 'load_bytes', side_effect=bounded):
+            receipt = published.run(self.root, '2026-09-22', issuer_ids={self.iid})
+        after = library.read_json(self.root / 'published/latest.json')
+        updated_queue = library.read_json(self.root / 'published/review-queue.json')
+        self.assertEqual(after['issuers'][other], before['issuers'][other])
+        self.assertEqual([r for r in queue if r.get('issuer_id') == other],
+                         [r for r in updated_queue if r.get('issuer_id') == other])
+        self.assertEqual(after['issuer_as_of'][other], '2026-09-21')
+        self.assertEqual(after['issuer_as_of'][self.iid], '2026-09-22')
+        self.assertEqual(after['issuers'][self.iid]['status'], 'packet_prepared')
+        self.assertEqual(receipt['rebuild_mode'], 'incremental')
+        self.assertEqual(receipt['documents_inspected'], 1)
+        self.assertEqual(receipt['documents'], 2)
+        # A full rebuild at the same cutoff produces the same selected-company result.
+        published.run(self.root, '2026-09-22')
+        full = library.read_json(self.root / 'published/latest.json')
+        # Freshness assessment includes wall-clock evaluation time.
+        for result in (after, full):
+            result['issuers'][self.iid].pop('freshness')
+        self.assertEqual(after['issuers'][self.iid], full['issuers'][self.iid])
+
+    def test_incremental_catalog_change_and_missing_baseline_rebuild_all(self):
+        first, second, other, cat = self.two_issuer_baseline()
+        cat['catalog_id'] = 'changed-fictitious-catalog'
+        library.save(self.root / 'library/catalog.json', cat)
+        receipt = published.run(self.root, '2026-09-22', issuer_ids={self.iid})
+        self.assertEqual(receipt['rebuild_mode'], 'full')
+        self.assertEqual(receipt['documents_inspected'], 2)
+        (self.root / 'published/latest.json').unlink()
+        receipt = published.run(self.root, '2026-09-22', issuer_ids={self.iid})
+        self.assertEqual(receipt['rebuild_mode'], 'full')
+        with self.assertRaises(ValueError):
+            published.run(self.root, '2026-09-22', issuer_ids={'unknown'})
+
     def test_actual_fiscal_headline_is_candidate_not_automatic_qualification(self):
         self.add('Fictitious Example Reports Third Quarter Fiscal 2026 Financial Results.', report_date='2026-08-31')
         self.catalog()
