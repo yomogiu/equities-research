@@ -1,5 +1,9 @@
 # Private Luna/Sol earnings benchmark
 
+This document describes the historical benchmark workflow. For new runs, use the
+[selected report pipeline](report-pipeline.md), with GPT-6 Luna Max retrieval and
+passage-ID repair. Historical run receipts retain their original model settings.
+
 This isolated historical earnings experiment measures whether two Luna preparation
 roles can support a concise Sol report and a fresh, independent Sol review. It does
 not collect new sources, change production gates, activate schedules, publish

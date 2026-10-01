@@ -29,6 +29,23 @@ does not create a scheduler, persistent research storage, or a running agent ser
 - [Evidence rubric](roles/rubric.md)
 - [Investment methodology](.agents/skills/analyze-stock/SKILL.md)
 
+## Selected report pipeline
+
+Use `research.earnings_passage_pipeline` for new authorized, bounded report runs.
+It runs Prime Agent sessions through the existing Codex subscription:
+
+| Role | Model | Effort |
+| --- | --- | --- |
+| Financial context | GPT-5.6 Luna | Extra High |
+| Retrieval and Q&A coverage | GPT-6 Luna | Max |
+| Analysis | GPT-6.1 Sol | Medium |
+| Independent review | GPT-6.1 Sol | Medium |
+
+[Run, verify and repair the selected pipeline](docs/report-pipeline.md).
+Code copies exact selected passages and renders source-derived financial values.
+Unresolved substantive or formatting findings keep reports in draft status.
+This entry point does not activate the collection scheduler or unattended analysis.
+
 ## Check the code
 
 Python 3.11+ and its standard library are sufficient. No API key, paid data provider,
