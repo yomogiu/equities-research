@@ -151,3 +151,54 @@ def apply_patch(role, prior, patch, value):
         _replace(out, edit['path'], {'passage_id': edit['passage_id']})
     # Validation occurs separately so an invalid replacement gets precise next-round feedback.
     return out
+
+
+def repair_view(role, prior, issues, value):
+    """Bounded candidate evidence for invalid IDs; never choose a replacement.
+
+    Near-ID matching proposes at most three candidates per slot. Exact scope hints
+    can identify a source region, but unmatched guesses never trigger a full-corpus
+    resend. One adjacent passage on each side retains context within the same turn.
+    Unresolved slots require explicit source selection outside this repair call.
+    """
+    from difflib import get_close_matches
+    by_id = {p['passage_id']: p for p in value['passages']}
+    by_scope = {}
+    for p in value['passages']:
+        by_scope.setdefault(p['scope_id'], []).append(p)
+    repairs, unresolved = [], []
+    remaining_characters = 24000
+    valid_used = {q.get('passage_id') for path, q in quote_slots(role, prior)
+                  if isinstance(q, dict) and isinstance(q.get('passage_id'), str)
+                  and path not in {x['path'] for x in issues}}
+    for issue in issues:
+        q=issue.get('selection'); q=q if isinstance(q,dict) else {}
+        pid=q.get('passage_id'); candidates=[]
+        if isinstance(pid,str):
+            if pid in by_id: candidates=[pid]
+            elif len(pid)<=32:
+                candidates=get_close_matches(pid, list(by_id), n=3, cutoff=0.86)
+        scope=q.get('scope_id')
+        if not candidates and isinstance(scope,str) and scope in by_scope:
+            # A legacy scope alone is too broad when it contains many passages.
+            rows=by_scope[scope]
+            if len(rows)<=8: candidates=[p['passage_id'] for p in rows]
+        windows=[]; seen=set()
+        for candidate in candidates:
+            anchor=by_id[candidate]; rows=by_scope[anchor['scope_id']]
+            i=next(i for i,p in enumerate(rows) if p['passage_id']==candidate)
+            for p in rows[max(0,i-1):i+2]:
+                if p['passage_id'] in seen:continue
+                seen.add(p['passage_id'])
+                windows.append({k:p[k] for k in ('passage_id','scope_id','text','start','end')})
+        # Avoid inserting an entire enormous paragraph into a supposedly bounded repair.
+        characters = sum(len(p['text']) for p in windows)
+        if (not windows or characters > min(12000, remaining_characters) or
+            not any(p['passage_id'] not in valid_used and p['text'].strip() for p in windows)):
+            unresolved.append(issue['path']);continue
+        remaining_characters -= characters
+        repairs.append({'path':issue['path'],'reason':issue['reason'],'submitted_selection':q,
+                        'candidates_and_adjacent_context':windows,
+                        'already_selected_ids':sorted(valid_used & {p['passage_id'] for p in windows})})
+    return {'repairs':repairs,'unresolved_paths':unresolved,
+            'notice':'Candidates are suggestions only. Choose a substantive passage fitting the intended finding; code does not auto-correct IDs. Context does not cross the cited source scope.'}

@@ -15,6 +15,7 @@ import re
 import time
 from research import earnings_experiment as base
 from research import earnings_compact_evidence as evidence
+from research import earnings_financial_display as display
 
 VERSION = 'luna-sol-earnings-v1'
 MODELS = {'financial': ('gpt-5.6-luna', 'xhigh'),
@@ -145,7 +146,7 @@ def validate_output(role, out, bundle):
         if not isinstance(findings,list):
             raise ValueError('Review findings required')
         for f in findings:
-            if f.get('target') not in ('financial','retrieval','analysis'):
+            if f.get('target') not in ('financial','retrieval','analysis','formatter'):
                 raise ValueError('Review must target responsible author')
             for k in ('passage','reason','required_change'):
                 check_text(f.get(k), k)
@@ -176,9 +177,7 @@ def fact_cells(financial, bundle):
 
 
 def report_text(out, financial, bundle):
-    lines=[out['title'],'',out['opening']+' ['+', '.join(out['opening_citations'])+']','', 'Financial context — filed GAAP observations; original periods and units']
-    for r in fact_cells(financial,bundle):
-        lines.append(r['label']+': '+'; '.join(f"{v['value']} {v['unit']} ({v['period']}{'; '+v['dimensions'] if v['dimensions'] else ''}) [{v['id']}]" for v in r['values']))
+    lines=[out['title'],'',out['opening']+' ['+', '.join(out['opening_citations'])+']','', display.text_table(financial,bundle)]
     for f in out['findings']:
         lines.extend(['',f['heading'],f['text']+' ['+', '.join(f['citations'])+']'])
         for q in f['quotes']:
@@ -192,7 +191,7 @@ def prompt_for(role,bundle,writing,dependencies,feedback=None):
     case=base.read(bundle['manifest']['case_path'])
     shared={'case_id':case['case_id'],'scope_notes':case['scope_notes']}
     if role=='financial':
-        instruction='''Prepare a compact financial context sheet for a technically informed investor. Choose 4–12 meaningful rows of exact financial observation IDs (at most four IDs per row) with comparable periods and matching segment dimensions. Include cash conversion and material balance-sheet or commitments context when the sources support them. All financial observations are available; do not limit selection to canonical_metric. Select IDs only; code will copy original values/units/periods into the report. Never manufacture a fact for an unavailable transform. Keep quarterly and year-to-date cash flows distinct. Return {"rows":[{"label":"...","fact_ids":["F001"]}],"context":[{"text":"Material interpretation/adjustment, with exact period and basis","citations":["D001","F001"]}],"gaps":["Specific unresolved item"]}. Use 0–8 concise context entries. The context is analyst input; final report will select material commentary. Do not include evidence blobs in output.'''
+        instruction='''Prepare a compact financial context sheet for a technically informed investor. Choose 4–12 meaningful rows of exact financial observation IDs (at most four IDs per row) with comparable periods and matching segment dimensions. Include cash conversion and material balance-sheet or commitments context when the sources support them. All financial observations are available; do not limit selection to canonical_metric. Select IDs only. Code owns metric labels, unit conversion and period columns. Row labels are selection hints and cannot override source identities. Currency totals display in millions; per-share values and ratios remain unscaled. Put source-backed comparability, subsequent-event dates and payment-horizon qualifications in context entries; do not infer them from tagged context dates. Never manufacture a fact for an unavailable transform. Keep quarterly and year-to-date cash flows distinct. Return {"rows":[{"label":"...","fact_ids":["F001"]}],"context":[{"text":"Material interpretation/adjustment, with exact period and basis","citations":["D001","F001"]}],"gaps":["Specific unresolved item"]}. Use 0–8 concise context entries. The context is analyst input; final report will select material commentary. Do not include evidence blobs in output.'''
         data={**shared,'financial_observations':all_facts(bundle),'complete_nontranscript_documents':full_documents(bundle)}
     elif role=='retrieval':
         instruction='''Prepare one evidence batch for a separate analyst. Read the complete transcript and all nontranscript documents. Select up to 24 complete document chunk IDs that best corroborate or challenge consequential Q&A, guidance, economics and cash/commitments. Cover every indexed Q&A exchange exactly once, including corrections and non-answers. Retain positive answers and actual deferrals; do not invent a question nobody asked. Return {"selected_document_ids":["D001"],"exchange_coverage":[{"exchange_id":"EXACT INDEX ID","question":"Asked detail","answer":"What management actually supplied or deferred","consequence":"Why it matters or why low priority"}],"document_findings":[{"text":"Source-backed material corroboration or limitation","citations":["D001"]}],"quotes":[{"scope_id":"EXACT TURN/EXCHANGE OR D ID","text":"Exact distinctive short source substring"}]}. Include 4–18 useful quotations. Do not include start offsets unless needed for repeated text. Document findings at most 16. Select evidence, do not write the report.'''
@@ -201,10 +200,10 @@ def prompt_for(role,bundle,writing,dependencies,feedback=None):
         instruction='''Write a concise historical event-update report for a technically informed investor. Read the complete transcript directly, financial context sheet and corroborating document spans. Aim for 650–900 total report words including deterministic financial table and quotes. Synthesize 4–7 distinct consequential findings; favor actual analyst question/management answer, mechanisms, quantified guidance, sourced non-answers and important financial corroboration. Avoid repeating findings. Select only a few short exact quotations; place them in quotes arrays, not inside prose. Every statement must be grounded; citations identify supporting F/D/transcript scope IDs, not preparer output. Requested next tests max four, concrete and proportionate. Return {"title":"Issuer — period event update","opening":"Concise substantive opening","opening_citations":["F001"],"findings":[{"heading":"Factual heading","text":"One distinct finding with attribution, mechanisms and evidence","citations":["EXACT SOURCE ID"],"quotes":[{"scope_id":"EXACT SOURCE ID","text":"exact substring"}]}],"next_tests":[{"text":"Specific next question or measurement","citations":["EXACT SOURCE ID"]}],"scope":"One compact statement of historical snapshot and unavailable context"}. Table is generated separately from the financial sheet. No financial table duplication in prose. No formatting/HTML/Markdown. Never add caution or unprompted equivalences to sound balanced.'''
         selections=dependencies['retrieval']['selected_document_ids']
         data={**shared,'complete_transcript':transcript(bundle),'financial_context_sheet':dependencies['financial'],
-              'financial_table':fact_cells(dependencies['financial'],bundle),'retrieval_batch':dependencies['retrieval'],
+              'financial_table':display.build(dependencies['financial'],bundle),'retrieval_batch':dependencies['retrieval'],
               'selected_original_spans':evidence.source_slices(bundle['manifest'],selections)}
     elif role=='review':
-        instruction='''Independently audit the exact candidate report and financial/retrieval artifacts against original sources. Your fresh context contains the complete transcript, all document text, and all extracted financial observations, independently of the preparers' selection. Verify every material report statement/quote, issuer/period/units, comparability, management versus analyst claims, guidance conditions, Q&A coverage, meaningful omissions, mechanisms and counterevidence. A selection or citation is not proof of fidelity. Check the full prose separately for the supplied writing standard. Require corrections for unsupported statements, consequential omissions, generic caution, imagined misconception or redundant text. Do not expand the report into exhaustive disclosure; a missing fact matters only when it changes the report's conclusion or usefulness. Return {"verdict":"pass|revise|blocked","criteria":{KEY:{"status":"pass|fail|unavailable","evidence":"Specific assessment with source IDs and report passages"}},"findings":[{"target":"financial|retrieval|analysis","passage":"Exact flawed passage, row label, or omitted topic","reason":"Source-supported problem","required_change":"Concrete bounded repair","citations":["EXACT SOURCE ID"]}]}. All criterion keys required: '''+', '.join(CRITERIA)+'''. A pass must have every criterion pass and zero unresolved findings, including writing issues. Do not output a replacement report. Correction budget is at most two rounds. If defects remain, say so.'''
+        instruction='''Independently audit the exact candidate report and financial/retrieval artifacts against original sources. Your fresh context contains the complete transcript, all document text, and all extracted financial observations, independently of the preparers' selection. Verify every material report statement/quote, issuer/period/units, comparability, management versus analyst claims, guidance conditions, Q&A coverage, meaningful omissions, mechanisms and counterevidence. A selection or citation is not proof of fidelity. Check the full prose separately for the supplied writing standard. Require corrections for unsupported statements, consequential omissions, generic caution, imagined misconception or redundant text. Do not expand the report into exhaustive disclosure; a missing fact matters only when it changes the report's conclusion or usefulness. Return {"verdict":"pass|revise|blocked","criteria":{KEY:{"status":"pass|fail|unavailable","evidence":"Specific assessment with source IDs and report passages"}},"findings":[{"target":"financial|retrieval|analysis|formatter","passage":"Exact flawed passage, row label, or omitted topic","reason":"Source-supported problem","required_change":"Concrete bounded repair","citations":["EXACT SOURCE ID"]}]}. All criterion keys required: '''+', '.join(CRITERIA)+'''. A pass must have every criterion pass and zero unresolved findings, including writing issues. Do not output a replacement report. Route numeric display scale, source-derived labels, column layout and citation rendering defects to formatter; these stop the model loop for a code repair. Route wrong fact selection, missing comparison facts or source-backed contextual notes to financial, faulty evidence interpretation to retrieval, and prose/omissions to analysis. Do not ask financial to fix display code by editing a row label. Correction budget is at most two rounds. If defects remain, say so.'''
         data={**shared,'candidate_report':report_text(dependencies['analysis'],dependencies['financial'],bundle),
               'candidate_artifacts':dependencies,'complete_transcript':transcript(bundle),
               'complete_nontranscript_documents':full_documents(bundle),'all_financial_observations':all_facts(bundle)}
@@ -228,13 +227,7 @@ def render(root,out,financial,bundle,status):
         return ' '.join('<a href="#e-'+e(i)+'">'+e(i)+'</a>' for i in ids)
     blocks=['<header><p>PRIVATE RESEARCH · HISTORICAL EVENT UPDATE</p><p>'+e(status)+'</p></header>',
             '<main><h1>'+e(out['title'])+'</h1><p class="lead">'+e(out['opening'])+' '+refs(out['opening_citations'])+'</p>',
-            '<h2>Financial context</h2><p class="note">Filed GAAP observations. Values, units and periods copied from validated source records.</p><table><thead><tr><th>Measure</th><th>Values · period</th></tr></thead><tbody>']
-    for row in fact_cells(financial,bundle):
-        values=[]
-        for v in row['values']:
-            values.append('<span class="value">'+e(v['value']+' '+v['unit'])+' '+refs([v['id']])+'</span><small>'+e(v['period'])+('</small><small>'+e(v['dimensions']) if v['dimensions'] else '')+'</small>')
-        blocks.append('<tr><th>'+e(row['label'])+'</th><td>'+'<br>'.join(values)+'</td></tr>')
-    blocks.append('</tbody></table>')
+            display.html_table(financial,bundle,refs)]
     for f in out['findings']:
         blocks.append('<section><h2>'+e(f['heading'])+'</h2><p>'+e(f['text'])+' '+refs(f['citations'])+'</p>')
         for q in f['quotes']:
@@ -253,7 +246,7 @@ def render(root,out,financial,bundle,status):
             blocks.append('<pre>'+e(item['table_row']['text'])+'</pre>')
         blocks.append('</details>')
     blocks.append('</main>')
-    style='body{background:#f5f4ef;color:#202924;font:17px/1.6 system-ui;margin:auto;max-width:1060px;padding:24px}header{font-size:13px;color:#52655b;border-bottom:1px solid #ccd3cb}h1{font-size:32px;line-height:1.2}h2{font-size:21px;margin:28px 0 8px}.lead{font-size:19px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:8px 12px;border-bottom:1px solid #d3d9d0;text-align:left;vertical-align:top}td small{display:block;color:#52655b}th{width:32%}a{color:#17634d}blockquote{border-left:3px solid #859e8c;margin:12px 0;padding:6px 18px;background:#e9eee6}.note{font-size:13px;color:#52655b}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 monospace}details{border-top:1px solid #ccd3cb;padding:8px}details:target{background:#e9eee6}summary{cursor:pointer}'
+    style='body{background:#f5f4ef;color:#202924;font:17px/1.6 system-ui;margin:auto;max-width:1060px;padding:24px}header{font-size:13px;color:#52655b;border-bottom:1px solid #ccd3cb}h1{font-size:32px;line-height:1.2}h2{font-size:21px;margin:28px 0 8px}.lead{font-size:19px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:8px 12px;border-bottom:1px solid #d3d9d0;text-align:left;vertical-align:top}td small{display:block;color:#52655b}th{max-width:480px}th small{display:block;color:#52655b;font-weight:normal}td.numeric{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}caption{text-align:left;font-size:13px;color:#52655b;margin:16px 0 4px}a{color:#17634d}blockquote{border-left:3px solid #859e8c;margin:12px 0;padding:6px 18px;background:#e9eee6}.note{font-size:13px;color:#52655b}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 monospace}details{border-top:1px solid #ccd3cb;padding:8px}details:target{background:#e9eee6}summary{cursor:pointer}'
     body='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+e(out['title'])+'</title><style>'+style+'</style>'+''.join(blocks)+'</html>'
     immutable_text(root/'report.html',body)
 
@@ -261,7 +254,7 @@ def render(root,out,financial,bundle,status):
 def freeze(case_path,output,writing_path):
     root=Path(output).resolve(); root.mkdir(parents=True,exist_ok=True)
     manifest=evidence.prepare(case_path,root/'evidence')
-    files=['earnings_mixed_pipeline.py','earnings_mixed_runner.py','earnings_compact_evidence.py','earnings_experiment.py']
+    files=['earnings_mixed_pipeline.py','earnings_mixed_runner.py','earnings_compact_evidence.py','earnings_experiment.py','earnings_financial_display.py']
     code=[{'path':str(Path(__file__).parent/name),'sha256':base.sha(Path(__file__).parent/name)} for name in files]
     helper=Path(__file__).parent/'earnings_mixed_prime.mjs'
     if helper.exists(): code.append({'path':str(helper),'sha256':base.sha(helper)})

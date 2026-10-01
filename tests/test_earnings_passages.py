@@ -131,7 +131,7 @@ class PipelineTests(PassageFixture, unittest.TestCase):
             out = self.financial
         elif role == 'retrieval':
             if number == 0:
-                out = copy.deepcopy(self.retrieval); out['quotes'][1] = {'passage_id': 'bad-id'}
+                out = copy.deepcopy(self.retrieval); out['quotes'][1] = {'passage_id': self.ids[1][:-1]}
             else:
                 out = {'replacements': [{'path': '/quotes/1', 'passage_id': 'still-bad' if self.bad_patch else self.ids[1]}]}
         elif role == 'analysis':
@@ -210,3 +210,98 @@ class RealRunnerStartupTests(PassageFixture, unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class NarrowRepairTests(PassageFixture, unittest.TestCase):
+    def broken(self):
+        prior=copy.deepcopy(self.retrieval)
+        prior['quotes'][1]={'passage_id':self.ids[1][:-1]}
+        try: passages.resolve_selections('retrieval',prior,self.catalog)
+        except passages.SelectionError as exc: return prior,exc.issues
+        self.fail('Expected invalid selection')
+
+    def test_bounded_repair_copies_original_windows_and_excludes_corpus(self):
+        prior,issues=self.broken()
+        view=passages.repair_view('retrieval',prior,issues,self.catalog)
+        self.assertFalse(view['unresolved_paths'])
+        windows=view['repairs'][0]['candidates_and_adjacent_context']
+        self.assertIn(self.ids[1],[p['passage_id'] for p in windows])
+        lookup={p['passage_id']:p for p in self.catalog['passages']}
+        for p in windows:
+            for k,v in p.items(): self.assertEqual(v,lookup[p['passage_id']][k])
+        prompt=pipe.prompt('retrieval',self.bundle,'Standard',{},[],self.catalog,prior,issues)
+        self.assertNotIn('source_catalogue',prompt)
+        self.assertNotIn('supporting row 199',prompt)
+        self.assertLess(len(prompt),len(pipe.prompt('retrieval',self.bundle,'Standard',{},[],self.catalog)))
+        repaired=pipe.bounded_patch('retrieval',prior,{'replacements':[{'path':'/quotes/1','passage_id':self.ids[1]}]},self.catalog)
+        self.assertEqual(repaired,self.retrieval)
+
+    def test_outside_candidate_window_and_already_used_ids_rejected(self):
+        prior,issues=self.broken();view=passages.repair_view('retrieval',prior,issues,self.catalog)
+        allowed={p['passage_id'] for p in view['repairs'][0]['candidates_and_adjacent_context']}
+        outside=next(p['passage_id'] for p in self.catalog['passages'] if p['passage_id'] not in allowed)
+        for pid in [outside,self.ids[0]]:
+            with self.assertRaisesRegex(ValueError,'supplied, substantive, unused'):
+                pipe.bounded_patch('retrieval',prior,{'replacements':[{'path':'/quotes/1','passage_id':pid}]},self.catalog)
+
+
+class RoutingTests(PipelineTests):
+    def test_unmatched_id_blocks_without_full_catalogue_retry(self):
+        self.ids[1]='unresolvable'
+        result=pipe.run(self.output)
+        self.assertEqual(result['status'],'blocked')
+        self.assertEqual(len(self.calls),2)
+        self.assertEqual(base.read(self.output/'repair-handoff.json')['kind'],'source_selection')
+        self.assertEqual(pipe.verify(self.output),result)
+
+    def test_formatter_finding_stops_model_loop_and_binds_handoff(self):
+        original=self.call
+        def call(path,prompt,model,effort,bindings,timeout):
+            result=original(path,prompt,model,effort,bindings,timeout)
+            if bindings['role']=='review':
+                result['content']['verdict']='revise'
+                result['content']['findings']=[{'target':'formatter','passage':'Fictional table','reason':'Wrong unit display',
+                    'required_change':'Correct deterministic scaling','citations':['F002']}]
+            return result
+        with patch.object(pipe,'run_role',side_effect=call): result=pipe.run(self.output)
+        self.assertEqual(result['status'],'blocked')
+        self.assertEqual(self.calls[-1],('review',1))
+        self.assertNotIn(('financial',2),self.calls)
+        handoff=base.read(self.output/'repair-handoff.json')
+        self.assertEqual(handoff['kind'],'formatter')
+        self.assertEqual(handoff['artifact_digest'],result['artifact_digest'])
+        self.assertEqual(pipe.verify(self.output),result)
+        handoff['findings']=[]
+        (self.output/'repair-handoff.json').write_text(json.dumps(handoff))
+        with self.assertRaisesRegex(ValueError,'handoff differs'):pipe.verify(self.output)
+
+
+class ModelRefusalTests(PipelineTests):
+    def test_repair_refusal_stops_and_persists_source_handoff(self):
+        original=self.call
+        def call(path,prompt,model,effort,bindings,timeout):
+            result=original(path,prompt,model,effort,bindings,timeout)
+            if bindings['role']=='retrieval' and bindings['round']==1:
+                result['content']={'blocked':'Fictional candidate does not support intended evidence'}
+            return result
+        with patch.object(pipe,'run_role',side_effect=call): result=pipe.run(self.output)
+        self.assertEqual(result['status'],'blocked')
+        self.assertEqual(len(self.calls),3)
+        handoff=base.read(self.output/'repair-handoff.json')
+        self.assertEqual(handoff['kind'],'source_selection')
+        self.assertIn('retrieval',handoff['model_refusals'])
+        self.assertEqual(pipe.verify(self.output),result)
+
+    def test_substantive_financial_findings_return_to_author(self):
+        original=self.call
+        def call(path,prompt,model,effort,bindings,timeout):
+            result=original(path,prompt,model,effort,bindings,timeout)
+            if bindings['role']=='review' and bindings['round']==1:
+                result['content']['verdict']='revise'
+                result['content']['findings']=[{'target':'financial','passage':'Missing prior period',
+                    'reason':'Fictional comparison missing','required_change':'Select source comparison',
+                    'citations':['F002']}]
+            return result
+        with patch.object(pipe,'run_role',side_effect=call): result=pipe.run(self.output)
+        self.assertEqual(result['status'],'accepted')
+        self.assertIn(('financial',2),self.calls)
+        self.assertFalse((self.output/'repair-handoff.json').exists())
