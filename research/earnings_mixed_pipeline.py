@@ -19,7 +19,7 @@ from research import earnings_financial_display as display
 
 VERSION = 'luna-sol-earnings-v1'
 MODELS = {'financial': ('gpt-5.6-luna', 'xhigh'),
-          'retrieval': ('gpt-5.6-luna', 'max'),
+          'retrieval': ('gpt-6-luna', 'max'),
           'analysis': ('gpt-6.1-sol', 'medium'),
           'review': ('gpt-6.1-sol', 'medium')}
 CRITERIA = ('source_fidelity', 'question_answer_fidelity', 'financial_context',

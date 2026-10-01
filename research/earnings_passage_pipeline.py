@@ -1,6 +1,6 @@
 """Opt-in v3 of the mixed-model experiment: ID-only quotes and bounded slot repairs.
 
-Uses the original role/model settings. Frozen v1 code and runs are unchanged.
+Retrieval uses GPT-6 Luna Max; other role settings are unchanged. Frozen v1 code and runs are unchanged.
 Research artifacts must remain private. No production/schedule changes.
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ from research import earnings_mixed_pipeline as legacy
 from research import earnings_passages as passages
 from research.earnings_mixed_runner import run_role, verify_job
 
-VERSION = 'luna-sol-presentation-v3'
+VERSION = 'luna6-sol-presentation-v4'
 MODELS = legacy.MODELS
 QUOTE_RULE = ('Quotations are selected ONLY as {"passage_id":"exact catalogue ID"}. '
               'Never return quotation text, offsets or scope IDs in a quote selection. '

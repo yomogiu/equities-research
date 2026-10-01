@@ -15,11 +15,12 @@ try {
   const auth = AuthStorage.create();
   stage = 'registry';
   const registry = ModelRegistry.inMemory(auth);
-  if (request.model === 'gpt-6.1-sol' && !registry.find('openai-codex', request.model)) {
+  const registeredNames = {'gpt-6.1-sol':'GPT-6.1 Sol', 'gpt-6-luna':'GPT-6 Luna'};
+  if (registeredNames[request.model] && !registry.find('openai-codex', request.model)) {
     registry.registerProvider('openai-codex', {
       oauth:getOAuthProvider('openai-codex'),
       api:'openai-codex-responses', baseUrl:'https://chatgpt.com/backend-api',
-      models:[{id:'gpt-6.1-sol', name:'GPT-6.1 Sol', reasoning:true,
+      models:[{id:request.model, name:registeredNames[request.model], reasoning:true,
         thinkingLevelMap:{minimal:null, xhigh:'xhigh', max:'max'}, input:['text'],
         contextWindow:272000, maxTokens:128000,
         // Unknown subscription pricing is deliberately excluded from receipts.

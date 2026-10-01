@@ -1,7 +1,7 @@
 # Financial display and bounded repair experiment
 
 The opt-in `research.earnings_passage_pipeline` now freezes version
-`luna-sol-presentation-v3`. Keep earlier frozen checkouts and runs unchanged.
+`luna6-sol-presentation-v4`. Keep earlier frozen checkouts and runs unchanged.
 This is experimental code; it does not enable production analysis or scheduling.
 
 The financial worker selects source fact IDs and supplies source-backed context.
@@ -37,3 +37,7 @@ Run all tests with `python3 -m unittest discover -s tests -v`, then
 `python3 -m research.cli --help`. Tests use fictional evidence and mocked model
 calls. Rendering a previous run is a deterministic preview, not a new generation
 benchmark, quality pass, or measurement of provider token savings.
+
+Retrieval now uses `gpt-6-luna` at `max` effort. Financial preparation remains
+`gpt-5.6-luna` at `xhigh`; analysis and independent review remain `gpt-6.1-sol`
+at `medium`. Freeze a new run for these settings; prior receipts are unchanged.

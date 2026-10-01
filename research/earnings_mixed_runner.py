@@ -20,7 +20,7 @@ import uuid
 
 VERSION = 'mixed-prime-role-v1'
 PROVIDER = 'openai-codex'
-ALLOWED = {'gpt-5.6-luna': {'xhigh', 'max'}, 'gpt-6.1-sol': {'medium'}}
+ALLOWED = {'gpt-6-luna': {'max'}, 'gpt-5.6-luna': {'xhigh', 'max'}, 'gpt-6.1-sol': {'medium'}}
 HELPER = Path(__file__).with_name('earnings_mixed_prime.mjs')
 
 
