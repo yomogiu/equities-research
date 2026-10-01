@@ -152,3 +152,52 @@ Use `earnings_mixed_audit` for final verification. It also checks complete order
 role sets, role-specific models, distinct sessions, actual regenerated prompts,
 and receipt-derived timing. This additional verifier is separate so original
 frozen code and completed artifacts remain unchanged.
+
+## Passage-selection v2
+
+Use `research.earnings_passage_pipeline` for new passage-ID experiments. The v1
+runner, prompts, completed runs and measurements stay unchanged. Models and
+reasoning settings are identical to the table above.
+
+```sh
+python3 -m research.earnings_passage_pipeline freeze "$BENCH_CASE" "$BENCH_OUTPUT" "$BENCH_WRITING"
+python3 -m research.earnings_passage_pipeline run "$BENCH_OUTPUT"
+python3 -m research.earnings_passage_pipeline verify "$BENCH_OUTPUT"
+```
+
+Choose a fresh private output directory. `passages.json` freezes a deterministic
+catalogue of sentence-like source fragments. These are mechanical boundaries,
+which may divide abbreviations or follow document chunks; the worker retains all
+surrounding source text and original speaker/exchange annotations. Transcript
+passages cannot cross speaker turns. Unassigned transcript spans remain available
+as context. Original whitespace, Unicode, punctuation and CRLF are preserved.
+
+Retrieval selects `{"passage_id":"exact catalogue ID"}`. Analysis selects IDs from
+the retrieval handoff. Neither worker supplies quote text or offsets. Code copies
+each selected passage with document ID, source path, full source SHA-256, span
+SHA-256, scope ID and absolute start/end Unicode-character offsets (end exclusive).
+Identical wording at two positions has distinct IDs. The raw `artifacts.json`
+retains model selections; `materialized-artifacts.json` stores the copied quotes.
+The renderer and independent reviewer use the materialized version. Verification
+recomputes the catalogue from the original sources and replays authenticated
+selections and repairs; changed sources or copied text fail verification.
+
+All invalid quote selections are reported together with their exact JSON path,
+submitted selection, reason and required replacement. The next call returns only:
+
+```json
+{"replacements":[{"path":"/quotes/2","passage_id":"an exact catalogue ID"}]}
+```
+
+The patch must cover each invalid slot exactly once. It cannot modify valid quotes,
+coverage, findings, financial rows or prose. A bad replacement gets specific feedback
+within the same two-correction-round budget. Successful preparation roles are reused.
+Schema defects outside quote slots and substantive reviewer findings still require
+the responsible role to return a corrected full artifact. Every newly generated
+report receives fresh independent substantive and writing review.
+
+Exact quotation copying establishes provenance. It does not establish contextual
+accuracy, relevance, or completeness; those remain review requirements. Synthetic
+integration tests exercise patch execution, persistence, resume, correction limits,
+source tampering and review rejection. A provider run is needed to measure latency,
+usage and selection quality; deterministic tests establish no such improvement.

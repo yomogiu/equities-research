@@ -1,0 +1,153 @@
+"""Exact, source-bound passage selection. Models select IDs; code owns quotation bytes.
+
+Sentence-like fragments are mechanical navigation units, not linguistic assertions.
+They never cross document-chunk or speaker-turn boundaries. Unicode offsets use
+exclusive ends; whitespace, repeated text, CRLF and punctuation are unchanged.
+"""
+from __future__ import annotations
+import copy
+import re
+from research import earnings_compact_evidence as evidence
+from research import earnings_experiment as base
+
+VERSION = 'earnings-passages-v1'
+BOUNDARY = re.compile(r'(?<=[.!?])[ \t\r\n]+|\r?\n')
+
+
+class SelectionError(ValueError):
+    def __init__(self, issues):
+        self.issues = issues
+        super().__init__('Invalid passage selections: ' + '; '.join(
+            x['path'] + ': ' + x['reason'] for x in issues))
+
+
+def catalog(manifest):
+    bundle = evidence.load_bundle(manifest)
+    scopes = ([c['id'] for c in bundle['documents']['chunks']] +
+              [t['id'] for t in bundle['transcript_index']['turns']])
+    passages = []
+    for entry in evidence.source_slices(manifest, scopes):
+        for span in entry['spans']:
+            text = span['text']
+            boundaries = sorted({0, len(text), *(m.end() for m in BOUNDARY.finditer(text))})
+            for a, b in zip(boundaries, boundaries[1:]):
+                binding = {k: span[k] for k in ('path', 'sha256', 'document_id', 'offset_unit')}
+                binding.update(scope_id=entry['id'], start=span['start'] + a, end=span['start'] + b)
+                # Path-independent identity; source content, scope and absolute position bind it.
+                identity = {k: v for k, v in binding.items() if k != 'path'}
+                passages.append({**binding, 'passage_id': 'P' + base.digest(identity)[:12],
+                                 'text': text[a:b], 'span_sha256': evidence._sha_text(text[a:b])})
+    ids = [p['passage_id'] for p in passages]
+    if len(set(ids)) != len(ids):
+        raise ValueError('Passage ID collision')
+    return {'version': VERSION, 'case_sha256': bundle['manifest']['case_sha256'],
+            'offset_unit': 'unicode_character', 'passages': passages}
+
+
+def input_view(manifest, value=None):
+    """One text copy per source: selectable passages plus unassigned transcript spans."""
+    value = value or catalog(manifest)
+    view = evidence.transcript_view(manifest)
+    turns = sorted(view['index']['turns'], key=lambda t: t['start'])
+    gaps, cursor = [], 0
+    for turn in turns:
+        if cursor < turn['start']:
+            gaps.append({'start': cursor, 'end': turn['start'], 'text': view['text'][cursor:turn['start']]})
+        cursor = turn['end']
+    if cursor < len(view['text']):
+        gaps.append({'start': cursor, 'end': len(view['text']), 'text': view['text'][cursor:]})
+    # Group by original scope and use columnar rows to avoid repeating long source
+    # identifiers/provenance thousands of times in the model's input. Full offsets
+    # and hashes remain in the frozen catalogue and materialized quote artifacts.
+    groups = []
+    for p in value['passages']:
+        if not groups or groups[-1]['scope_id'] != p['scope_id']:
+            groups.append({'scope_id': p['scope_id'], 'rows': []})
+        groups[-1]['rows'].append([p['passage_id'], p['text']])
+    return {'columns': ['passage_id', 'text'], 'passage_groups': groups,
+            'transcript_index': view['index'], 'unassigned_transcript_spans': gaps,
+            'notice': 'Passages plus unassigned spans retain all original text. Passage boundaries are mechanical; read adjacent passages and the complete speaker turn for context. Select only passage_id; never retype quotes or offsets. Unassigned spans are context, not selectable quotations.'}
+
+
+def quote_slots(role, out):
+    if not isinstance(out, dict):
+        raise ValueError('Role output must be a JSON object')
+    if role == 'retrieval':
+        if not isinstance(out.get('quotes'), list) or not 4 <= len(out['quotes']) <= 18:
+            raise ValueError('Retrieval requires four to eighteen passage selections')
+        return [('/quotes/' + str(i), q) for i, q in enumerate(out['quotes'])]
+    if role == 'analysis':
+        slots = []
+        if not isinstance(out.get('findings'), list) or any(not isinstance(f, dict) for f in out['findings']):
+            raise ValueError('Analysis findings must be a list of objects')
+        for i, f in enumerate(out['findings']):
+            if not isinstance(f.get('quotes'), list) or len(f['quotes']) > 4:
+                raise ValueError('Each finding requires a quotes list of at most four selections')
+            slots.extend((f'/findings/{i}/quotes/{j}', q) for j, q in enumerate(f['quotes']))
+        return slots
+    return []
+
+
+def resolve_selections(role, out, value):
+    by_id = {p['passage_id']: p for p in value['passages']}
+    resolved, issues, seen = {}, [], set()
+    for path, q in quote_slots(role, out):
+        pid = q.get('passage_id') if isinstance(q, dict) else None
+        reason = None
+        if not isinstance(q, dict) or set(q) != {'passage_id'}:
+            reason = 'Select one passage_id only; text, scope and offsets are copied by code.'
+        elif not isinstance(pid, str) or pid not in by_id:
+            reason = 'Unknown passage_id; choose an exact ID from the supplied catalogue.'
+        elif not by_id[pid]['text'].strip():
+            reason = 'Whitespace-only passage; select a substantive passage.'
+        elif pid in seen:
+            reason = 'Duplicate selection; select a distinct relevant passage.'
+        if reason:
+            issues.append({'path': path, 'selection': copy.deepcopy(q), 'reason': reason,
+                           'required_change': 'Replace only this selection with {"passage_id":"an exact catalogue ID"}.'})
+        else:
+            seen.add(pid)
+            resolved[path] = copy.deepcopy(by_id[pid])
+    if issues:
+        raise SelectionError(issues)
+    return resolved
+
+
+def _replace(out, path, replacement):
+    bits = path.lstrip('/').split('/')
+    cursor = out
+    for bit in bits[:-1]:
+        cursor = cursor[int(bit)] if isinstance(cursor, list) else cursor[bit]
+    if isinstance(cursor, list):
+        cursor[int(bits[-1])] = replacement
+    else:
+        cursor[bits[-1]] = replacement
+
+
+def hydrate(role, out, value):
+    hydrated = copy.deepcopy(out)
+    for path, quote in resolve_selections(role, out, value).items():
+        _replace(hydrated, path, quote)
+    return hydrated
+
+
+def apply_patch(role, prior, patch, value):
+    """Only failed quote slots are writable; preserve every other field byte-for-byte."""
+    try:
+        resolve_selections(role, prior, value)
+    except SelectionError as exc:
+        allowed = {x['path'] for x in exc.issues}
+    else:
+        raise ValueError('No invalid selections to repair')
+    if not isinstance(patch, dict) or set(patch) != {'replacements'} or not isinstance(patch['replacements'], list):
+        raise ValueError('Repair must contain only a replacements list')
+    edits = patch['replacements']
+    if any(not isinstance(e, dict) or set(e) != {'path', 'passage_id'} or not isinstance(e['path'], str) for e in edits):
+        raise ValueError('Repair entries require only path and passage_id')
+    if len(edits) != len(allowed) or {e['path'] for e in edits} != allowed:
+        raise ValueError('Repair must replace every invalid selection exactly once, and no valid selection')
+    out = copy.deepcopy(prior)
+    for edit in edits:
+        _replace(out, edit['path'], {'passage_id': edit['passage_id']})
+    # Validation occurs separately so an invalid replacement gets precise next-round feedback.
+    return out
