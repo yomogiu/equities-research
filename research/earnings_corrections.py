@@ -210,7 +210,7 @@ if protocol.get('version') == 'deterministic-corrections-v1':
     from research import earnings_corrections as c
     cp,bundle,catalog,writing=c.load(root)
     progress=c.replay(root,cp,bundle,catalog,writing)
-    snapshot=progress['state']; sp=cp['source_protocol']; used_rounds=progress['round']; spent_tokens=progress['tokens']+cp.get('inherited_tokens',0)
+    snapshot=progress['state']; sp=cp['source_protocol']; used_rounds=progress['round']+(0 if cp.get('new_experiment') else cp.get('prior_rounds',0)); spent_tokens=progress['tokens']+cp.get('inherited_tokens',0)
     if len(sys.argv)>2 and sys.argv[2]=='reuse':
         if not ((progress['status'] in ('pending','budget_exhausted','prompt_too_large') and progress.get('role')=='review') or progress['status']=='invalid_patch'):
             raise ValueError('Only an authenticated unreviewed proposal may be reused')
