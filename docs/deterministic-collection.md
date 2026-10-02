@@ -136,3 +136,26 @@ with freshness and missing-document states. Agent invocation acknowledgment is n
 qualification completion; the private main-branch evidence is authoritative. This
 pipeline does not automatically run investment analysis or treat unreviewed period
 candidates as accepted earnings packets.
+
+### Batch-scoped Git archive reads
+
+An existing private workspace can run `research.pipeline --sparse-batch` with a
+non-cone sparse checkout that omits `collection/objects`, `sources`, historical
+`library/snapshots`, and `reports`, while including `sources/**/http-cache.json`.
+Keep the small configuration, collection manifests, catalog, qualifications,
+publication baseline, and scheduler metadata available. The runner selects its
+batch once, then adds exact audit inputs, snapshot IDs, and evidence paths for
+those issuers to the sparse checkout. Originals remain in Git.
+
+Catalog rebuilding replaces only selected issuers' documents. Publication compares
+unchanged issuer inventories against the previous immutable catalog snapshot before
+retaining their results and original `issuer_as_of` dates. Missing/incompatible
+baselines require explicit full reconciliation; the sparse job does not silently
+expand to a full archive read. The local full-text search index is not rebuilt by
+batch jobs. Full rebuild commands remain available on an archive-equipped machine.
+
+Use `git add --sparse --` with explicit output directories when persisting new
+source objects and catalog snapshots outside the initial sparse patterns. This
+stages new outputs while preserving omitted tracked archive files. Scope upload
+paths and verify the remote commit as with the existing workflow. Disk budgets
+must include both hydrated evidence and Git's downloaded object storage.
