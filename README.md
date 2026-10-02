@@ -43,7 +43,9 @@ It runs Prime Agent sessions through the existing Codex subscription:
 
 [Run, verify and repair the selected pipeline](docs/report-pipeline.md).
 Code copies exact selected passages and renders source-derived financial values.
-Unresolved substantive or formatting findings keep reports in draft status.
+Use `freeze --repair-loop` to automatically dispatch targeted repairs or source-backed
+rebuttals and return them to the reviewer for adjudication. Unresolved findings
+keep reports in draft status; accepted reports require a final passing review.
 This entry point does not activate the collection scheduler or unattended analysis.
 
 ## Check the code

@@ -352,16 +352,17 @@ def main():
     else:
         result = (run if args.command == 'run' else verify)(args.output)
         summary = {k: result[k] for k in ('status', 'correction_rounds', 'wall_seconds')}
-        if args.command == 'run' and base.read(Path(args.output)/'protocol.json').get('repair_loop') and result['status'] == 'blocked':
+        if base.read(Path(args.output)/'protocol.json').get('repair_loop') and result['status'] == 'blocked':
             from research import earnings_report_repair as repair
             root = Path(args.output).resolve()
             continuation = root.with_name(root.name + '-repair')
-            if not (continuation/'protocol.json').exists():
+            if not (continuation/'protocol.json').exists() and args.command == 'run':
                 repair.initialize(root, continuation)
-            elif base.read(continuation/'protocol.json')['seed'] != str(root):
-                raise ValueError('Repair directory belongs to a different seed')
-            summary = repair.run(continuation)
-            summary['repair_directory'] = str(continuation)
+            if (continuation/'protocol.json').exists():
+                if base.read(continuation/'protocol.json')['seed'] != str(root):
+                    raise ValueError('Repair directory belongs to a different seed')
+                summary = (repair.run if args.command == 'run' else repair.verify)(continuation)
+                summary['repair_directory'] = str(continuation)
         print(legacy.packed(summary))
 
 

@@ -26,7 +26,7 @@ case manifest, a new private run directory and the report writing standard.
 
 ```sh
 python3 -m research.earnings_mixed_runner --probe --model gpt-6-luna
-python3 -m research.earnings_passage_pipeline freeze "$REPORT_CASE" "$REPORT_OUTPUT" "$REPORT_WRITING"
+python3 -m research.earnings_passage_pipeline freeze "$REPORT_CASE" "$REPORT_OUTPUT" "$REPORT_WRITING" --repair-loop
 python3 -m research.earnings_passage_pipeline run "$REPORT_OUTPUT"
 python3 -m research.earnings_passage_pipeline verify "$REPORT_OUTPUT"
 ```
@@ -39,6 +39,8 @@ requires inspection and explicit recovery; it is not safe to launch again.
 
 ## Acceptance and repair
 
+The CLI follows a configured repair continuation for both `run` and `verify`.
+The original seed remains immutable; the continuation owns the revised report.
 Only `result.json` with `status: accepted`, confirmed by `verify`, establishes
 passing review of the exact artifacts. Report-file existence does not establish
 acceptance. `blocked` results retain draft reports and unresolved findings.
@@ -48,9 +50,10 @@ acceptance. `blocked` results retain draft reports and unresolved findings.
   produces a source-selection handoff.
 - Wrong fact selection, missing material context and evidence interpretation
   return to the responsible author within the correction budget.
-- Renderer findings stop model retries and persist `repair-handoff.json`, bound
-  to the protocol, artifacts and review. This queues code work; it does not
-  launch a code-fixing agent or waive substantive findings.
+- Without `--repair-loop`, renderer findings stop model retries and persist
+  `repair-handoff.json`, bound to the protocol, artifacts and review. With the
+  flag, the reviewer-owned continuation below executes supported presentation
+  repairs and returns the exact candidate to independent review.
 
 Current limitations include financial label/GAAP presentation defects and
 interrupted/corrected transcript-turn interpretation. Report synthesis can omit

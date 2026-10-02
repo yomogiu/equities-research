@@ -139,4 +139,23 @@ class RepairTests(PassageFixture, unittest.TestCase):
             p=base.read(root/'protocol.json');p['max_jobs']=1;(root/'protocol.json').write_text(json.dumps(p))
             with self.assertRaisesRegex(ValueError,'binding'):repair.advance(root)
 
+    def test_passage_windows_do_not_mix_raw_and_normalized_offsets(self):
+        p=self.catalog['passages'][0]
+        wrong={'spans':[{'document_id':p['document_id'],'sha256':'different-representation','start':0,'end':9999999}]}
+        self.assertEqual(repair.passages_for_sources(self.catalog,set(),[wrong]),[])
+        correct=copy.deepcopy(wrong);correct['spans'][0]['sha256']=p['sha256']
+        self.assertIn(p,repair.passages_for_sources(self.catalog,set(),[correct]))
+
+    def test_cli_verify_follows_existing_continuation(self):
+        import io
+        import sys
+        root=(self.root/'cli-seed').resolve();root.mkdir()
+        base.save(root/'protocol.json',{'repair_loop':True})
+        continuation=root.with_name(root.name+'-repair');continuation.mkdir()
+        base.save(continuation/'protocol.json',{'seed':str(root)})
+        with patch.object(sys,'argv',['pipeline','verify',str(root)]),patch.object(pipe,'verify',return_value={'status':'blocked','correction_rounds':0,'wall_seconds':1}),patch.object(repair,'verify',return_value={'status':'accepted'}) as verify,patch('sys.stdout',new_callable=io.StringIO) as output:
+            pipe.main()
+            verify.assert_called_once_with(continuation)
+            self.assertEqual(json.loads(output.getvalue())['status'],'accepted')
+
 if __name__=='__main__':unittest.main()

@@ -254,9 +254,17 @@ def selected_facts(state, bundle):
             'notice': 'ID detail for cited and selected facts. Complete original financial statements are in original_evidence; audit omissions there independently.'}
 
 
+def passages_for_sources(catalog, ids, slices):
+    # Offsets are comparable only within the same representation/hash. A raw
+    # inline-XBRL offset must never select an unrelated normalized-text passage.
+    spans = [span for source in slices for span in source['spans']]
+    return [p for p in catalog['passages'] if p['scope_id'] in ids or any(
+        p['document_id'] == span['document_id'] and p['sha256'] == span['sha256']
+        and p['start'] < span['end'] and p['end'] > span['start'] for span in spans)]
+
+
 def prompt(state, role, bundle, catalog, writing):
     shared = legacy.COMMON + '\nWRITING STANDARD\n' + writing
-    passage_map = {p['passage_id']: p for p in catalog['passages']}
     if role == 'review':
         instructions = '''You are the final acceptance authority. Independently adjudicate every pending finding after its author's repair or rebuttal, then review the exact rendered candidate and all artifacts against original evidence. Feedback from the previous reviewer is a fallible claim, not a fact. Authors may correctly rebut you. Resolve antecedents: record speaker, subject company, analyst premise versus management statement, and surrounding turns. Never insert a disputed correction merely because a reviewer asked for it. Withdraw a mistaken finding when source-backed rebuttal succeeds. Close a repaired finding only after verifying its change. Leave unresolved disputes open. Inspect the full rendered HTML as well as text and accounting basis; no visual browser inspection is claimed. Return {"verdict":"pass|revise|blocked","criteria":{KEY:{"status":"pass|fail|unavailable","evidence":"specific assessment"}},"resolutions":[{"finding_id":"exact ID","status":"closed|withdrawn|open","explanation":"source-backed decision","citations":["D/F/turn/exchange ID"],"passage_ids":["original passage ID"],"speaker":"source speaker or filing issuer","subject":"company/metric actually referred to"}],"findings":[{"target":"financial|retrieval|analysis|formatter","passage":"faulty text or omission","reason":"problem","required_change":"bounded repair","explanation":"source support","citations":["source ID"],"passage_ids":["original passage ID"],"speaker":"...","subject":"..."}]}. New findings are only unresolved defects in the CURRENT candidate. Resolve every pending finding exactly once. Pass requires all rubric criteria pass, no new findings and every prior finding closed or withdrawn. Acknowledgments and literal negations are not automatically analytical failures. Required rubric keys: ''' + ', '.join(legacy.CRITERIA)
         hydrated = {r: passages.hydrate(r, v, catalog) for r, v in state['artifacts'].items()}
@@ -268,15 +276,17 @@ def prompt(state, role, bundle, catalog, writing):
         ids = set(i for f in assigned for i in f['finding']['citations'])
         if role == 'analysis': ids.update(state['artifacts']['retrieval']['selected_document_ids'])
         slices = evidence.source_slices(bundle['manifest'], sorted(ids))
-        relevant = [p for p in passage_map.values() if p['scope_id'] in ids or any(s['spans'] and any(p['document_id']==x['document_id'] and p['start']<x['end'] and p['end']>x['start'] for x in s['spans']) for s in slices)]
-        instructions = '''You own the assigned artifact. For EACH finding inspect original evidence, then REPAIR, REBUT a mistaken request, or mark UNRESOLVED. Review feedback is not authoritative evidence. Resolve speaker and subject company explicitly; read surrounding question/answer and pronoun antecedents. Challenge unsupported proposed changes instead of obeying them. Return {"responses":[{"finding_id":"exact ID","action":"repair|rebut|unresolved","explanation":"brief source-backed response","citations":["source scope ID"],"passage_ids":["exact supplied passage ID"],"speaker":"source speaker or filing issuer","subject":"actual company/metric"}],"artifact":null OR complete revised artifact}. Null preserves the artifact. Change only your artifact; preserve unaffected facts, quotes and citations. No acceptance decisions. Claims of repair require changed bytes. Rebuttals require no mutation for that finding. Use passage IDs only for report/retrieval quotations; code copies text and offsets. No invented source IDs. If supplied evidence cannot establish the claim, return unresolved; do not guess. The analyst must also reconcile any repaired upstream artifacts. Do not reproduce hidden reasoning.'''
+        relevant = passages_for_sources(catalog, ids, slices)
+        instructions = '''You own the assigned artifact. For EACH finding inspect original evidence, then REPAIR, REBUT a mistaken request, or mark UNRESOLVED. Review feedback is not authoritative evidence. Resolve speaker and subject company explicitly; read surrounding question/answer and pronoun antecedents. Challenge unsupported proposed changes instead of obeying them. Return {"responses":[{"finding_id":"exact ID","action":"repair|rebut|unresolved","explanation":"brief source-backed response","citations":["source scope ID"],"passage_ids":["exact supplied passage ID"],"speaker":"source speaker or filing issuer","subject":"actual company/metric"}],"artifact":null OR complete revised artifact}. Null preserves the artifact. Change only your artifact; preserve unaffected facts, quotes and citations. No acceptance decisions. A repair action means you propose an artifact correction for the reviewer to validate; it does not claim final acceptance. If every response is rebut or unresolved, artifact must be null. Claims of repair require changed bytes. Rebuttals require no mutation for that finding. Use passage IDs only for report/retrieval quotations; code copies text and offsets. No invented source IDs. If supplied evidence cannot establish the claim, return unresolved; do not guess. The analyst must also reconcile any repaired upstream artifacts. Do not reproduce hidden reasoning.'''
         if role == 'formatter':
-            instructions += ''' Formatting artifact schema is {"rows":{"exact row key":{"label":"concise semantic label","dimensions":"faithful concise dimension label, possibly empty","citations":["supporting source ID"]}},"basis":{"text":"source-backed accounting basis","citations":["source ID"]}}. Only these plain-text presentation fields may change. No code, HTML, values, scales, periods, grouping or fact-ID edits. Use factual labels, retaining economically material dimensions. Unsupported engine defects must be unresolved.'''
+            instructions += ''' This new renderer directly consumes your formatting artifact: row label and dimension overrides appear in table headers and the basis note appears above the tables. You are repairing the displayed candidate through this supported interface. Old findings that say code repair or old renderer failure describe the SEED renderer, not this new renderer. Source-supported semantic labels and accounting-basis notes can be proposed as action=repair now, with final verification assigned to the reviewer. Formatting artifact schema is {"rows":{"exact row key":{"label":"concise semantic label","dimensions":"faithful concise dimension label, possibly empty","citations":["supporting source ID"]}},"basis":{"text":"source-backed accounting basis","citations":["source ID"]}}. Only these plain-text presentation fields may change. No code, HTML, values, scales, periods, grouping or fact-ID edits. Use factual labels, retaining economically material dimensions. Unsupported engine defects must be unresolved.'''
         else:
             instructions += '\nRetain the original artifact schema shown below. Financial rows select 4–12 ID lists; context max eight. Analysis has 4–7 findings and max four next tests. Retrieval covers every exchange once, at most 24 document IDs, 16 document findings and 4–18 passage selections.'
         data = {'assigned_findings': assigned, 'artifact': state['format'] if role=='formatter' else state['artifacts'][role],
                 'source_spans': slices, 'passages': relevant, 'needs_analysis_refresh': state['needs_analysis']}
-        if role == 'formatter': data['immutable_financial_rows'] = row_catalog(state['artifacts']['financial'], bundle)
+        if role == 'formatter':
+            data['immutable_financial_rows'] = row_catalog(state['artifacts']['financial'], bundle)
+            data['candidate_rendered_html'] = state['_candidate_html'].split('<h2>Original evidence</h2>', 1)[0] + '</main></html>'
         if role == 'analysis': data['upstream_artifacts'] = {r: state['artifacts'][r] for r in ('financial','retrieval')}
     if state.get('retry'): data['schema_repair'] = state['retry']
     return shared + '\nASSIGNMENT\n' + instructions + '\nFROZEN EVIDENCE AND ARTIFACTS\n' + legacy.packed(data)
@@ -314,7 +324,9 @@ def load(root):
     p = base.read(root/'protocol.json')
     if p['version']!=VERSION: raise ValueError('Repair version changed')
     for c in p['code']:
-        if base.sha(c['path'])!=c['sha256']: raise ValueError('Repair code changed')
+        actual = Path(__file__).parent / Path(c['path']).name
+        if base.sha(c['path'])!=c['sha256'] or base.sha(actual)!=c['sha256']:
+            raise ValueError('Repair code changed or invoked from a different version')
     if base.digest(base.read(root/'initial.json')) != p['initial_digest']: raise ValueError('Initial state changed')
     seed = Path(p['seed'])
     for name, sha in p['seed_bindings'].items():
@@ -342,7 +354,7 @@ def replay(root, bundle, catalog, writing):
         bound={'protocol_sha256':base.sha(root/'protocol.json'),'state_sha256':base.digest(state),'role':role,'round':state['round']}
         if request['bindings']!=bound or (request['model'],request['effort'])!=MODELS[role]:raise ValueError('Job binding differs')
         candidate=copy.deepcopy(state)
-        if role=='review':candidate['_candidate_html']=(root/'candidates'/f'{jobs:03d}.html').read_text()
+        if role in ('review','formatter'):candidate['_candidate_html']=(root/'candidates'/f'{jobs:03d}.html').read_text()
         if (job/'prompt.txt').read_text()!=prompt(candidate,role,bundle,catalog,writing):raise ValueError('Prompt differs from state and sources')
         state=apply_response(state,role,value,bundle,catalog)
         if state!=event['after'] or event['output_sha256']!=base.sha(job/'output.json'):raise ValueError('Transition differs from verified output')
@@ -364,7 +376,7 @@ def advance(output):
         if (job/'request.json').exists() and not (job/'output.json').exists():
             return {'status':'launch_uncertain','job':str(job),'reason':'Reconcile existing execution; duplicate launch refused'}
         candidate=copy.deepcopy(state)
-        if role=='review':
+        if role in ('review','formatter'):
             candidate_path=root/'candidates'/f'{jobs:03d}.html';candidate_path.parent.mkdir(exist_ok=True)
             render(candidate_path,state,bundle,catalog);candidate['_candidate_html']=candidate_path.read_text()
         text=prompt(candidate,role,bundle,catalog,writing)
