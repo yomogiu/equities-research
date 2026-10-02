@@ -88,6 +88,32 @@ class RepairTests(PassageFixture, unittest.TestCase):
         s=repair.apply_response(s,'analysis',self.response(s),self.bundle,self.catalog)
         self.assertNotIn('retry',s);self.assertEqual(repair.next_role(s),'review')
 
+    def test_missing_response_evidence_gets_narrow_selection_patch(self):
+        s=self.state();prior=self.response(s);prior['responses'][0]['passage_ids']=[]
+        pending=repair.apply_response(s,'analysis',prior,self.bundle,self.catalog)
+        self.assertTrue(repair.passage_retry(pending,'analysis'))
+        windows=repair.response_passage_windows(pending,self.bundle,self.catalog)
+        candidate=windows[0]['candidate_passages'][0]['passage_id']
+        patch_value={'response_passages':[{'finding_id':windows[0]['finding_id'],'passage_ids':[candidate]}]}
+        updated=repair.patch_response_passages(pending,patch_value,self.bundle,self.catalog)
+        self.assertEqual(updated['artifact'],prior['artifact'])
+        self.assertEqual(updated['responses'][0]['explanation'],prior['responses'][0]['explanation'])
+        after=repair.apply_response(pending,'analysis',patch_value,self.bundle,self.catalog)
+        self.assertEqual(repair.next_role(after),'review')
+        prompt=repair.prompt(pending,'analysis',self.bundle,self.catalog,'Fictional standard')
+        self.assertIn('EVIDENCE-ID REPAIR ONLY',prompt)
+        self.assertNotIn('upstream_artifacts',prompt)
+
+    def test_evidence_patch_cannot_mutate_artifact_or_choose_outside_candidates(self):
+        s=self.state();prior=self.response(s);prior['responses'][0]['passage_ids']=[]
+        pending=repair.apply_response(s,'analysis',prior,self.bundle,self.catalog)
+        windows=repair.response_passage_windows(pending,self.bundle,self.catalog)
+        invalid={'response_passages':[{'finding_id':windows[0]['finding_id'],'passage_ids':['invented']}]}
+        with self.assertRaises(ValueError):repair.patch_response_passages(pending,invalid,self.bundle,self.catalog)
+        invalid['artifact']=self.report
+        with self.assertRaises(ValueError):repair.patch_response_passages(pending,invalid,self.bundle,self.catalog)
+        self.assertEqual(repair.apply_response(pending,'analysis',invalid,self.bundle,self.catalog)['status'],'blocked')
+
     def make_run(self, max_jobs=12):
         seed=self.root/'seed';writing=self.root/'standard.txt';writing.write_text('Fictitious writing standard')
         pipe.freeze(self.casepath,seed,writing)

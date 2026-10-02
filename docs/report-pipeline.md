@@ -120,6 +120,12 @@ single in-flight call can exceed the remaining token budget. Budgets never
 produce acceptance by themselves. Exhausted budgets and unresolved findings are
 reported as such.
 
+Missing response passage IDs receive a narrow selection-only retry against at
+most 24 source passages per affected response, ranked within its cited sources
+and including adjacent context. Code preserves the proposed artifact and response
+text. An unsupported selection or failed retry keeps the report blocked; this
+mechanical repair does not establish that the source supports the claim.
+
 A file lock prevents concurrent coordinators. Immutable event records bind the
 prior state, job output, updated artifacts and adjudication history. Verification
 replays authenticated worker outputs, checks exact model/effort and distinct
