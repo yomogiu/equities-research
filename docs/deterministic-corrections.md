@@ -37,7 +37,7 @@ an approved exact candidate, all criteria passing and every finding resolved. Th
 only rendering change after acceptance is the status banner; no prose is regenerated.
 
 At most two correction rounds are available across an ordinary run. The default
-600,000-token limit is checked between calls; an in-flight call can exceed it. Prompts above 500,000 characters stop before launch.
+600,000-token limit is checked between calls; an in-flight call can exceed it. Prompts above 750,000 characters stop before launch.
 Source text and passage IDs are sent once in compact columns; full provenance remains
 in the immutable catalog and receipts. Invalid
 patches or malformed reviews stop with precise diagnostics rather than triggering a
@@ -78,3 +78,11 @@ continuation.
 
 Unit tests establish structural guarantees, not model judgment. Live experiment
 receipts and real-company reports belong only in private storage.
+
+For an explicitly authorized code-version migration, `init --reuse-proposal` can
+import a verified staged proposal from an older correction experiment awaiting
+review. The old verifier must replay it successfully, its snapshot must match, and
+all old source/code/receipt bindings remain checked. It does not rerun the proposal
+agent or count its historical usage as new usage. The independent reviewer still
+assesses the exact candidate under the new protocol. This does not retry uncertain
+launches or automatically refresh exhausted budgets.

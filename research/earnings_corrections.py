@@ -202,8 +202,18 @@ from pathlib import Path
 from research import earnings_experiment as b
 from research import earnings_report_repair as r
 from research import earnings_passage_pipeline as p
-root=Path(sys.argv[1]); protocol=b.read(root/'protocol.json')
-if protocol.get('version') == r.VERSION:
+root=Path(sys.argv[1]); protocol=b.read(root/'protocol.json'); imported=None; spent_tokens=0
+if protocol.get('version') == 'deterministic-corrections-v1':
+    from research import earnings_corrections as c
+    cp,bundle,catalog,writing=c.load(root)
+    progress=c.replay(root,cp,bundle,catalog,writing)
+    snapshot=progress['state']; sp=cp['source_protocol']; used_rounds=progress['round']; spent_tokens=progress['tokens']+cp.get('inherited_tokens',0)
+    if len(sys.argv)>2 and sys.argv[2]=='reuse':
+        if progress['status'] not in ('pending','budget_exhausted','prompt_too_large') or progress.get('role')!='review':
+            raise ValueError('Only an authenticated staged proposal awaiting its first review may be reused')
+        job=root/'rounds'/str(progress['round'])/'propose'
+        imported={'job':str(job),'output_sha256':b.sha(job/'output.json')}
+elif protocol.get('version') == r.VERSION:
     _,bundle,catalog,writing=r.load(root)
     state,usage,jobs=r.replay(root,bundle,catalog,writing)
     sp=b.read(Path(protocol['seed'])/'protocol.json')
@@ -215,11 +225,11 @@ else:
     sp=protocol; artifacts=b.read(root/'artifacts.json'); review=b.read(root/'review.json')
     snapshot={'artifacts':artifacts,'format':{'rows':{},'basis':{'text':'','citations':[]}},'findings':[{'id':r.finding_id(f),'finding':f} for f in review['findings']]}
     used_rounds=b.read(root/'result.json')['correction_rounds']
-print(json.dumps({'snapshot':snapshot,'source_protocol':sp,'used_rounds':used_rounds}))
+print(json.dumps({'snapshot':snapshot,'source_protocol':sp,'used_rounds':used_rounds,'imported_proposal':imported,'spent_tokens':spent_tokens}))
 '''
 
 
-def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=False):
+def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=False, reuse_proposal=False):
     seed = Path(seed).resolve(); root = Path(output).resolve()
     if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
         raise ValueError('Use a new private directory outside code and the seed')
@@ -229,8 +239,9 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
     for record in sp['code']:
         if base.sha(record['path']) != record['sha256']: raise ValueError('Frozen source code changed')
     code = Path(next(c['path'] for c in sp['code'] if c['path'].endswith('/earnings_passage_pipeline.py'))).parent.parent
-    process = subprocess.run([sys.executable, '-c', EXPORT, str(seed)], cwd=code, env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
+    process = subprocess.run([sys.executable, '-c', EXPORT, str(seed), 'reuse' if reuse_proposal else 'fresh'], cwd=code, env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
     exported = json.loads(process.stdout); snapshot = exported['snapshot']; sp = exported['source_protocol']
+    if reuse_proposal and not exported['imported_proposal']: raise ValueError('No reusable staged proposal')
     remaining = max_rounds if new_experiment else min(max_rounds, 2-exported['used_rounds'])
     if remaining <= 0: raise ValueError('Prior correction budget exhausted; a separately authorized experiment requires --new-experiment')
     if set(snapshot['artifacts']) != {'financial', 'retrieval', 'analysis'}: raise ValueError('Complete prepared report required')
@@ -241,11 +252,15 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
     dirs = [seed]
     if base.read(seed/'protocol.json').get('seed'): dirs.append(Path(base.read(seed/'protocol.json')['seed']))
     bound = {str(f): base.sha(f) for d in dirs for f in d.rglob('*') if f.is_file() and not f.name.startswith('.')}
+    seed_protocol = base.read(seed/'protocol.json')
+    bound.update(seed_protocol.get('source_bindings', {}))
     names = [f for f in Path(__file__).parent.glob('earnings_*.py')] + [Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol = {'version': VERSION, 'seed': str(seed), 'source_bindings': bound, 'source_protocol': sp,
                 'initial_sha256': base.digest(snapshot), 'code': [{'path': str(f), 'sha256': base.sha(f)} for f in names],
-                'model': list(MODEL), 'max_rounds': remaining, 'max_tokens': max_tokens, 'max_prompt_chars': 500000,
-                'new_experiment': bool(new_experiment), 'prior_rounds': exported['used_rounds']}
+                'model': list(MODEL), 'max_rounds': remaining, 'max_tokens': max_tokens, 'max_prompt_chars': 750000, 'imported_proposal': exported['imported_proposal'],
+                'source_code': seed_protocol['code'] + seed_protocol.get('source_code', []),
+                'new_experiment': bool(new_experiment), 'prior_rounds': exported['used_rounds'],
+                'inherited_tokens': 0 if new_experiment else exported['spent_tokens']}
     repair.write(root/'protocol.json', protocol); repair.write(root/'initial.json', snapshot)
     load(root)
     return {'status': 'pending', 'max_rounds': remaining, 'findings': len(snapshot['findings'])}
@@ -257,6 +272,8 @@ def load(root):
     for c in p['code']:
         if base.sha(c['path']) != c['sha256'] or base.sha(Path(__file__).parent/Path(c['path']).name) != c['sha256']:
             raise ValueError('Correction code changed')
+    for c in p.get('source_code', []) + p['source_protocol']['code']:
+        if base.sha(c['path']) != c['sha256']: raise ValueError('Original verifier code changed')
     for path, digest in p['source_bindings'].items():
         if base.sha(path) != digest: raise ValueError('Original seed changed')
     if base.digest(base.read(root/'initial.json')) != p['initial_sha256']: raise ValueError('Initial snapshot changed')
@@ -312,17 +329,26 @@ def replay(root, p, bundle, catalog, writing):
             job = folder/role
             text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback)
             bindings = {'protocol_sha256': base.sha(root/'protocol.json'), 'snapshot_sha256': base.digest(state), 'round': round_no, 'role': role}
-            if not (job/'output.json').exists():
-                status = ('launch_uncertain' if (job/'request.json').exists() else
-                          'budget_exhausted' if tokens >= p['max_tokens'] else
-                          'prompt_too_large' if len(text) > p.get('max_prompt_chars', 500000) else 'pending')
-                return {'status': status, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role, 'prompt': text, 'bindings': bindings, 'job': job}
-            result = verify_job(job); request = base.read(job/'request.json')
-            if request['bindings'] != bindings or (request['model'], request['effort']) != MODEL or (job/'prompt.txt').read_text() != text:
-                raise ValueError('Job differs from exact source-bound correction request')
+            imported = p.get('imported_proposal') if round_no == 0 and role == 'propose' else None
+            if imported:
+                job = Path(imported['job'])
+                if base.sha(job/'output.json') != imported['output_sha256']: raise ValueError('Imported proposal changed')
+                result = verify_job(job); request = base.read(job/'request.json')
+                if request['bindings']['snapshot_sha256'] != base.digest(state) or request['bindings']['role'] != 'propose' or (request['model'], request['effort']) != MODEL:
+                    raise ValueError('Imported proposal belongs to a different snapshot or role')
+            else:
+                if not (job/'output.json').exists():
+                    status = ('launch_uncertain' if (job/'request.json').exists() else
+                              'budget_exhausted' if tokens + p.get('inherited_tokens', 0) >= p['max_tokens'] else
+                              'prompt_too_large' if len(text) > p.get('max_prompt_chars', 750000) else 'pending')
+                    return {'status': status, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role, 'prompt': text, 'bindings': bindings, 'job': job}
+                result = verify_job(job); request = base.read(job/'request.json')
+                if request['bindings'] != bindings or (request['model'], request['effort']) != MODEL or (job/'prompt.txt').read_text() != text:
+                    raise ValueError('Job differs from exact source-bound correction request')
             sid = result['receipt']['session']['id']
             if sid in identities: raise ValueError('Independent fresh sessions required')
-            identities.add(sid); tokens += result['receipt']['session']['usage']['totalTokens']
+            identities.add(sid)
+            if not imported: tokens += result['receipt']['session']['usage']['totalTokens']
             if role == 'propose':
                 plan = result['content']
                 try: candidate = apply(state, plan, bundle, catalog)
@@ -375,9 +401,10 @@ def main():
     init = sub.add_parser('init'); init.add_argument('seed'); init.add_argument('output')
     init.add_argument('--max-rounds', type=int, default=2); init.add_argument('--max-tokens', type=int, default=600000)
     init.add_argument('--new-experiment', action='store_true', help='Explicit separately authorized test; preserves exhausted prior run')
+    init.add_argument('--reuse-proposal', action='store_true', help='Reuse a verified pending proposal from a prior correction experiment; no new author call')
     for name in ('advance', 'run', 'verify'): sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
-    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment) if args.command == 'init' else globals()[args.command](args.output)
+    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal) if args.command == 'init' else globals()[args.command](args.output)
     print(json.dumps(result))
 
 
