@@ -111,14 +111,14 @@ def repair_handoff(root, deps, prior, issues, review, catalog, refusals=None):
     return None
 
 
-def freeze(case_path, output, writing_path):
+def freeze(case_path, output, writing_path, repair_loop=False):
     root = Path(output).resolve(); root.mkdir(parents=True, exist_ok=True)
     manifest = evidence.prepare(case_path, root / 'evidence')
     base.save(root / 'passages.json', passages.catalog(manifest))
     names = ('earnings_passage_pipeline.py', 'earnings_passages.py', 'earnings_mixed_pipeline.py',
              'earnings_compact_evidence.py', 'earnings_experiment.py', 'earnings_mixed_runner.py',
              'earnings_mixed_prime.mjs', 'earnings_financial_display.py')
-    protocol = {'version': VERSION, 'case_path': str(Path(case_path).resolve()),
+    protocol = {'version': VERSION, 'repair_loop': bool(repair_loop), 'case_path': str(Path(case_path).resolve()),
                 'case_sha256': base.sha(case_path), 'evidence_manifest': str(root / 'evidence/manifest.json'),
                 'evidence_sha256': base.sha(root / 'evidence/manifest.json'),
                 'passages_sha256': base.sha(root / 'passages.json'),
@@ -217,7 +217,7 @@ def run(output):
         if not errors:
             review = receive('review', call('review', round_number, deps), errors)
             if review is not None:
-                if review['verdict'] in ('pass', 'blocked') or any(f['target'] == 'formatter' for f in review['findings']):
+                if p.get('repair_loop') or review['verdict'] in ('pass', 'blocked') or any(f['target'] == 'formatter' for f in review['findings']):
                     break
                 errors = review['findings']
         failures.append({'round': round_number, 'findings': errors})
@@ -343,15 +343,26 @@ def verify(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
-    f = sub.add_parser('freeze'); f.add_argument('case'); f.add_argument('output'); f.add_argument('writing')
+    f = sub.add_parser('freeze'); f.add_argument('case'); f.add_argument('output'); f.add_argument('writing'); f.add_argument('--repair-loop', action='store_true')
     for name in ('run', 'verify'):
         sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
     if args.command == 'freeze':
-        freeze(args.case, args.output, args.writing); print('Frozen passage-selection protocol')
+        freeze(args.case, args.output, args.writing, args.repair_loop); print('Frozen passage-selection protocol')
     else:
         result = (run if args.command == 'run' else verify)(args.output)
-        print(legacy.packed({k: result[k] for k in ('status', 'correction_rounds', 'wall_seconds')}))
+        summary = {k: result[k] for k in ('status', 'correction_rounds', 'wall_seconds')}
+        if args.command == 'run' and base.read(Path(args.output)/'protocol.json').get('repair_loop') and result['status'] == 'blocked':
+            from research import earnings_report_repair as repair
+            root = Path(args.output).resolve()
+            continuation = root.with_name(root.name + '-repair')
+            if not (continuation/'protocol.json').exists():
+                repair.initialize(root, continuation)
+            elif base.read(continuation/'protocol.json')['seed'] != str(root):
+                raise ValueError('Repair directory belongs to a different seed')
+            summary = repair.run(continuation)
+            summary['repair_directory'] = str(continuation)
+        print(legacy.packed(summary))
 
 
 if __name__ == '__main__':

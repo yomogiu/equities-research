@@ -64,3 +64,67 @@ investment analysis are separate deployment steps. No recurring gate or private
 configuration is changed by this entry point.
 
 [Financial display and repair details](financial-rendering-experiment.md)
+
+## Reviewer-owned automatic repair loop
+
+New runs can stop after their first substantive review and automatically dispatch
+repair/rebuttal workers instead of treating every review request as correct:
+
+```sh
+python3 -m research.earnings_passage_pipeline freeze "$REPORT_CASE" "$REPORT_OUTPUT" "$REPORT_WRITING" --repair-loop
+python3 -m research.earnings_passage_pipeline run "$REPORT_OUTPUT"
+```
+
+The sibling `REPORT_OUTPUT-repair` directory contains the durable continuation.
+An existing blocked passage-pipeline experiment can also be resumed into a new
+private directory without altering its original artifacts:
+
+```sh
+python3 -m research.earnings_report_repair init "$BLOCKED_RUN" "$REPAIR_OUTPUT"
+python3 -m research.earnings_report_repair run "$REPAIR_OUTPUT"
+python3 -m research.earnings_report_repair verify "$REPAIR_OUTPUT"
+```
+
+`advance` performs one worker job, useful for an external scheduler; `run` advances
+until acceptance, a terminal block, a dispatch budget, or an uncertain launch.
+Connecting that command to recurring private automation remains a deployment task.
+
+Each author responds to its findings with `repair`, `rebut`, or `unresolved`, citing
+original passage IDs and explicitly naming the source speaker and subject. A
+fresh reviewer receives original sources, artifacts, the rendered candidate and
+those concise responses. It adjudicates every finding as `closed`, `withdrawn`
+or `open`. A rebuttal cannot close a finding; only the reviewer can withdraw it.
+A pass requires every rubric criterion to pass and every finding to be resolved.
+The reviewer can add new source-backed findings, including defects it discovers
+in preparer artifacts that did not appear in the report.
+
+Unchanged extraction and retrieval are reused. Financial/retrieval repairs trigger
+an analyst reconciliation; formatting-only repairs do not repeat analysis. The
+formatter worker proposes source-backed labels, dimension descriptions and an
+accounting-basis note. Code preserves fact IDs, numerical values, units, scaling,
+periods and row grouping, escapes all text and regenerates the report. These
+presentation repairs are automatic. Arbitrary code patches, new parsers, document
+retrieval and unsupported rendering-engine defects are **not** executable worker
+outputs; they remain explicit unresolved work. There is no automatic code merge.
+
+The original two-round semantic correction budget is retained across the seed
+and continuation. A malformed response gets one schema retry in its current
+round, still subject to the dispatch budgets (default 12 jobs and 1.5 million
+reported tokens for the continuation). Token use is checked between calls; a
+single in-flight call can exceed the remaining token budget. Budgets never
+produce acceptance by themselves. Exhausted budgets and unresolved findings are
+reported as such.
+
+A file lock prevents concurrent coordinators. Immutable event records bind the
+prior state, job output, updated artifacts and adjudication history. Verification
+replays authenticated worker outputs, checks exact model/effort and distinct
+sessions, source/code hashes, prompts, report bytes and acceptance conditions.
+A completed job interrupted before its event was saved is reused. A launched job
+without a verified completed output returns `launch_uncertain`; inspecting and
+reconciling that execution is required before any retry, rather than guessing it
+never ran. Original benchmark directories remain unchanged.
+
+The repair loop automates execution and records disagreement; it does not make
+model judgments infallible. Test fixtures exercise mistaken reviewer findings,
+withdrawal after rebuttal, formatter preservation, interrupted execution, tamper
+rejection and budget exhaustion. Live outcomes belong in private storage.
