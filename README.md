@@ -74,3 +74,7 @@ analysis queue, role/task prompts, the analytical framework, contract checks, an
 offline tests. Private GitHub Actions can run the downloader without any model calls.
 Research-bearing workflows and inputs belong in the private data repository.
 Unattended Codex analysis and its scheduling remain separate deployment work.
+
+For immutable prepared data and exact reviewer-approved patches, use the opt-in
+[deterministic correction stage](docs/deterministic-corrections.md). It copies existing
+context into the report, preserves numeric records, and avoids a final agent rewrite.
