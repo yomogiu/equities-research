@@ -99,6 +99,9 @@ original passage IDs and explicitly naming the source speaker and subject. A
 fresh reviewer receives original sources, artifacts, the rendered candidate and
 those concise responses. It adjudicates every finding as `closed`, `withdrawn`
 or `open`. A rebuttal cannot close a finding; only the reviewer can withdraw it.
+The reviewer can also withdraw a disproven premise in a compound finding when
+the author labeled its response `repair`; the author's label does not overrule
+source-backed adjudication. Every withdrawal still requires original evidence.
 A pass requires every rubric criterion to pass and every finding to be resolved.
 The reviewer can add new source-backed findings, including defects it discovers
 in preparer artifacts that did not appear in the report.

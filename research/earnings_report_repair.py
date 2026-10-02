@@ -178,7 +178,9 @@ def transition(state, role, content, bundle, catalog):
             f = next(f for f in pending if f['id'] == resolution['finding_id'])
             response = next(r for c in s['responses'].values() for r in c['responses'] if r['finding_id'] == f['id'])
             if resolution['status'] == 'closed' and response['action'] != 'repair': raise ValueError('Unrepaired finding cannot be closed')
-            if resolution['status'] == 'withdrawn' and response['action'] != 'rebut': raise ValueError('Withdrawal requires an author rebuttal')
+            # A response can repair one part of a compound finding while disproving
+            # another. Source-backed withdrawal belongs to the reviewer regardless
+            # of the author's action label; all current artifacts are still reviewed.
             f['status'] = resolution['status']; f['history'].append({'round': s['round'], 'response': response, 'resolution': resolution})
         add_findings(s, content['findings'])
         for f in content['findings']:

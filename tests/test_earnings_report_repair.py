@@ -37,6 +37,13 @@ class RepairTests(PassageFixture, unittest.TestCase):
         for status in ('open','closed'):
             with self.subTest(status=status),self.assertRaises(ValueError):repair.transition(s,'review',self.review(s,status),self.bundle,self.catalog)
 
+    def test_reviewer_can_withdraw_mistaken_compound_finding_after_partial_repair(self):
+        s=self.state();artifact=copy.deepcopy(self.report);artifact['opening']='Fictional clarification'
+        s=repair.transition(s,'analysis',self.response(s,'repair',artifact),self.bundle,self.catalog)
+        final=repair.transition(s,'review',self.review(s,'withdrawn'),self.bundle,self.catalog)
+        self.assertEqual(final['status'],'accepted')
+        self.assertEqual(final['ledger'][0]['status'],'withdrawn')
+
     def test_reviewer_must_adjudicate_every_finding_and_use_original_ids(self):
         s=self.state();s=repair.transition(s,'analysis',self.response(s),self.bundle,self.catalog)
         for mutate in (lambda x:x.update(resolutions=[]),lambda x:x['resolutions'][0].update(passage_ids=['invented'])):
