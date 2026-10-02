@@ -357,7 +357,12 @@ def main():
             root = Path(args.output).resolve()
             continuation = root.with_name(root.name + '-repair')
             if not (continuation/'protocol.json').exists() and args.command == 'run':
-                repair.initialize(root, continuation)
+                artifacts = base.read(root/'artifacts.json')
+                review = base.read(root/'review.json')
+                if set(artifacts) == {'financial', 'retrieval', 'analysis'} and review:
+                    repair.initialize(root, continuation)
+                else:
+                    summary['repair_not_started'] = 'Source preparation must produce a complete candidate and substantive review first'
             if (continuation/'protocol.json').exists():
                 if base.read(continuation/'protocol.json')['seed'] != str(root):
                     raise ValueError('Repair directory belongs to a different seed')

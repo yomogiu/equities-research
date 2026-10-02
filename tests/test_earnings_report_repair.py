@@ -158,4 +158,17 @@ class RepairTests(PassageFixture, unittest.TestCase):
             verify.assert_called_once_with(continuation)
             self.assertEqual(json.loads(output.getvalue())['status'],'accepted')
 
+    def test_cli_preserves_source_preparation_block_without_launching_report_repair(self):
+        import io
+        import sys
+        root=(self.root/'incomplete').resolve();root.mkdir()
+        base.save(root/'protocol.json',{'repair_loop':True})
+        base.save(root/'artifacts.json',{'financial':self.financial})
+        base.save(root/'review.json',None)
+        with patch.object(sys,'argv',['pipeline','run',str(root)]),patch.object(pipe,'run',return_value={'status':'blocked','correction_rounds':1,'wall_seconds':1}),patch.object(repair,'initialize') as initialize,patch('sys.stdout',new_callable=io.StringIO) as output:
+            pipe.main()
+            initialize.assert_not_called()
+            self.assertEqual(json.loads(output.getvalue())['status'],'blocked')
+            self.assertIn('complete candidate',json.loads(output.getvalue())['repair_not_started'])
+
 if __name__=='__main__':unittest.main()

@@ -79,6 +79,8 @@ python3 -m research.earnings_passage_pipeline run "$REPORT_OUTPUT"
 ```
 
 The sibling `REPORT_OUTPUT-repair` directory contains the durable continuation.
+Source-preparation failures without a complete report and substantive review keep
+their original handoff; they do not launch report-repair workers.
 An existing blocked passage-pipeline experiment can also be resumed into a new
 private directory without altering its original artifacts:
 
