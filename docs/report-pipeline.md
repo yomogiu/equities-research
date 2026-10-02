@@ -103,6 +103,11 @@ A pass requires every rubric criterion to pass and every finding to be resolved.
 The reviewer can add new source-backed findings, including defects it discovers
 in preparer artifacts that did not appear in the report.
 
+The rendered review view contains the report body plus anchor IDs, fragment
+targets and missing destinations parsed from the complete HTML. The evidence
+appendix is explicitly omitted from the body excerpt because original sources
+are supplied separately. Its omission cannot be treated as missing links.
+
 Unchanged extraction and retrieval are reused. Financial/retrieval repairs trigger
 an analyst reconciliation; formatting-only repairs do not repeat analysis. The
 formatter worker proposes source-backed labels, dimension descriptions and an

@@ -65,6 +65,14 @@ class RepairTests(PassageFixture, unittest.TestCase):
         for spec in ({'rows':{},'basis':{'text':'','citations':[]},'code':'execute()'}, {'rows':{'bad':{'label':'x','dimensions':'','citations':['D001']}},'basis':{'text':'','citations':[]}}):
             with self.assertRaises(ValueError):repair.transition(s,'formatter',self.response(s,'repair',spec),self.bundle,self.catalog)
 
+    def test_review_excerpt_reports_actual_appendix_anchors_and_broken_targets(self):
+        content='<main><a href="#e-F001">F001</a><a href="#missing">bad</a><h2>Original evidence</h2><details id="e-F001">Original source</details></main>'
+        view=repair.rendered_review_view(content)
+        self.assertNotIn('<details',view['report_body_html_excerpt'])
+        self.assertEqual(view['actual_anchor_ids'],['e-F001'])
+        self.assertEqual(view['missing_fragment_targets'],['missing'])
+        self.assertIn('COMPLETE',view['notice'])
+
     def test_upstream_repair_refreshes_analysis_without_repeating_other_preparers(self):
         s=self.state('financial');artifact=copy.deepcopy(self.financial);artifact['context']=[{'text':'Fictional correction','citations':['D001']}]
         after=repair.transition(s,'financial',self.response(s,'repair',artifact),self.bundle,self.catalog)

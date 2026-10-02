@@ -9,6 +9,7 @@ import argparse
 import copy
 import fcntl
 import html
+from html.parser import HTMLParser
 import json
 import os
 import re
@@ -313,6 +314,23 @@ def passages_for_sources(catalog, ids, slices):
         and p['start'] < span['end'] and p['end'] > span['start'] for span in spans)]
 
 
+def rendered_review_view(content):
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__(); self.ids = set(); self.targets = set()
+        def handle_starttag(self, tag, attrs):
+            values = dict(attrs)
+            if values.get('id'): self.ids.add(values['id'])
+            if values.get('href', '').startswith('#'): self.targets.add(values['href'][1:])
+    links = Links(); links.feed(content)
+    return {'report_body_html_excerpt': content.split('<h2>Original evidence</h2>', 1)[0],
+            'complete_html_digest': base.digest(content),
+            'actual_anchor_ids': sorted(links.ids),
+            'actual_fragment_targets': sorted(links.targets),
+            'missing_fragment_targets': sorted(links.targets - links.ids),
+            'notice': 'The evidence appendix is omitted from this HTML excerpt to avoid duplicating original sources. Anchor and target lists are parsed from the COMPLETE rendered HTML, including its appendix. Do not infer missing destinations from the body excerpt. Original source content is supplied separately.'}
+
+
 def prompt(state, role, bundle, catalog, writing):
     shared = legacy.COMMON + '\nWRITING STANDARD\n' + writing
     if passage_retry(state, role):
@@ -321,7 +339,7 @@ def prompt(state, role, bundle, catalog, writing):
         instructions = '''You are the final acceptance authority. Independently adjudicate every pending finding after its author's repair or rebuttal, then review the exact rendered candidate and all artifacts against original evidence. Feedback from the previous reviewer is a fallible claim, not a fact. Authors may correctly rebut you. Resolve antecedents: record speaker, subject company, analyst premise versus management statement, and surrounding turns. Never insert a disputed correction merely because a reviewer asked for it. Withdraw a mistaken finding when source-backed rebuttal succeeds. Close a repaired finding only after verifying its change. Leave unresolved disputes open. Inspect the full rendered HTML as well as text and accounting basis; no visual browser inspection is claimed. Return {"verdict":"pass|revise|blocked","criteria":{KEY:{"status":"pass|fail|unavailable","evidence":"specific assessment"}},"resolutions":[{"finding_id":"exact ID","status":"closed|withdrawn|open","explanation":"source-backed decision","citations":["D/F/turn/exchange ID"],"passage_ids":["original passage ID"],"speaker":"source speaker or filing issuer","subject":"company/metric actually referred to"}],"findings":[{"target":"financial|retrieval|analysis|formatter","passage":"faulty text or omission","reason":"problem","required_change":"bounded repair","explanation":"source support","citations":["source ID"],"passage_ids":["original passage ID"],"speaker":"...","subject":"..."}]}. New findings are only unresolved defects in the CURRENT candidate. Resolve every pending finding exactly once. Pass requires all rubric criteria pass, no new findings and every prior finding closed or withdrawn. Acknowledgments and literal negations are not automatically analytical failures. Required rubric keys: ''' + ', '.join(legacy.CRITERIA)
         hydrated = {r: passages.hydrate(r, v, catalog) for r, v in state['artifacts'].items()}
         data = {'pending_findings': open_findings(state), 'author_responses': state['responses'], 'candidate_artifacts': hydrated,
-                'candidate_report': report({**state, '_catalog': catalog}, bundle), 'candidate_rendered_html': state['_candidate_html'].split('<h2>Original evidence</h2>', 1)[0] + '</main></html>',
+                'candidate_report': report({**state, '_catalog': catalog}, bundle), 'candidate_rendered_artifact': rendered_review_view(state['_candidate_html']),
                 'original_evidence': passages.input_view(bundle['manifest'], catalog), 'selected_financial_observations': selected_facts(state, bundle), 'remaining_correction_rounds': 2-state['round']}
     else:
         assigned = open_findings(state, role)
@@ -338,7 +356,7 @@ def prompt(state, role, bundle, catalog, writing):
                 'source_spans': slices, 'passages': relevant, 'needs_analysis_refresh': state['needs_analysis']}
         if role == 'formatter':
             data['immutable_financial_rows'] = row_catalog(state['artifacts']['financial'], bundle)
-            data['candidate_rendered_html'] = state['_candidate_html'].split('<h2>Original evidence</h2>', 1)[0] + '</main></html>'
+            data['candidate_rendered_artifact'] = rendered_review_view(state['_candidate_html'])
         if role == 'analysis': data['upstream_artifacts'] = {r: state['artifacts'][r] for r in ('financial','retrieval')}
     if state.get('retry'): data['schema_repair'] = state['retry']
     return shared + '\nASSIGNMENT\n' + instructions + '\nFROZEN EVIDENCE AND ARTIFACTS\n' + legacy.packed(data)
