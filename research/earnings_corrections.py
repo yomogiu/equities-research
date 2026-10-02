@@ -105,14 +105,17 @@ def apply(snapshot, plan, bundle, catalog):
         if op['expected_sha256'] != target['expected_sha256']: raise ValueError('Stale target')
         claim(op, bundle, catalog)
         citations = op['citations']; kind = target['kind']; original = target['value']
-        if op['op'] == 'copy_context' and kind == 'text':
+        if op['op'] == 'copy_context' and kind in ('text', 'basis'):
             source = index['context_sources'].get(op['source_id'])
             if not source or source['sha256'] != op['source_sha256']: raise ValueError('Stale or unknown context source')
-            old = op['old_text']
-            if not isinstance(old, str) or not old or original.count(old) != 1:
+            old = op['old_text']; original_text = original['text'] if kind == 'basis' else original
+            if not isinstance(old, str) or not old or original_text.count(old) != 1:
                 raise ValueError('copy_context requires one exact existing text span')
-            value = original.replace(old, source['value']['text'], 1)
+            value = original_text.replace(old, source['value']['text'], 1)
             citations = list(dict.fromkeys(citations + source['value']['citations']))
+            if kind == 'basis':
+                if len(value) > 240: raise ValueError(f'display.text: limit 240 characters; received {len(value)}')
+                value = {'text': value, 'citations': list(dict.fromkeys(original['citations'] + citations))}
         elif op['op'] == 'replace_text' and kind == 'text':
             value = op['value']; legacy.check_text(value, 'replacement text')
             if len(value) > 4000: raise ValueError('Replacement text exceeds 4000 characters')
@@ -209,8 +212,8 @@ if protocol.get('version') == 'deterministic-corrections-v1':
     progress=c.replay(root,cp,bundle,catalog,writing)
     snapshot=progress['state']; sp=cp['source_protocol']; used_rounds=progress['round']; spent_tokens=progress['tokens']+cp.get('inherited_tokens',0)
     if len(sys.argv)>2 and sys.argv[2]=='reuse':
-        if progress['status'] not in ('pending','budget_exhausted','prompt_too_large') or progress.get('role')!='review':
-            raise ValueError('Only an authenticated staged proposal awaiting its first review may be reused')
+        if not ((progress['status'] in ('pending','budget_exhausted','prompt_too_large') and progress.get('role')=='review') or progress['status']=='invalid_patch'):
+            raise ValueError('Only an authenticated unreviewed proposal may be reused')
         job=root/'rounds'/str(progress['round'])/'propose'
         imported={'job':str(job),'output_sha256':b.sha(job/'output.json')}
 elif protocol.get('version') == r.VERSION:
@@ -289,7 +292,7 @@ def load(root):
 def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None):
     common = legacy.COMMON + '\nWRITING STANDARD\n' + writing
     if role == 'propose':
-        instruction = '''Propose a bounded correction plan. Do not regenerate financial or retrieval artifacts. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...]}. At most 24 operations, one per target. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context also has source_id, source_sha256 and old_text (unique exact existing substring to replace). replace_text also has value (exact replacement, max4000 characters). set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
+        instruction = '''Propose a bounded correction plan. Do not regenerate financial or retrieval artifacts. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...]}. At most 24 operations, one per target. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context targets text or basis and also has source_id, source_sha256 and old_text (unique exact existing substring to replace). replace_text also has value (exact replacement, max4000 characters). set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
         data = {'snapshot_sha256': base.digest(snapshot), 'pending_findings': snapshot['findings'],
                 'registry': registry(snapshot, bundle), 'prepared_retrieval': snapshot['artifacts']['retrieval'],
                 'previous_review': feedback}

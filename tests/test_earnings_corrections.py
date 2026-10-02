@@ -221,3 +221,16 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
             self.assertEqual(c.replay(root,p,self.bundle,self.catalog,'Fictional')['status'],'budget_exhausted')
             request['bindings']['snapshot_sha256']='different';(old/'request.json').write_text(json.dumps(request))
             with self.assertRaises(ValueError):c.replay(root,p,self.bundle,self.catalog,'Fictional')
+
+    def test_copy_context_into_basis_is_typed_and_preserves_data(self):
+        state=self.state();state['format']['basis']={'text':'Fictional redundant basis.','citations':['D001']}
+        op=self.op(state,'basis');op.pop('value')
+        key,source=next(iter(c.registry(state,self.bundle)['context_sources'].items()))
+        op.update(op='copy_context',source_id=key,source_sha256=source['sha256'],old_text=state['format']['basis']['text'])
+        result=c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+        self.assertEqual(result['format']['basis'],{'text':source['value']['text'],'citations':['D001','D002']})
+        self.assertEqual(result['artifacts'],state['artifacts'])
+        state['artifacts']['financial']['context'][0]['text']='x'*241
+        key,source=next(iter(c.registry(state,self.bundle)['context_sources'].items()))
+        op.update(source_id=key,source_sha256=source['sha256'])
+        with self.assertRaisesRegex(ValueError,'limit 240'):c.apply(state,self.plan(state,op),self.bundle,self.catalog)

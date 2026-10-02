@@ -7,7 +7,7 @@ There is no final author rewrite that can lose an accepted correction.
 
 ## Allowed operations
 
-- `copy_context`: replace one exact report span with an existing financial context
+- `copy_context`: replace one exact report or accounting-basis span with an existing financial context
   note. Python copies the text and merges its citations. The reviewer must confirm
   the context is correct; successful schema validation alone is not approval.
 - `replace_text`: apply the exact reviewer-approved paragraph or heading.
@@ -80,8 +80,9 @@ Unit tests establish structural guarantees, not model judgment. Live experiment
 receipts and real-company reports belong only in private storage.
 
 For an explicitly authorized code-version migration, `init --reuse-proposal` can
-import a verified staged proposal from an older correction experiment awaiting
-review. The old verifier must replay it successfully, its snapshot must match, and
+import an authenticated unreviewed proposal from an older correction experiment.
+This also permits revalidation after an explicitly fixed schema limitation; it never
+imports an old rejected plan as approved. The old verifier must replay it successfully, its snapshot must match, and
 all old source/code/receipt bindings remain checked. It does not rerun the proposal
 agent or count its historical usage as new usage. The independent reviewer still
 assesses the exact candidate under the new protocol. This does not retry uncertain
