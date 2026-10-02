@@ -37,7 +37,9 @@ an approved exact candidate, all criteria passing and every finding resolved. Th
 only rendering change after acceptance is the status banner; no prose is regenerated.
 
 At most two correction rounds are available across an ordinary run. The default
-600,000-token limit is checked between calls; an in-flight call can exceed it. Invalid
+600,000-token limit is checked between calls; an in-flight call can exceed it. Prompts above 500,000 characters stop before launch.
+Source text and passage IDs are sent once in compact columns; full provenance remains
+in the immutable catalog and receipts. Invalid
 patches or malformed reviews stop with precise diagnostics rather than triggering a
 whole-artifact rewrite. Upstream factual defects cannot be repaired through this
 presentation interface: they require a separately validated preparation update.

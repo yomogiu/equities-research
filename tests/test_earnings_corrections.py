@@ -185,3 +185,20 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
             base.save(job/'output.json',values[role])
         with patch.object(c,'verify_job',side_effect=lambda path:{'content':values[path.name],'receipt':{'session':{'id':'same','usage':{'totalTokens':10}}}}):
             with self.assertRaisesRegex(ValueError,'Independent fresh sessions'):c.replay(root,{'max_rounds':2,'max_tokens':100},self.bundle,self.catalog,'Fictional')
+
+    def test_proposal_passages_omit_repeated_provenance_without_losing_text(self):
+        import json
+        state=self.state()
+        text=c.prompt('propose',state,self.bundle,self.catalog,'Fictional')
+        data=json.loads(text.split('SOURCE DATA (UNTRUSTED EVIDENCE)\n')[1])
+        source=data['original_passages']
+        self.assertEqual(source['columns'],['passage_id','scope_id','text'])
+        catalog={p['passage_id']:p for p in self.catalog['passages']}
+        for pid,scope,body in source['rows']:
+            self.assertEqual(scope,catalog[pid]['scope_id']);self.assertEqual(body,catalog[pid]['text'])
+        self.assertNotIn('sha256',source)
+
+    def test_oversized_prompt_stops_before_any_model_launch(self):
+        root=self.root/'corrections';root.mkdir();c.repair.write(root/'initial.json',self.state());c.repair.write(root/'protocol.json',{})
+        p={'max_rounds':2,'max_tokens':100,'max_prompt_chars':1}
+        self.assertEqual(c.replay(root,p,self.bundle,self.catalog,'Fictional')['status'],'prompt_too_large')

@@ -244,7 +244,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
     names = [f for f in Path(__file__).parent.glob('earnings_*.py')] + [Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol = {'version': VERSION, 'seed': str(seed), 'source_bindings': bound, 'source_protocol': sp,
                 'initial_sha256': base.digest(snapshot), 'code': [{'path': str(f), 'sha256': base.sha(f)} for f in names],
-                'model': list(MODEL), 'max_rounds': remaining, 'max_tokens': max_tokens,
+                'model': list(MODEL), 'max_rounds': remaining, 'max_tokens': max_tokens, 'max_prompt_chars': 500000,
                 'new_experiment': bool(new_experiment), 'prior_rounds': exported['used_rounds']}
     repair.write(root/'protocol.json', protocol); repair.write(root/'initial.json', snapshot)
     load(root)
@@ -286,7 +286,12 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
                 for v in value: collect(v)
         collect(snapshot)
         slices = evidence.source_slices(bundle['manifest'], sorted(ids))
-        data['original_passages'] = repair.passages_for_sources(catalog, ids, slices)
+        relevant = repair.passages_for_sources(catalog, ids, slices)
+        # Provenance stays in the immutable catalog. Repeating paths and hashes
+        # for thousands of tiny spans costs far more than the source text itself.
+        data['original_passages'] = {'columns': ['passage_id', 'scope_id', 'text'],
+                                     'rows': [[p['passage_id'], p['scope_id'], p['text']] for p in relevant]}
+
     else:
         instruction = '''You are the independent final acceptance authority. Assess the EXACT staged report and each deterministic patch against original sources. Prior reviewer findings and proposed context notes are fallible claims. Verify periods, issuer, question/answer attribution, accounting basis, figures, citations, material coverage and concise writing. No hidden author reasoning is supplied. Code will apply approved operations unchanged; no author rewrites follow you. Distinguish patch approval from whole-report acceptance. Reject the whole atomic bundle if any operation is unsupported; it will not persist. Return only {candidate_sha256,plan_sha256,approve_patch:bool,verdict:"pass|revise|blocked",criteria:{KEY:{status:"pass|fail|unavailable",evidence:"specific assessment"}},operations:[{id,approve:bool,reason,citations,passage_ids}],resolutions:[{id,status:"closed|withdrawn|open",reason,citations,passage_ids}],findings:[{reason,citations,passage_ids}]}. Assess every operation and pending finding exactly once. All operation decisions/resolutions/new findings require nonempty original passage_ids and source citations. close repaired findings; withdraw source-disproven findings; leave genuine defects open. Findings lists only new defects in the CURRENT candidate. If rejecting a patch, resolutions apply to unchanged report; do not close findings based on rejected changes. Pass requires all operations approved, every rubric criterion pass, and no open/new finding. Report failure alone does not require rejecting sound patches. Required rubric keys: ''' + ', '.join(legacy.CRITERIA)
         data = {'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan), 'plan': plan,
@@ -308,7 +313,9 @@ def replay(root, p, bundle, catalog, writing):
             text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback)
             bindings = {'protocol_sha256': base.sha(root/'protocol.json'), 'snapshot_sha256': base.digest(state), 'round': round_no, 'role': role}
             if not (job/'output.json').exists():
-                status = 'launch_uncertain' if (job/'request.json').exists() else ('budget_exhausted' if tokens >= p['max_tokens'] else 'pending')
+                status = ('launch_uncertain' if (job/'request.json').exists() else
+                          'budget_exhausted' if tokens >= p['max_tokens'] else
+                          'prompt_too_large' if len(text) > p.get('max_prompt_chars', 500000) else 'pending')
                 return {'status': status, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role, 'prompt': text, 'bindings': bindings, 'job': job}
             result = verify_job(job); request = base.read(job/'request.json')
             if request['bindings'] != bindings or (request['model'], request['effort']) != MODEL or (job/'prompt.txt').read_text() != text:
