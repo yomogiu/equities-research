@@ -111,7 +111,7 @@ def repair_handoff(root, deps, prior, issues, review, catalog, refusals=None):
     return None
 
 
-def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False):
+def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=False):
     if repair_loop and deterministic_corrections:
         raise ValueError("Choose one correction strategy")
     root = Path(output).resolve(); root.mkdir(parents=True, exist_ok=True)
@@ -122,7 +122,9 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
              'earnings_mixed_prime.mjs', 'earnings_financial_display.py')
     if deterministic_corrections:
         names += ('earnings_corrections.py', 'earnings_report_repair.py')
-    protocol = {'version': VERSION, 'repair_loop': bool(repair_loop), 'deterministic_corrections': bool(deterministic_corrections), 'case_path': str(Path(case_path).resolve()),
+    if signals:
+        names += ('earnings_signals.py', 'earnings_report_repair.py')
+    protocol = {'report_signals': bool(signals), 'version': VERSION, 'repair_loop': bool(repair_loop), 'deterministic_corrections': bool(deterministic_corrections), 'case_path': str(Path(case_path).resolve()),
                 'case_sha256': base.sha(case_path), 'evidence_manifest': str(root / 'evidence/manifest.json'),
                 'evidence_sha256': base.sha(root / 'evidence/manifest.json'),
                 'passages_sha256': base.sha(root / 'passages.json'),
@@ -347,12 +349,12 @@ def verify(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
-    f = sub.add_parser('freeze'); f.add_argument('case'); f.add_argument('output'); f.add_argument('writing'); f.add_argument('--repair-loop', action='store_true'); f.add_argument('--deterministic-corrections', action='store_true')
+    f = sub.add_parser('freeze'); f.add_argument('case'); f.add_argument('output'); f.add_argument('writing'); f.add_argument('--repair-loop', action='store_true'); f.add_argument('--deterministic-corrections', action='store_true'); f.add_argument('--signals', action='store_true')
     for name in ('run', 'verify'):
         sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
     if args.command == 'freeze':
-        freeze(args.case, args.output, args.writing, args.repair_loop, args.deterministic_corrections); print('Frozen passage-selection protocol')
+        freeze(args.case, args.output, args.writing, args.repair_loop, args.deterministic_corrections, args.signals); print('Frozen passage-selection protocol')
     else:
         result = (run if args.command == 'run' else verify)(args.output)
         summary = {k: result[k] for k in ('status', 'correction_rounds', 'wall_seconds')}
@@ -386,6 +388,19 @@ def main():
                     raise ValueError('Repair directory belongs to a different seed')
                 summary = (repair.run if args.command == 'run' else repair.verify)(continuation)
                 summary['repair_directory'] = str(continuation)
+        if base.read(Path(args.output)/'protocol.json').get('report_signals') and summary['status'] == 'accepted':
+            from research import earnings_signals as signals
+            seed = Path(summary.get('corrections_directory', summary.get('repair_directory', args.output))).resolve()
+            edition = seed.with_name(seed.name + '-signals')
+            if not (edition/'protocol.json').exists() and args.command == 'run':
+                signals.initialize(seed, edition)
+            if (edition/'protocol.json').exists():
+                if base.read(edition/'protocol.json')['seed'] != str(seed):
+                    raise ValueError('Signal edition belongs to another report')
+                summary['signals'] = (signals.run if args.command == 'run' else signals.verify)(edition)
+                summary['signals_directory'] = str(edition)
+            else:
+                summary['signals'] = {'status': 'not_started'}
         print(legacy.packed(summary))
 
 
