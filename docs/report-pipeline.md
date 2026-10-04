@@ -10,6 +10,9 @@ artifacts and the complete transcript. A fresh reviewer receives original
 sources and the exact candidate report. At most two correction rounds are
 permitted. Quotes are selected by passage ID; code copies text, offsets and
 hashes. Financial values are rendered from the selected source observations.
+New frozen runs also enable the [reviewed signal strip](report-signals.md) by
+default after acceptance. `freeze --no-signals` opts out. Existing frozen runs
+retain their recorded setting; this default does not activate scheduled analysis.
 
 ## Execute a bounded run
 

@@ -83,6 +83,21 @@ class SignalTests(PassageFixture, unittest.TestCase):
         p=pipe.freeze(self.casepath,self.root/'run',w,signals=True)
         self.assertTrue(p['report_signals']);self.assertTrue(any(x['path'].endswith('earnings_signals.py') for x in p['code']))
 
+    def test_new_runs_enable_signals_and_allow_explicit_opt_out(self):
+        w=self.root/'writing.txt';w.write_text('Fictional standard')
+        enabled=pipe.freeze(self.casepath,self.root/'default-run',w)
+        disabled=pipe.freeze(self.casepath,self.root/'disabled-run',w,signals=False)
+        self.assertTrue(enabled['report_signals'])
+        self.assertFalse(disabled['report_signals'])
+        self.assertFalse(any(x['path'].endswith('earnings_signals.py') for x in disabled['code']))
+
+    def test_cli_signals_default_and_opt_out_are_frozen(self):
+        from unittest.mock import patch
+        for flags,expected in (([],True),(['--signals'],True),(['--no-signals'],False)):
+            with self.subTest(flags=flags),patch('sys.argv',['pipeline','freeze','case','output','writing',*flags]),patch.object(pipe,'freeze') as freeze:
+                pipe.main()
+                self.assertIs(freeze.call_args.args[-1],expected)
+
     def test_signal_stage_resumes_and_verifies_without_duplicate_calls(self):
         from unittest.mock import patch
         import json

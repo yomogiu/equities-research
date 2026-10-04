@@ -28,8 +28,10 @@ writing. Every signal must pass before the annotated edition is published. A blo
 annotation stage leaves the original accepted report available. The source report,
 financial records, retrieval artifacts and prose are never rewritten.
 
-Use `--signals` with the passage pipeline's `freeze` command to enable the stage after
-report acceptance, including acceptance through deterministic corrections. `run` and
+New passage-pipeline runs enable `--signals` by default when frozen. The stage runs after
+report acceptance, including acceptance through deterministic corrections. Use
+`--no-signals` to explicitly omit it for a new run. Existing frozen protocols retain
+their recorded setting; an absent flag remains disabled. `run` and
 `verify` expose annotation status separately from the original report's status.
 The flag does not enable production schedules or change workflow pins.
 

@@ -111,7 +111,7 @@ def repair_handoff(root, deps, prior, issues, review, catalog, refusals=None):
     return None
 
 
-def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=False):
+def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True):
     if repair_loop and deterministic_corrections:
         raise ValueError("Choose one correction strategy")
     root = Path(output).resolve(); root.mkdir(parents=True, exist_ok=True)
@@ -349,7 +349,9 @@ def verify(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
-    f = sub.add_parser('freeze'); f.add_argument('case'); f.add_argument('output'); f.add_argument('writing'); f.add_argument('--repair-loop', action='store_true'); f.add_argument('--deterministic-corrections', action='store_true'); f.add_argument('--signals', action='store_true')
+    f = sub.add_parser('freeze'); f.add_argument('case'); f.add_argument('output'); f.add_argument('writing'); f.add_argument('--repair-loop', action='store_true'); f.add_argument('--deterministic-corrections', action='store_true')
+    f.add_argument('--signals', action=argparse.BooleanOptionalAction, default=True,
+                   help='Add independently reviewed signals after acceptance (default: enabled; --no-signals opts out)')
     for name in ('run', 'verify'):
         sub.add_parser(name).add_argument('output')
     args = parser.parse_args()

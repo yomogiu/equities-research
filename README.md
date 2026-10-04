@@ -47,6 +47,9 @@ Use `freeze --repair-loop` to automatically dispatch targeted repairs or source-
 rebuttals and return them to the reviewer for adjudication. Unresolved findings
 keep reports in draft status; accepted reports require a final passing review.
 This entry point does not activate the collection scheduler or unattended analysis.
+New runs include [independently reviewed business signals](docs/report-signals.md)
+after report acceptance by default. Use `freeze --no-signals` to opt out; existing
+frozen runs keep their original setting.
 
 ## Check the code
 
