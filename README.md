@@ -43,8 +43,13 @@ It runs Prime Agent sessions through the existing Codex subscription:
 
 [Run, verify and repair the selected pipeline](docs/report-pipeline.md).
 Code copies exact selected passages and renders source-derived financial values.
-Unresolved substantive or formatting findings keep reports in draft status.
+Use `freeze --repair-loop` to automatically dispatch targeted repairs or source-backed
+rebuttals and return them to the reviewer for adjudication. Unresolved findings
+keep reports in draft status; accepted reports require a final passing review.
 This entry point does not activate the collection scheduler or unattended analysis.
+New runs include [independently reviewed business signals](docs/report-signals.md)
+after report acceptance by default. Use `freeze --no-signals` to opt out; existing
+frozen runs keep their original setting.
 
 ## Check the code
 
@@ -72,3 +77,7 @@ analysis queue, role/task prompts, the analytical framework, contract checks, an
 offline tests. Private GitHub Actions can run the downloader without any model calls.
 Research-bearing workflows and inputs belong in the private data repository.
 Unattended Codex analysis and its scheduling remain separate deployment work.
+
+For immutable prepared data and exact reviewer-approved patches, use the opt-in
+[deterministic correction stage](docs/deterministic-corrections.md). It copies existing
+context into the report, preserves numeric records, and avoids a final agent rewrite.
