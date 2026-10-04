@@ -202,6 +202,68 @@ class PublishedQuarterTests(unittest.TestCase):
         _, row = self.run_tracker()
         self.assertIsNone(row['period'])
 
+    def test_reviewed_undated_call_uses_dated_same_period_sibling(self):
+        annual = self.add('Fictitious annual fiscal 2025 report.', report_date='2025-12-31')
+        filing = self.add('Fictitious quarterly fiscal 2026 report.', report_date='2026-06-30')
+        call = self.add('Fictitious complete earnings call transcript.')
+        cat = self.catalog()
+        self.qualify(cat, annual, 'FY2025', kind='annual_background')
+        self.qualify(cat, filing, 'FY2026-Q2', kind='periodic_filing')
+        self.qualify(cat, call, 'FY2026-Q2', kind='transcript')
+        _, row = self.run_tracker()
+        self.assertEqual(row['period'], 'FY2026-Q2')
+        self.assertEqual(row['status'], 'packet_prepared')
+        packet = library.read_json(self.root / 'library/packets' / (row['packet_id'] + '.json'))
+        self.assertEqual({d['kind'] for d in packet['documents']},
+                         {'annual_background', 'periodic_filing', 'transcript'})
+        transcript = next(c for c in row['candidate_documents'] if c.get('kind') == 'transcript')
+        self.assertIsNone(transcript['period_end'])
+        self.assertIsNone(transcript['published_on'])
+
+    def test_undated_unreviewed_sibling_does_not_borrow_date(self):
+        annual = self.add('Fictitious annual report.', report_date='2025-12-31')
+        filing = self.add('Fictitious Example Reports Q2 FY2026 Results.', report_date='2026-06-30')
+        self.add('Fictitious Example Reports Q2 FY2026 Results. Separate unreviewed call.')
+        cat = self.catalog()
+        self.qualify(cat, annual, 'FY2025', kind='annual_background')
+        self.qualify(cat, filing, 'FY2026-Q2', kind='periodic_filing')
+        _, row = self.run_tracker()
+        self.assertIsNone(row['period'])
+
+    def test_reviewed_newer_period_without_any_date_anchor_stays_unresolved(self):
+        older = self.add('Fictitious older results.', report_date='2026-06-30')
+        newer = self.add('Fictitious later results.')
+        cat = self.catalog()
+        self.qualify(cat, older, 'FY2026-Q2')
+        self.qualify(cat, newer, 'FY2026-Q3')
+        _, row = self.run_tracker()
+        self.assertIsNone(row['period'])
+
+    def test_overlapping_period_anchors_cannot_be_ordered_by_filing_date(self):
+        def c(period, end, publication):
+            return {'period': period, 'period_end': end, 'published_on': publication, 'status': 'qualified'}
+        candidates = [c('FY2026-H1', '2026-06-30', '2026-08-01'),
+                      c('FY2026-Q2', '2026-06-30', '2026-08-02'),
+                      c('FY2026-Q2', None, None)]
+        self.assertIsNone(published._latest(candidates)[0])
+
+    def test_grouped_dates_do_not_fall_back_to_amendment_publication(self):
+        candidates = [
+            {'period': 'FY2026-Q1', 'period_end': None, 'published_on': '2026-09-19', 'status': 'qualified'},
+            {'period': 'FY2026-Q1', 'period_end': None, 'published_on': None, 'status': 'qualified'},
+            {'period': 'FY2026-Q2', 'period_end': '2026-06-30', 'published_on': '2026-08-01', 'status': 'qualified'},
+        ]
+        self.assertIsNone(published._latest(candidates)[0])
+
+    def test_undated_older_group_preserves_same_end_annual_quarter_ambiguity(self):
+        candidates = [
+            {'period': 'FY2024', 'period_end': None, 'published_on': '2025-02-01', 'status': 'qualified'},
+            {'period': 'FY2025', 'period_end': '2025-12-31', 'published_on': '2026-03-01', 'status': 'qualified'},
+            {'period': 'FY2025-Q4', 'period_end': '2025-12-31', 'published_on': '2026-02-01', 'status': 'qualified'},
+            {'period': 'FY2025-Q4', 'period_end': None, 'published_on': None, 'status': 'qualified'},
+        ]
+        self.assertIsNone(published._latest(candidates)[0])
+
     def test_all_issuers_included_and_no_identity_bypass(self):
         self.add('Fictitious Example Reports Q3 FY2026 Results.')
         self.owners[0]['monitoring_eligible'] = False

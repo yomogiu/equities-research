@@ -250,6 +250,26 @@ def _latest(candidates):
         return next(iter(periods)), usable
     basis = 'period_end' if all(c.get('period_end') for c in usable) else 'published_on'
     if not all(c.get(basis) for c in usable):
+        # A reviewed transcript may have an explicit fiscal label without a
+        # collector date. Its already-reviewed period can use dated siblings
+        # for ordering; do not invent a date on that source or rank FY labels.
+        groups = {period: [c for c in usable if c['period'] == period] for period in periods}
+        for field in ('period_end',):
+            bounds = {}
+            for period, group in groups.items():
+                dates = [c[field] for c in group if c.get(field)]
+                if not dates or any(not c.get(field) and c['status'] != 'qualified' for c in group):
+                    break
+                bounds[period] = (min(dates), max(dates))
+            if len(bounds) != len(groups):
+                continue
+            newest = [p for p, (start, _) in bounds.items()
+                      if all(start > end for other, (_, end) in bounds.items() if other != p)]
+            if len(newest) == 1:
+                return newest[0], groups[newest[0]]
+            # Conflicting/overlapping period-end anchors must not be overruled
+            # by a later filing date (for example an amended older report).
+            return None, usable
         return None, usable
     last = max(c[basis] for c in usable)
     newest = [c for c in usable if c[basis] == last]
