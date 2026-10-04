@@ -150,3 +150,11 @@ The repair loop automates execution and records disagreement; it does not make
 model judgments infallible. Test fixtures exercise mistaken reviewer findings,
 withdrawal after rebuttal, formatter preservation, interrupted execution, tamper
 rejection and budget exhaustion. Live outcomes belong in private storage.
+
+## Private coordinator connection
+
+The [finite report flow](connected-report-flow.md) supplies the selected pipeline
+adapter for private queue execution. It prepares an explicitly authorized qualified
+packet, advances one new model call per turn, and requires both deterministic
+corrections and independently reviewed signals. The private coordinator owns queue
+reservation, separate code pinning, exact remote persistence and dashboard publication.
