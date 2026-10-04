@@ -159,21 +159,31 @@ def findings(role, exc):
              'required_change': 'Repair the stated schema or evidence defect and return full role JSON.'}]
 
 
-def run(output):
+class PendingJobs(Exception):
+    """A finite coordinator turn used its new-job allowance."""
+
+
+def run(output, max_new_jobs=None):
     root = Path(output).resolve(); p, bundle, catalog = load(root)
     if (root / 'result.json').exists():
         return verify(root)
     writing = Path(p['writing_standard']).read_text()
     deps, prior, selection_issues, feedback, jobs, failures = {}, {}, {}, [], [], []
     need = {'financial', 'retrieval'}; review = None; handoff = None; refusals = {}
+    new_jobs = 0
 
     def call(role, round_number, snapshot):
+        nonlocal new_jobs
         repair = role in selection_issues
         inputs = {'dependencies': copy.deepcopy(snapshot),
                   'feedback': [f for f in feedback if f['target'] == role],
                   'prior': prior.get(role) if repair else None,
                   'issues': selection_issues.get(role)}
         job = root / 'jobs' / f'{role}-r{round_number}'
+        if not (job / 'request.json').exists():
+            if max_new_jobs is not None and new_jobs >= max_new_jobs:
+                raise PendingJobs()
+            new_jobs += 1
         job.mkdir(parents=True, exist_ok=True)
         input_path = root / 'inputs' / f'{role}-r{round_number}.json'
         base.save(input_path, inputs)
@@ -214,10 +224,14 @@ def run(output):
             break
         errors = []
         snapshot = copy.deepcopy(deps)
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            pending = {r: pool.submit(call, r, round_number, snapshot) for r in sorted(need & {'financial', 'retrieval'})}
-            for role, future in pending.items():
-                receive(role, future.result(), errors)
+        if max_new_jobs is not None:
+            for role in sorted(need & {'financial', 'retrieval'}):
+                receive(role, call(role, round_number, snapshot), errors)
+        else:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                pending = {r: pool.submit(call, r, round_number, snapshot) for r in sorted(need & {'financial', 'retrieval'})}
+                for role, future in pending.items():
+                    receive(role, future.result(), errors)
         if not errors:
             receive('analysis', call('analysis', round_number, deps), errors)
         if not errors:
