@@ -77,6 +77,12 @@ def prepare(root, packet_id, output, writing, authorization):
     artifacts = [{'path': str(p), 'sha256': base.sha(p)} for p in (output/'financial.json', output/'transcript-index.json', writing)]
     case = {'schema_version': 1, 'scope': 'one_packet_experiment', 'authorization': authorization,
             'case_id': packet_id, 'packet_id': packet_id, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
+            'scope_notes': [
+                'Historical event_update for the exact qualified packet and fiscal period recorded in this case.',
+                'Evidence is limited to the archived packet. Valuation, consensus, portfolio, private-library and prior-call context are unavailable unless explicitly present in its sources.',
+                'Financial observations are deterministic extractions, not independent approval; preserve their original units, periods, accounting basis and dimensions.',
+                'Transcript speaker roles and Q&A boundaries are provisional. Retain the index uncertainty and verify attribution against original call text.'
+            ],
             'sources': sources, 'artifacts': artifacts, 'financial_path': str(output/'financial.json'),
             'transcript_index_path': str(output/'transcript-index.json'),
             'transcript_path': str(library.resolve(root, call['text_path'])), 'writing_standard_path': str(writing)}
