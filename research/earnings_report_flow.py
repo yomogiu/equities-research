@@ -10,6 +10,7 @@ from . import earnings_corrections as corrections
 from . import earnings_signals as signals
 from . import financial_evidence as financial
 from . import transcript_evidence as transcript
+from . import reviewed_transcript_index as reviewed_index
 from . import library, freshness
 
 
@@ -35,8 +36,14 @@ def validate_packet(root, packet_id):
     return packet
 
 
-def prepare(root, packet_id, output, writing, authorization):
-    """Reference archived sources; derive financial records and provisional turns."""
+def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar=None):
+    """Derive records with optional externally authorized source-bound mappings.
+
+    reviewed_sidecar is an explicit coordinator-selected authorization dictionary,
+    including private-root-relative proposal/review paths and exact expected source
+    and artifact hashes. No sidecars are discovered or authorized by this function.
+    Whole-index coverage remains provisional and goes to independent report review.
+    """
     root, output, writing = Path(root).resolve(), Path(output).resolve(), Path(writing).resolve()
     if not authorization.strip():
         raise ValueError('Explicit report authorization required')
@@ -59,7 +66,21 @@ def prepare(root, packet_id, output, writing, authorization):
     call_source = {k: call[k] for k in ('document_id', 'text_sha256', 'raw_sha256')}
     call_source.update(issuer_id=packet['issuer_id'], catalog_id=current_catalog['catalog_id'],
                        issuer_names=[issuer_name] if isinstance(issuer_name, str) else [])
-    index = transcript.index_publisher_transcript(text, call_source, call_raw)
+    mapping_artifacts = []
+    if reviewed_sidecar is None:
+        index = transcript.index_publisher_transcript(text, call_source, call_raw)
+    else:
+        # Existing issuer/period/completeness/freshness gates above still apply.
+        if not isinstance(reviewed_sidecar, dict):
+            raise ValueError('Explicit reviewed sidecar authorization required')
+        proposal = library.load_bytes(root, reviewed_sidecar['proposal_path'], reviewed_sidecar['proposal_sha256'])
+        review = library.load_bytes(root, reviewed_sidecar['review_path'], reviewed_sidecar['review_sha256'])
+        index = reviewed_index.apply_reviewed_sidecar(text, call_raw, call_source, proposal, review, reviewed_sidecar)
+        if index['coverage']['mapping_blockers']:
+            raise ValueError('Reviewed Q&A mapping remains unresolved: ' + ', '.join(index['coverage']['mapping_blockers']))
+        mapping_artifacts = [{'path': str(library.resolve(root, reviewed_sidecar[key+'_path'])),
+                              'sha256': reviewed_sidecar[key+'_sha256']}
+                             for key in ('proposal', 'review')]
     if not index['exchanges']:
         raise ValueError('Q&A boundaries need review before transcript-led analysis')
     # Keep provisional speaker/boundary uncertainty in the evidence for review.
@@ -75,6 +96,10 @@ def prepare(root, packet_id, output, writing, authorization):
                             'representation': representation, 'path': str(path),
                             'sha256': doc[name+'_sha256'], 'url': doc['source_url']})
     artifacts = [{'path': str(p), 'sha256': base.sha(p)} for p in (output/'financial.json', output/'transcript-index.json', writing)]
+    if reviewed_sidecar is not None:
+        selection_path = output/'transcript-sidecar-selection.json'
+        base.save(selection_path, reviewed_sidecar)
+        artifacts += mapping_artifacts + [{'path': str(selection_path), 'sha256': base.sha(selection_path)}]
     case = {'schema_version': 1, 'scope': 'one_packet_experiment', 'authorization': authorization,
             'case_id': packet_id, 'packet_id': packet_id, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
             'scope_notes': [
@@ -86,6 +111,10 @@ def prepare(root, packet_id, output, writing, authorization):
             'sources': sources, 'artifacts': artifacts, 'financial_path': str(output/'financial.json'),
             'transcript_index_path': str(output/'transcript-index.json'),
             'transcript_path': str(library.resolve(root, call['text_path'])), 'writing_standard_path': str(writing)}
+    if reviewed_sidecar is not None:
+        case['transcript_sidecar'] = index['reviewed_sidecar']
+        case['transcript_sidecar_selection_path'] = str(selection_path)
+        case['scope_notes'].append('Source-bound speaker/Q&A annotations have independent receipts; generated exchange coverage remains provisional. Unknown occupation does not imply unknown questioner function. Preserve all retained source holds.')
     base.validate_case(case); base.save(output/'case.json', case)
     return output/'case.json'
 

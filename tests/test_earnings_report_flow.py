@@ -242,3 +242,67 @@ class PreparedFlowTests(unittest.TestCase):
         self.assertEqual(result['status'],'pending')
         self.assertEqual(calls,[('gpt-5.6-luna','xhigh')])
         self.assertEqual(self.original,{p:base.sha(p) for p in self.original})
+
+
+class PreparedSidecarTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from test_earnings_compact_evidence import fixture as financial_fixture
+        from test_reviewed_transcript_index import fixture, encoded
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name).resolve();financial_fixture(self.root)
+        text,raw,source,proposal,review,self.selection=fixture(True)
+        (self.root/'call.html').write_bytes(raw);(self.root/'call.txt').write_bytes(text.encode())
+        self.selection['proposal_path']='mapping.json';self.selection['review_path']='review.json'
+        (self.root/'mapping.json').write_bytes(encoded(proposal));(self.root/'review.json').write_bytes(encoded(review))
+        self.writing=self.root/'writing.txt';self.writing.write_text('Fictional concise writing standard')
+        def document(name,kind):
+            return {'document_id':source['document_id'] if kind=='transcript' else 'fake-filing',
+                    'kind':kind,'period':'FY2040-Q1','completeness':'full',
+                    'source_url':'https://example.invalid/'+name,'raw_path':name+'.html','text_path':name+'.txt',
+                    'raw_sha256':base.sha(self.root/(name+'.html')),'text_sha256':base.sha(self.root/(name+'.txt'))}
+        self.packet={'issuer_id':source['issuer_id'],'period':'FY2040-Q1',
+                     'documents':[document('filing','periodic_filing'),document('call','transcript')]}
+        self.catalog={'catalog_id':'fake-catalog','issuers':{source['issuer_id']:{'issuer':'Fictional Widgets'}}}
+
+    def prepare(self, selection):
+        with patch.object(flow,'validate_packet',return_value=self.packet),patch.object(flow.library,'catalog',return_value=self.catalog):
+            return flow.prepare(self.root,'fake-packet',self.root/'prepared',self.writing,'Explicit fictional request',reviewed_sidecar=selection)
+
+    def test_sidecar_inputs_freeze_with_original_receipts_and_neutral_questioner(self):
+        path=self.prepare(self.selection);case=base.read(path)
+        bound={x['path']:x['sha256'] for x in case['artifacts']}
+        self.assertEqual(bound[str(self.root/'mapping.json')],self.selection['proposal_sha256'])
+        self.assertEqual(bound[str(self.root/'review.json')],self.selection['review_sha256'])
+        self.assertEqual(base.read(case['transcript_sidecar_selection_path']),self.selection)
+        self.assertIn(case['transcript_sidecar_selection_path'],bound)
+        index=base.read(case['transcript_index_path'])
+        self.assertEqual(index['exchanges'][0]['questioner_occupation'],'unknown')
+        self.assertTrue(index['needs_review'])
+        pipe.freeze(path,self.root/'frozen',self.writing,deterministic_corrections=True,signals=True)
+        protocol,bundle,catalog=pipe.load(self.root/'frozen')
+        self.assertEqual(bundle['transcript_index']['reviewed_sidecar']['review']['sha256'],self.selection['review_sha256'])
+        (self.root/'mapping.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError,'Frozen input changed'):base.validate_case(case)
+
+    def test_mismatched_sidecar_fails_before_output(self):
+        selection=copy.deepcopy(self.selection);selection['text_sha256']='wrong'
+        with self.assertRaisesRegex(ValueError,'source hash'):self.prepare(selection)
+        self.assertFalse((self.root/'prepared').exists())
+
+    def test_unresolved_mapping_blocks_preparation(self):
+        self.catalog['issuers']['fake-issuer']['issuer']='Different Fictional Issuer'
+        with self.assertRaisesRegex(ValueError,'mapping remains unresolved'):self.prepare(self.selection)
+        self.assertFalse((self.root/'prepared').exists())
+
+    def test_existing_source_gate_runs_before_sidecar(self):
+        with patch.object(flow,'validate_packet',side_effect=ValueError('Source freshness fails')),patch.object(flow.reviewed_index,'apply_reviewed_sidecar') as apply:
+            with self.assertRaisesRegex(ValueError,'Source freshness fails'):
+                flow.prepare(self.root,'fake',self.root/'prepared',self.writing,'Explicit',reviewed_sidecar=self.selection)
+            apply.assert_not_called()
+
+    def test_no_auto_discovery_and_standard_no_sidecar_path_preserved(self):
+        # Valid sidecars on disk do not add annotations without explicit selection.
+        with self.assertRaisesRegex(ValueError,'Q&A boundaries need review'):self.prepare(None)
+        self.assertFalse((self.root/'prepared').exists())
