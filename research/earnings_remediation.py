@@ -108,7 +108,7 @@ def apply(snapshot, plan, bundle, catalog):
     for role in ('financial', 'retrieval', 'analysis'):
         pipe.validate(role, out['artifacts'][role], bundle, catalog)
     repair.validate_format(out['format'], out['artifacts']['financial'], bundle)
-    context.propagation_check(snapshot, out, plan)
+    context.propagation_check(snapshot, out, plan, bundle)
     return out
 
 

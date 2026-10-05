@@ -44,6 +44,7 @@ def registry(snapshot, bundle):
                         'expected_sha256': base.digest(value), 'citation_path': citations}
     a = snapshot['artifacts']['analysis']
     add(['artifacts', 'analysis', 'opening'], 'text', a['opening'], ['artifacts', 'analysis', 'opening_citations'])
+    add(['artifacts', 'analysis', 'scope'], 'text', a['scope'])
     for i, item in enumerate(a['findings']):
         for field in ('heading', 'text'):
             add(['artifacts', 'analysis', 'findings', i, field], 'text', item[field], ['artifacts', 'analysis', 'findings', i, 'citations'])
@@ -82,6 +83,7 @@ def registry(snapshot, bundle):
                 'value': selected, 'sha256': base.digest(selected),
                 'parent_sha256': base.digest(note), 'start': start, 'end': end}
     return {'targets': targets, 'context_sources': sources,
+            'occurrences': {row['occurrence_id']: row for row in context.addressable_inventory(snapshot, bundle)},
             'financial_rows': repair.row_catalog(snapshot['artifacts']['financial'], bundle)}
 
 
@@ -107,6 +109,8 @@ def apply(snapshot, plan, bundle, catalog):
     if not isinstance(plan['operations'], list) or len(plan['operations']) > 24:
         raise ValueError('At most 24 operations per round')
     index = registry(snapshot, bundle); out = copy.deepcopy(snapshot); seen = set(); ids = set()
+    # Validate navigation before staging any edit or spending a review call.
+    context.resolve_claim_groups(plan.get('claim_groups', []), list(index['occurrences'].values()))
     common = {'id', 'target_id', 'expected_sha256', 'op', 'citations', 'passage_ids', 'reason'}
     for op in plan['operations']:
         if not isinstance(op, dict): raise ValueError('Operation must be an object')
@@ -115,6 +119,8 @@ def apply(snapshot, plan, bundle, catalog):
             extra = {'value', 'old_text'}
         fields(op, common | extra, 'operation')
         legacy.check_text(op['id'], 'operation ID')
+        if not isinstance(op['target_id'], str) or not op['target_id']:
+            raise ValueError('Nonempty target_id string required')
         if op['id'] in ids or op['target_id'] in seen: raise ValueError('Duplicate operation or conflicting target')
         ids.add(op['id']); seen.add(op['target_id'])
         if op['target_id'] not in index['targets']: raise ValueError('Target is outside correction allowlist')
@@ -123,6 +129,8 @@ def apply(snapshot, plan, bundle, catalog):
         claim(op, bundle, catalog)
         citations = op['citations']; kind = target['kind']; original = target['value']
         if op['op'] == 'copy_context' and kind in ('text', 'basis'):
+            if not isinstance(op['source_id'], str) or not op['source_id']:
+                raise ValueError('Nonempty source_id string required')
             source = index['context_sources'].get(op['source_id'])
             if not source or source['sha256'] != op['source_sha256']: raise ValueError('Stale or unknown context source')
             old = op['old_text']; original_text = original['text'] if kind == 'basis' else original
@@ -189,7 +197,7 @@ def apply(snapshot, plan, bundle, catalog):
     normalized = copy.deepcopy(plan)
     for op in normalized['operations']:
         op['path'] = index['targets'][op['target_id']]['path']
-    context.propagation_check(snapshot, out, normalized)
+    context.propagation_check(snapshot, out, normalized, bundle)
     return out
 
 
@@ -347,14 +355,16 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
         data = {'snapshot_sha256': base.digest(snapshot), 'pending_findings': snapshot['findings'],
                 'registry': registry(snapshot, bundle), 'prepared_retrieval': snapshot['artifacts']['retrieval'],
                 'previous_review': feedback}
-        data['occurrence_inventory'] = context.occurrence_inventory(snapshot)
+        data['occurrence_inventory'] = list(data['registry'].pop('occurrences').values())
         instruction += (' Batch ALL pending corrections before returning. Correct repeated financial claims and qualifiers in every affected metadata/report field together. '
                         'Numerical observations and quote selections remain immutable. Include claim_groups for factual/qualifier changes: '
-                        '{id,aliases:[case-insensitive exact phrases],required_paths:[changed field paths],unchanged:[{path,reason}]}. '
+                        '{id,aliases:[nonempty case-insensitive exact phrases],required_occurrence_ids:[changed occurrence IDs],unchanged:[{occurrence_id,reason}]}. '
                         'Every matched existing occurrence must be patched or explicitly justified unchanged. Editorial-only changes need no claim group. '
                         'Use set_layout with an explicit supported format.layout object for presentation, retaining every numeric observation in visible or expandable detail. '
                         'Exact unchanged instructions are retained for review, never counted as text repairs. '
-                        'Use only registry or occurrence_inventory paths; explicit unchanged paths may describe paraphrases without matching a literal alias. '
+                        'Copy occurrence_id values from the supplied registry; code resolves exact paths and hashes. Never invent IDs or use aggregate objects/lists. '
+                        'Every unchanged disposition identifies one occurrence and gives a specific reason; empty aliases are invalid. '
+                        'Explicit unchanged occurrences may describe paraphrases without matching a literal alias. '
                         'A complete list of pending findings is provided; do not fix them one at a time.')
         # Supply the executable contract: a vague request for a supported layout
         # previously invited invented fields and wasted the whole atomic repair.
@@ -380,6 +390,10 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
             elif isinstance(value, list):
                 for v in value: collect(v)
         collect(snapshot)
+        # The reviewer and proposer must share the exact exchange membership,
+        # including split continuations and provisional boundary annotations.
+        data['canonical_exchange_index'] = context.canonical_exchange_index(bundle)
+        ids.update(turn['id'] for turn in data['canonical_exchange_index']['turns'])
         slices = evidence.source_slices(bundle['manifest'], sorted(ids))
         relevant = repair.passages_for_sources(catalog, ids, slices)
         # Provenance stays in the immutable catalog. Repeating paths and hashes

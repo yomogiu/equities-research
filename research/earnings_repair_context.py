@@ -64,34 +64,89 @@ def occurrence_inventory(snapshot):
     return result
 
 
-def propagation_check(before, candidate, plan):
-    """Require every declared claim occurrence to be patched or explained unchanged.
+def addressable_inventory(snapshot, bundle=None):
+    """One exact occurrence namespace for authors, staging and independent review.
 
-    Optional claim_groups: [{id, aliases:[case-insensitive literal substrings],
-    required_paths:[typed operation paths], unchanged:[{path,reason}]}]. This is a
-    coverage check, not semantic proof that the replacement is correct.
+    Display rows exist even before an override is written. Their absent override
+    hashes as None; their source observations remain outside the editable namespace.
     """
-    groups = plan.get('claim_groups', [])
+    rows = {tuple(row['path']): row for row in occurrence_inventory(snapshot)}
+    keys = snapshot.get('format', {}).get('rows', {})
+    if bundle is not None:
+        from research import earnings_report_repair as repair
+        keys = repair.row_catalog(snapshot['artifacts']['financial'], bundle)
+    # Citation lists are individually allowlisted metadata in remediation,
+    # unlike aggregate report objects, quote selections or numeric observations.
+    citation_paths = [['artifacts', 'analysis', 'opening_citations']]
+    for role, section in (('financial', 'context'), ('retrieval', 'document_findings'),
+                          ('analysis', 'findings'), ('analysis', 'next_tests')):
+        citation_paths += [['artifacts', role, section, i, 'citations']
+                           for i, row in enumerate(snapshot['artifacts'][role][section]) if 'citations' in row]
+    paths = [['format', key] for key in ('basis', 'layout', 'tables')] + citation_paths
+    paths += [['format', 'rows', key] for key in keys]
+    for path in paths:
+        value = _get(snapshot, path)
+        rows[tuple(path)] = {'path': path, 'text': json.dumps(value, ensure_ascii=False, sort_keys=True),
+                            'sha256': base.digest(value),
+                            'citations': value.get('citations', []) if isinstance(value, dict) else []}
+    return [{**row, 'occurrence_id': 'occ-' + base.digest([row['path'], row['sha256']])[:24]}
+            for row in rows.values()]
+
+
+def resolve_claim_groups(groups, inventory):
+    """Resolve author-selected IDs to exact paths; never infer dispositions."""
     if not isinstance(groups, list):
         raise ValueError('claim_groups must be a list')
-    inventory = occurrence_inventory(before)
+    by_id = {row['occurrence_id']: row for row in inventory}
+    by_path = {tuple(row['path']): row for row in inventory}
+    def path(value):
+        if not isinstance(value, list) or not value or any(type(v) not in (str, int) or
+                (type(v) is int and v < 0) for v in value):
+            raise ValueError('Exact typed occurrence path required')
+        key = tuple(value)
+        if key not in by_path:
+            children = [row['occurrence_id'] for p, row in by_path.items() if p[:len(key)] == key]
+            raise ValueError('Invalid unchanged or required occurrence: unknown or aggregate occurrence path ' + repr(value) +
+                             '; select individual occurrence IDs' + (': ' + ', '.join(children[:8]) if children else ''))
+        return list(value)
+    def occurrence(value):
+        if not isinstance(value, str) or value not in by_id:
+            raise ValueError('Unknown or stale occurrence_id: ' + repr(value))
+        return list(by_id[value]['path'])
+    result = []
+    for group in groups:
+        if not isinstance(group, dict):
+            raise ValueError('Claim group must be an object')
+        use_ids = 'required_occurrence_ids' in group
+        required_key = 'required_occurrence_ids' if use_ids else 'required_paths'
+        if set(group) != {'id', 'aliases', required_key, 'unchanged'}:
+            raise ValueError('Claim group requires id, aliases, ' + required_key + ', unchanged')
+        aliases = group['aliases']
+        if not isinstance(aliases, list) or not aliases or any(not isinstance(a, str) or not a.strip() for a in aliases):
+            raise ValueError('Nonempty literal aliases required for claim group ' + str(group.get('id')))
+        if not isinstance(group[required_key], list) or not isinstance(group['unchanged'], list):
+            raise ValueError('Required occurrences and unchanged dispositions must be lists')
+        resolve = occurrence if use_ids else path
+        required = [resolve(v) for v in group[required_key]]
+        if len({tuple(p) for p in required}) != len(required):
+            raise ValueError('Duplicate required occurrence in claim group')
+        unchanged = []
+        for row in group['unchanged']:
+            ref = 'occurrence_id' if use_ids else 'path'
+            if not isinstance(row, dict) or set(row) != {ref, 'reason'} or not isinstance(row['reason'], str) or not row['reason'].strip():
+                raise ValueError('Unchanged occurrence requires exact ' + ref + ' and nonempty reason')
+            unchanged.append({'path': resolve(row[ref]), 'reason': row['reason']})
+        result.append({'id': group['id'], 'aliases': aliases, 'required_paths': required, 'unchanged': unchanged})
+    return result
+
+
+def propagation_check(before, candidate, plan, bundle=None):
+    """Check literal coverage and declared dispositions, never semantic approval."""
+    inventory = addressable_inventory(before, bundle)
+    groups = resolve_claim_groups(plan.get('claim_groups', []), inventory)
     operations = {tuple(op['path']): op for op in plan['operations']}
     changed = {path for path in operations if _get(before, path) != _get(candidate, path)}
     by_path = {tuple(row['path']): row for row in inventory}
-    # Display metadata is a valid exact target even when it has no prose alias.
-    # Financial observation rows and selected quotations stay outside this index.
-    for path in ([['format', 'basis'], ['format', 'layout'], ['format', 'tables']] +
-                 [['format', 'rows', key] for key in before.get('format', {}).get('rows', {})]):
-        value = _get(before, path)
-        row = {'path': path, 'text': json.dumps(value, ensure_ascii=False, sort_keys=True),
-               'sha256': base.digest(value), 'citations': value.get('citations', []) if isinstance(value, dict) else []}
-        by_path[tuple(path)] = row
-    for path in operations:
-        if path not in by_path:
-            # Operation allowlisting is checked by the atomic applier first.
-            value = _get(before, path)
-            by_path[path] = {'path': list(path), 'text': json.dumps(value, ensure_ascii=False, sort_keys=True),
-                             'sha256': base.digest(value), 'citations': []}
     ids, results = set(), []
     for group in groups:
         if not isinstance(group, dict) or set(group) != {'id', 'aliases', 'required_paths', 'unchanged'}:
@@ -115,7 +170,7 @@ def propagation_check(before, candidate, plan):
                 raise ValueError('Unchanged occurrence requires exact path and reason')
             path = typed_path(row['path'])
             if path in unchanged or path not in by_path or (path not in operations and _get(before, path) != _get(candidate, path)):
-                raise ValueError('Invalid unchanged occurrence disposition')
+                raise ValueError('Invalid unchanged occurrence disposition at ' + repr(row['path']) + ': duplicate, unknown, or changed without an operation')
             unchanged[path] = row['reason']
         literal = [r for r in by_path.values() if any(a.casefold() in r['text'].casefold() for a in aliases)]
         paths = {tuple(r['path']) for r in literal} | required | set(unchanged)
@@ -304,6 +359,14 @@ def evidence_response(bundle, catalog, requests, already_scope_ids=()):
     return result
 
 
+def canonical_exchange_index(bundle):
+    """Verified role membership and boundary annotations shared by both agents."""
+    transcript = evidence.transcript_view(bundle['manifest'])
+    return {'transcript_sha256': transcript['sha256'],
+            'exchanges': copy.deepcopy(transcript['index']['exchanges']),
+            'turns': copy.deepcopy(transcript['index']['turns'])}
+
+
 def build(before, candidate, plan, bundle, catalog, rendered_report, writing, extra_scope_ids=()):
     """Review the entire rendered report with source evidence focused on changes.
 
@@ -386,11 +449,12 @@ def build(before, candidate, plan, bundle, catalog, rendered_report, writing, ex
     # No source text is copied into this navigation index.
     source_index = _navigation_index(scopes)
     compact_scopes, source_blocks = _compact_spans(spans)
-    propagation = propagation_check(before, candidate, normalized_plan)
+    propagation = propagation_check(before, candidate, normalized_plan, bundle)
     affected = {tuple(op['path']) for op in normalized_plan['operations']}
     affected.update(tuple(row['path']) for group in propagation['groups'] for row in group['matches'])
-    affected_inventory = [row for row in occurrence_inventory(candidate) if tuple(row['path']) in affected]
-    result = {'version': VERSION, 'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan),
+    affected_inventory = [row for row in addressable_inventory(candidate, bundle) if tuple(row['path']) in affected]
+    result = {'version': VERSION, 'canonical_exchange_index': canonical_exchange_index(bundle),
+              'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan),
               'report': rendered_report, 'writing_standard': writing, 'field_changes': deltas,
               'pending_findings': copy.deepcopy(before.get('findings', [])),
               'passages': _passage_table(_compact_passages([by_id[pid] for pid in sorted(neighbours)], source_blocks)),
