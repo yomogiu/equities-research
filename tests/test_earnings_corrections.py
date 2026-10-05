@@ -38,6 +38,24 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
         self.assertEqual(result['artifacts']['analysis']['findings'],state['artifacts']['analysis']['findings'])
         self.assertEqual(state['artifacts']['analysis'],self.report)
 
+    def test_citation_only_and_idempotent_proposals_preserve_words_and_require_review(self):
+        state=self.state();op=self.op(state)
+        op['value']=state['artifacts']['analysis']['opening'];op['citations']=['D002']
+        plan=self.plan(state,op)
+        plan['claim_groups']=[{'id':'same-wording','aliases':[op['value']],
+            'required_paths':[['artifacts','analysis','opening']], 'unchanged':[]}]
+        result=c.apply(state,plan,self.bundle,self.catalog)
+        self.assertEqual(result['artifacts']['analysis']['opening'],op['value'])
+        self.assertIn('D002',result['artifacts']['analysis']['opening_citations'])
+        self.assertEqual(result['artifacts']['financial'],state['artifacts']['financial'])
+        self.assertEqual(result['findings'],state['findings'])
+        review=self.review(state,plan,result);review['approve_patch']=False
+        with self.assertRaisesRegex(ValueError,'Rejected edits cannot close'):
+            c.adjudicate(state,result,plan,review,self.bundle,self.catalog)
+        # An exact duplicate instruction is deterministic retention, not acceptance.
+        op['citations']=state['artifacts']['analysis']['opening_citations']
+        self.assertEqual(c.apply(state,plan,self.bundle,self.catalog),state)
+
     def test_substring_replacement_preserves_exact_unicode_prefix_suffix_and_data(self):
         state=self.state();state['artifacts']['analysis']['opening']='Prefix — Fictional evidence. Suffix\u00a0stays.'
         original=copy.deepcopy(state);op=self.op(state);op.update(old_text='Fictional evidence.',value='Fictional corrected evidence.')

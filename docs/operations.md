@@ -70,3 +70,13 @@ Historical pinned runs replay with their original code. Explicit v2 remediation
 editions may descend from a conclusively stopped correction or remediation run; they
 preserve the entire prior history and cannot retry an unchanged candidate or fork a
 second descendant from the same source.
+
+Correction application retains exact idempotent instructions for independent review.
+A citation-only change may preserve the sentence while updating its support. Actual
+before/after values determine whether a field changed; an author label cannot mark
+a changed field as unchanged. Claim groups can reference exact existing metadata
+paths for paraphrases or display fields without a literal phrase match. All literal
+matches still need a proposed operation or an explicit disposition. Unknown paths,
+stale hashes, altered observations and unadjudicated repeated claims remain errors.
+This never grants acceptance: the reviewer receives each retained instruction, every
+actual delta and the original findings, and must approve the exact report.

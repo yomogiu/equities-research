@@ -175,7 +175,8 @@ def apply(snapshot, plan, bundle, catalog):
             if any(not any(q == item for item in remaining) for q in value): raise ValueError('Quotes must remain an ordered subsequence')
         else:
             raise ValueError('Unsupported operation for target kind')
-        if value == original: raise ValueError('No-op correction')
+        # Idempotent instructions still require source/hash validation and review.
+        # Citation-only repairs may retain the exact prose while fixing its support.
         put(out, target['path'], value)
         if target['citation_path']:
             before = get(out, target['citation_path'])
@@ -346,6 +347,8 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
                         '{id,aliases:[case-insensitive exact phrases],required_paths:[changed field paths],unchanged:[{path,reason}]}. '
                         'Every matched existing occurrence must be patched or explicitly justified unchanged. Editorial-only changes need no claim group. '
                         'Use set_layout with an explicit supported format.layout object for presentation, retaining every numeric observation in visible or expandable detail. '
+                        'Exact unchanged instructions are retained for review, never counted as text repairs. '
+                        'Use only registry or occurrence_inventory paths; explicit unchanged paths may describe paraphrases without matching a literal alias. '
                         'A complete list of pending findings is provided; do not fix them one at a time.')
         # Only cited evidence is needed to author a bounded repair.
         ids = set(snapshot['artifacts']['retrieval']['selected_document_ids'])

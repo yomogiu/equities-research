@@ -1,5 +1,6 @@
 """Fictional bounded repair contexts; no network, real issuers, or model calls."""
 import copy
+import json
 import unittest
 from unittest.mock import patch
 from test_earnings_passages import PassageFixture
@@ -29,8 +30,14 @@ class RepairContextTests(PassageFixture, unittest.TestCase):
         self.assertFalse(ctx['stats']['truncated'])
         self.assertNotIn('original_artifacts', ctx)
         self.assertEqual(ctx['candidate_sha256'], base.digest(after))
+        blocks = {b['block_id']: b for b in ctx['source_blocks']}
         for p in ctx['passages']:
-            self.assertEqual(p, next(x for x in self.catalog['passages'] if x['passage_id'] == p['passage_id']))
+            block = blocks[p['block_id']]
+            restored = {k: v for k, v in p.items() if k != 'block_id'}
+            restored.update({k: block[k] for k in ('path', 'sha256', 'document_id', 'offset_unit')})
+            restored['text'] = block['text'][p['start']-block['start']:p['end']-block['start']]
+            self.assertEqual(restored, next(x for x in self.catalog['passages'] if x['passage_id'] == p['passage_id']))
+            self.assertFalse({'text', 'path', 'sha256', 'document_id', 'offset_unit'} & set(p))
         self.assertEqual(ctx['source_index']['span_columns'], ['source_index','start','end'])
         self.assertTrue(all(len(span) == 3 for _, spans in ctx['source_index']['rows'] for span in spans))
 
@@ -49,6 +56,45 @@ class RepairContextTests(PassageFixture, unittest.TestCase):
         ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
         actual = {p['passage_id'] for p in ctx['passages']}
         self.assertTrue({p['passage_id'] for p in rows[:3]} <= actual)
+
+    def test_compact_passages_reconstruct_unicode_without_source_duplication(self):
+        text = 'Leading α\u00a0text.\nQuestion 😀?\nAnswer café.\n'
+        block = {'block_id': 'B-fictional', 'path': '/fictional/source.txt', 'sha256': 'f'*64,
+                 'document_id': 'fictional-doc', 'offset_unit': 'unicode_character',
+                 'start': 100, 'end': 100+len(text), 'text': text,
+                 'span_sha256': c.evidence._sha_text(text)}
+        passages = []
+        for i, (start, end) in enumerate(((0, 16), (16, len(text)), (0, len(text)))):
+            passages.append({**{k: block[k] for k in ('path','sha256','document_id','offset_unit')},
+                'passage_id': 'P-fake-'+str(i), 'scope_id': 'T-fake-'+str(i),
+                'start': 100+start, 'end': 100+end, 'text': text[start:end],
+                'span_sha256': c.evidence._sha_text(text[start:end])})
+        original = copy.deepcopy(passages)
+        refs = c._compact_passages(passages, [block])
+        self.assertEqual(passages, original)
+        for ref, passage in zip(refs, passages):
+            restored = {k: v for k, v in ref.items() if k != 'block_id'}
+            restored.update({k: block[k] for k in ('path','sha256','document_id','offset_unit')})
+            restored['text'] = text[ref['start']-100:ref['end']-100]
+            self.assertEqual(restored, passage)
+        self.assertLess(len(json.dumps(refs)), len(json.dumps(passages)))
+
+    def test_compact_passages_refuses_tampering_missing_and_ambiguous_blocks(self):
+        before = self.state(); after, plan = self.edit(before)
+        ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
+        original = next(p for p in self.catalog['passages'] if p['passage_id'] == ctx['passages'][0]['passage_id'])
+        for key, value in [('text', 'Invented'), ('sha256', '0'*64), ('span_sha256', '0'*64),
+                           ('document_id', 'wrong'), ('offset_unit', 'utf8_byte'), ('end', 10**9)]:
+            changed = copy.deepcopy(original); changed[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                c._compact_passages([changed], ctx['source_blocks'])
+        with self.assertRaises(ValueError): c._compact_passages([original], [])
+        block = next(b for b in ctx['source_blocks'] if b['block_id'] == ctx['passages'][0]['block_id'])
+        with self.assertRaisesRegex(ValueError, 'Duplicate'): c._compact_passages([original], [block, block])
+        changed = copy.deepcopy(block); changed['text'] = 'Corrupt'
+        with self.assertRaisesRegex(ValueError, 'changed'): c._compact_passages([original], [changed])
+        duplicate = {**block, 'block_id': 'B-another'}
+        with self.assertRaisesRegex(ValueError, 'one exact'): c._compact_passages([original], [block, duplicate])
 
     def test_turn_evidence_expands_entire_parent_exchange(self):
         exchange = self.bundle['transcript_index']['exchanges'][0]
@@ -111,6 +157,28 @@ class RepairContextTests(PassageFixture, unittest.TestCase):
         plan['claim_groups'][0]['required_paths'].append(second)
         with self.assertRaisesRegex(ValueError, 'no operation'):
             c.propagation_check(before, after, plan)
+
+    def test_explicit_paraphrase_and_display_paths_are_audited_without_alias_match(self):
+        before=self.state();after,plan=self.edit(before)
+        first=['artifacts','analysis','opening'];other=['artifacts','retrieval','exchange_coverage',0,'answer']
+        plan['claim_groups']=[{'id':'explicit','aliases':['unmatched conceptual heading'],
+            'required_paths':[first],'unchanged':[{'path':other,'reason':'Exact related passage is already correct.'},
+                                                {'path':['format','layout'],'reason':'Presentation change deferred.'}]}]
+        result=c.propagation_check(before,after,plan)
+        rows=result['groups'][0]['matches']
+        self.assertEqual(len(rows),3)
+        self.assertTrue(all(not row['literal_alias_match'] for row in rows))
+        self.assertEqual(next(row for row in rows if row['path']==first)['disposition'],'patched')
+        plan['claim_groups'][0]['unchanged'].append({'path':['artifacts','analysis','nonexistent'],'reason':'Invented path'})
+        with self.assertRaisesRegex(ValueError,'Invalid unchanged'):c.propagation_check(before,after,plan)
+
+    def test_conflicting_author_label_cannot_hide_actual_change(self):
+        before=self.state();after,plan=self.edit(before);path=plan['operations'][0]['path']
+        plan['claim_groups']=[{'id':'explicit','aliases':['unmatched'], 'required_paths':[path],
+            'unchanged':[{'path':path,'reason':'Author incorrectly said unchanged'}]}]
+        row=c.propagation_check(before,after,plan)['groups'][0]['matches'][0]
+        self.assertEqual(row['disposition'],'patched');self.assertTrue(row['declared_unchanged'])
+        self.assertFalse(row['idempotent_instruction'])
 
     def test_overlapping_scope_text_deduplicated_and_report_dict_preserved(self):
         before = self.state(); after, plan = self.edit(before)
