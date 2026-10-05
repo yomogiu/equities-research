@@ -93,34 +93,50 @@ def prepare(root, packet_id, output, writing, authorization):
 def advance(output, execute=True):
     """Replay completed stages and execute at most one new worker; fail closed."""
     root = Path(output).resolve()
-    protocol, _, _ = pipe.load(root)
-    if not protocol.get('deterministic_corrections') or not protocol.get('report_signals'):
-        raise ValueError('Connected reports require deterministic corrections and reviewed signals')
-    if not (root/'result.json').exists():
-        if not execute:
-            return {'status': 'pending', 'stage': 'report'}
-        try:
-            result = pipe.run(root, max_new_jobs=1)
-        except pipe.PendingJobs:
-            return {'status': 'pending', 'stage': 'report'}
-        # Let the next turn start a continuation; never spend a second job here.
-        return {'status': 'pending', 'stage': 'report_reviewed', 'report_status': result['status']}
-    result = pipe.verify(root)
-    seed = root
-    if result['status'] != 'accepted':
-        seed = root.with_name(root.name+'-corrections')
-        if not (seed/'protocol.json').exists():
-            if set(base.read(root/'artifacts.json')) != {'financial', 'retrieval', 'analysis'} or not base.read(root/'review.json'):
-                return {'status': 'blocked', 'stage': 'preparation', 'reason': 'Complete evidence and substantive review required'}
-            if not execute:
-                return {'status': 'pending', 'stage': 'corrections'}
-            corrections.initialize(root, seed)
+    kind = base.read(root/'protocol.json').get('version')
+    if kind == corrections.VERSION:
+        continuation, _, _, _ = corrections.load(root)
+        protocol = continuation['source_protocol']
+        if continuation.get('new_experiment') or continuation['prior_rounds'] + continuation['max_rounds'] > 2:
+            raise ValueError('Connected continuation must preserve the original correction budget')
+        if not protocol.get('deterministic_corrections') or not protocol.get('report_signals'):
+            raise ValueError('Connected reports require deterministic corrections and reviewed signals')
+        seed = root
         result = corrections.verify(seed)
         if result['status'] != 'accepted':
             result = corrections.advance(seed) if execute else result
             if result['status'] != 'accepted':
                 return {'status': result['status'], 'stage': 'corrections', 'detail': result}
             return {'status': 'pending', 'stage': 'signals'}
+    else:
+        protocol, _, _ = pipe.load(root)
+        if not protocol.get('deterministic_corrections') or not protocol.get('report_signals'):
+            raise ValueError('Connected reports require deterministic corrections and reviewed signals')
+        if not (root/'result.json').exists():
+            if not execute:
+                return {'status': 'pending', 'stage': 'report'}
+            try:
+                result = pipe.run(root, max_new_jobs=1)
+            except pipe.PendingJobs:
+                return {'status': 'pending', 'stage': 'report'}
+            # Let the next turn start a continuation; never spend a second job here.
+            return {'status': 'pending', 'stage': 'report_reviewed', 'report_status': result['status']}
+        result = pipe.verify(root)
+        seed = root
+        if result['status'] != 'accepted':
+            seed = root.with_name(root.name+'-corrections')
+            if not (seed/'protocol.json').exists():
+                if set(base.read(root/'artifacts.json')) != {'financial', 'retrieval', 'analysis'} or not base.read(root/'review.json'):
+                    return {'status': 'blocked', 'stage': 'preparation', 'reason': 'Complete evidence and substantive review required'}
+                if not execute:
+                    return {'status': 'pending', 'stage': 'corrections'}
+                corrections.initialize(root, seed)
+            result = corrections.verify(seed)
+            if result['status'] != 'accepted':
+                result = corrections.advance(seed) if execute else result
+                if result['status'] != 'accepted':
+                    return {'status': result['status'], 'stage': 'corrections', 'detail': result}
+                return {'status': 'pending', 'stage': 'signals'}
     edition = seed.with_name(seed.name+'-signals')
     if not (edition/'protocol.json').exists():
         if not execute:

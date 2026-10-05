@@ -38,6 +38,54 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
         self.assertEqual(result['artifacts']['analysis']['findings'],state['artifacts']['analysis']['findings'])
         self.assertEqual(state['artifacts']['analysis'],self.report)
 
+    def test_substring_replacement_preserves_exact_unicode_prefix_suffix_and_data(self):
+        state=self.state();state['artifacts']['analysis']['opening']='Prefix — Fictional evidence. Suffix\u00a0stays.'
+        original=copy.deepcopy(state);op=self.op(state);op.update(old_text='Fictional evidence.',value='Fictional corrected evidence.')
+        result=c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+        self.assertEqual(result['artifacts']['analysis']['opening'],'Prefix — Fictional corrected evidence. Suffix\u00a0stays.')
+        self.assertEqual(state,original)
+        for role in ('financial','retrieval'):self.assertEqual(result['artifacts'][role],state['artifacts'][role])
+        self.assertEqual(result['artifacts']['analysis']['findings'],state['artifacts']['analysis']['findings'])
+
+    def test_substring_explicit_full_target_matches_whole_replacement(self):
+        state=self.state();whole=self.op(state);span={**whole,'old_text':state['artifacts']['analysis']['opening']}
+        self.assertEqual(c.apply(state,self.plan(state,whole),self.bundle,self.catalog),
+                         c.apply(state,self.plan(state,span),self.bundle,self.catalog))
+
+    def test_substring_deletion_requires_nonempty_result(self):
+        state=self.state();state['artifacts']['analysis']['opening']='Fictional evidence. Redundant phrase.'
+        op=self.op(state);op.update(old_text=' Redundant phrase.',value='')
+        self.assertEqual(c.apply(state,self.plan(state,op),self.bundle,self.catalog)['artifacts']['analysis']['opening'],'Fictional evidence.')
+        op.update(old_text=state['artifacts']['analysis']['opening'])
+        with self.assertRaisesRegex(ValueError,'Nonempty text'):c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+
+    def test_substring_wrong_repeated_overlapping_or_empty_span_is_rejected(self):
+        for original,old in [('Fictional evidence','Fictional finding'),('same same','same'),('aaa','aa'),('Fictional evidence',''),('Fictional evidence',None)]:
+            state=self.state();state['artifacts']['analysis']['opening']=original;op=self.op(state);op['old_text']=old
+            with self.subTest(original=original,old=old),self.assertRaises(ValueError):c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+
+    def test_substring_rejects_stale_target_extra_fields_and_conflicting_operations(self):
+        state=self.state();op=self.op(state);op['old_text']='evidence'
+        for changed in ({**op,'expected_sha256':'stale'},{**op,'additional':'not ignored'}):
+            with self.assertRaises(ValueError):c.apply(state,self.plan(state,changed),self.bundle,self.catalog)
+        plan=self.plan(state,op);plan['operations'].append({**op,'id':'edit-2'})
+        with self.assertRaisesRegex(ValueError,'conflicting target'):c.apply(state,plan,self.bundle,self.catalog)
+        wrong_kind=self.op(state,'basis');wrong_kind.update(op='set_display',value={'text':'Fictional'},old_text='ignored')
+        with self.assertRaisesRegex(ValueError,'exact fields'):c.apply(state,self.plan(state,wrong_kind),self.bundle,self.catalog)
+
+    def test_substring_limit_applies_to_final_text_not_only_replacement(self):
+        state=self.state();state['artifacts']['analysis']['opening']='p'*3998+'old'
+        op=self.op(state);op.update(old_text='old',value='new')
+        with self.assertRaisesRegex(ValueError,'result exceeds 4000'):c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+        op['value']='ok'
+        self.assertEqual(len(c.apply(state,self.plan(state,op),self.bundle,self.catalog)['artifacts']['analysis']['opening']),4000)
+
+    def test_proposal_prompt_defines_both_exact_replacement_payloads(self):
+        prompt=c.prompt('propose',self.state(),self.bundle,self.catalog,'Fictional standard')
+        self.assertIn('{value} replaces the entire hashed target',prompt)
+        self.assertIn('{old_text,value} replaces one unique nonempty exact substring',prompt)
+        self.assertIn('old_text is never ignored',prompt)
+
     def test_copy_context_exact_text_and_citation_union(self):
         state=self.state(); op=self.op(state); op.pop('value')
         key,source=next(iter(c.registry(state,self.bundle)['context_sources'].items()))
@@ -46,6 +94,50 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
         self.assertEqual(result['artifacts']['analysis']['opening'],source['value']['text'])
         self.assertEqual(result['artifacts']['analysis']['opening_citations'],['D001','D002'])
         self.assertEqual(result['artifacts']['financial'],state['artifacts']['financial'])
+
+    def test_copy_context_initializes_exactly_empty_basis_with_bound_text_and_citations(self):
+        state=self.state();original=copy.deepcopy(state);op=self.op(state,'basis');op.pop('value')
+        key,source=next(iter(c.registry(state,self.bundle)['context_sources'].items()))
+        op.update(op='copy_context',source_id=key,source_sha256=source['sha256'],old_text='')
+        result=c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+        self.assertEqual(result['format']['basis'],{'text':source['value']['text'],'citations':['D001','D002']})
+        self.assertEqual(result['artifacts'],state['artifacts']);self.assertEqual(state,original)
+        op['source_sha256']='stale'
+        with self.assertRaisesRegex(ValueError,'context source'):c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+
+    def test_copy_context_empty_old_text_never_inserts_into_nonempty_or_whitespace_target(self):
+        for text in ('Fictional basis',' '):
+            state=self.state();state['format']['basis']['text']=text;op=self.op(state,'basis');op.pop('value')
+            key,source=next(iter(c.registry(state,self.bundle)['context_sources'].items()))
+            op.update(op='copy_context',source_id=key,source_sha256=source['sha256'],old_text='')
+            with self.subTest(text=text),self.assertRaisesRegex(ValueError,'exactly empty target'):
+                c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+
+    def test_copy_context_empty_basis_still_enforces_output_limit(self):
+        state=self.state();state['artifacts']['financial']['context'][0]['text']='F'*241
+        op=self.op(state,'basis');op.pop('value');key,source=next(iter(c.registry(state,self.bundle)['context_sources'].items()))
+        op.update(op='copy_context',source_id=key,source_sha256=source['sha256'],old_text='')
+        with self.assertRaisesRegex(ValueError,'limit 240'):c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+
+    def test_copy_context_empty_text_target_copies_source_and_rejects_overlapping_match(self):
+        state=self.state();state['artifacts']['analysis']['opening']='';op=self.op(state);op.pop('value')
+        key,source=next(iter(c.registry(state,self.bundle)['context_sources'].items()))
+        op.update(op='copy_context',source_id=key,source_sha256=source['sha256'],old_text='')
+        result=c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+        self.assertEqual(result['artifacts']['analysis']['opening'],source['value']['text'])
+        state['artifacts']['analysis']['opening']='aaa';op=self.op(state);op.pop('value')
+        op.update(op='copy_context',source_id=key,source_sha256=source['sha256'],old_text='aa')
+        with self.assertRaisesRegex(ValueError,'one exact existing text span'):c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+
+    def test_copy_context_text_limit_includes_preserved_prefix_suffix(self):
+        state=self.state();state['artifacts']['analysis']['opening']='p'*3999+'old'
+        state['artifacts']['financial']['context'][0]['text']='ab'
+        op=self.op(state);op.pop('value');key,source=next(iter(c.registry(state,self.bundle)['context_sources'].items()))
+        op.update(op='copy_context',source_id=key,source_sha256=source['sha256'],old_text='old')
+        with self.assertRaisesRegex(ValueError,'copy result exceeds 4000'):c.apply(state,self.plan(state,op),self.bundle,self.catalog)
+        state['artifacts']['analysis']['opening']='p'*3998+'old'
+        op=self.op(state);op.pop('value');op.update(op='copy_context',source_id=key,source_sha256=source['sha256'],old_text='old')
+        self.assertEqual(len(c.apply(state,self.plan(state,op),self.bundle,self.catalog)['artifacts']['analysis']['opening']),4000)
 
     def test_atomic_failure_does_not_mutate_input(self):
         state=self.state(); original=copy.deepcopy(state); plan=self.plan(state)

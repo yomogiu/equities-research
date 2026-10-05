@@ -96,6 +96,8 @@ def apply(snapshot, plan, bundle, catalog):
     for op in plan['operations']:
         if not isinstance(op, dict): raise ValueError('Operation must be an object')
         extra = {'source_id', 'source_sha256', 'old_text'} if op.get('op') == 'copy_context' else {'value'}
+        if op.get('op') == 'replace_text' and 'old_text' in op:
+            extra = {'value', 'old_text'}
         fields(op, common | extra, 'operation')
         legacy.check_text(op['id'], 'operation ID')
         if op['id'] in ids or op['target_id'] in seen: raise ValueError('Duplicate operation or conflicting target')
@@ -109,16 +111,36 @@ def apply(snapshot, plan, bundle, catalog):
             source = index['context_sources'].get(op['source_id'])
             if not source or source['sha256'] != op['source_sha256']: raise ValueError('Stale or unknown context source')
             old = op['old_text']; original_text = original['text'] if kind == 'basis' else original
-            if not isinstance(old, str) or not old or original_text.count(old) != 1:
-                raise ValueError('copy_context requires one exact existing text span')
-            value = original_text.replace(old, source['value']['text'], 1)
+            if not isinstance(old, str):
+                raise ValueError('copy_context requires exact string old_text')
+            if old == '':
+                if original_text != '':
+                    raise ValueError('copy_context empty old_text requires an exactly empty target')
+                value = source['value']['text']
+            else:
+                start = original_text.find(old)
+                if start < 0 or original_text.find(old, start + 1) >= 0:
+                    raise ValueError('copy_context requires one exact existing text span')
+                value = original_text[:start] + source['value']['text'] + original_text[start + len(old):]
             citations = list(dict.fromkeys(citations + source['value']['citations']))
             if kind == 'basis':
                 if len(value) > 240: raise ValueError(f'display.text: limit 240 characters; received {len(value)}')
                 value = {'text': value, 'citations': list(dict.fromkeys(original['citations'] + citations))}
+            elif len(value) > 4000:
+                raise ValueError('Context copy result exceeds 4000 characters')
         elif op['op'] == 'replace_text' and kind == 'text':
-            value = op['value']; legacy.check_text(value, 'replacement text')
-            if len(value) > 4000: raise ValueError('Replacement text exceeds 4000 characters')
+            value = op['value']
+            if 'old_text' in op:
+                old = op['old_text']
+                if not isinstance(old, str) or not old or not isinstance(value, str):
+                    raise ValueError('replace_text span requires nonempty old_text and string value')
+                start = original.find(old)
+                # Count overlapping matches too: 'aa' occurs twice in 'aaa'.
+                if start < 0 or original.find(old, start + 1) >= 0:
+                    raise ValueError('replace_text requires one exact existing text span')
+                value = original[:start] + value + original[start + len(old):]
+            legacy.check_text(value, 'replacement text')
+            if len(value) > 4000: raise ValueError('Replacement result exceeds 4000 characters')
         elif op['op'] == 'set_display' and kind in ('row', 'basis'):
             value = op['value']
             fields(value, ('label', 'dimensions') if kind == 'row' else ('text',), 'display value')
@@ -292,7 +314,7 @@ def load(root):
 def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None):
     common = legacy.COMMON + '\nWRITING STANDARD\n' + writing
     if role == 'propose':
-        instruction = '''Propose a bounded correction plan. Do not regenerate financial or retrieval artifacts. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...]}. At most 24 operations, one per target. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context targets text or basis and also has source_id, source_sha256 and old_text (unique exact existing substring to replace). replace_text also has value (exact replacement, max4000 characters). set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
+        instruction = '''Propose a bounded correction plan. Do not regenerate financial or retrieval artifacts. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...]}. At most 24 operations, one per target. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context targets text or basis and also has source_id, source_sha256 and old_text. A nonempty old_text must be one unique exact existing substring to replace. Empty old_text is allowed only to initialize an exactly empty target (or empty basis.text); code copies the hash-bound context source exactly, never inserts into nonempty text. The entire copied result must fit 4000 characters for text or 240 characters for basis. replace_text targets text only and has exactly one of two payloads: {value} replaces the entire hashed target, or {old_text,value} replaces one unique nonempty exact substring of that same target, preserving its prefix and suffix. With old_text, value may be empty to delete that span, but the resulting target must remain nonempty. The entire resulting target is limited to 4000 characters. The target hash is always checked; old_text is never ignored or treated as documentation. No other payload fields are allowed. set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
         data = {'snapshot_sha256': base.digest(snapshot), 'pending_findings': snapshot['findings'],
                 'registry': registry(snapshot, bundle), 'prepared_retrieval': snapshot['artifacts']['retrieval'],
                 'previous_review': feedback}

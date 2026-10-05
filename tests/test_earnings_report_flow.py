@@ -61,6 +61,90 @@ class FlowTests(PassageFixture,unittest.TestCase):
             self.assertEqual(flow.advance(self.output)['stage'],'signals');signal.assert_not_called()
 
 
+class DirectCorrectionFlowTests(unittest.TestCase):
+    """Routing tests for source-bound correction editions; no base or model work."""
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.output=Path(self.temp.name).resolve()/'continuation';self.output.mkdir()
+        base.save(self.output/'protocol.json',{'version':flow.corrections.VERSION})
+        self.protocol={'source_protocol':{'deterministic_corrections':True,'report_signals':True},
+                       'prior_rounds':1,'max_rounds':1,'new_experiment':False,'inherited_tokens':125}
+        self.load=patch.object(flow.corrections,'load',return_value=(self.protocol,None,None,None)).start()
+        self.addCleanup(patch.stopall)
+        self.base_load=patch.object(pipe,'load',side_effect=AssertionError('Base pipeline must not reload')).start()
+        self.base_run=patch.object(pipe,'run',side_effect=AssertionError('Base stages must not rerun')).start()
+        self.base_verify=patch.object(pipe,'verify',side_effect=AssertionError('Direct continuation must use its verifier')).start()
+        self.init=patch.object(flow.corrections,'initialize',side_effect=AssertionError('Existing continuation must not reset')).start()
+
+    def test_existing_continuation_advances_only_correction_worker(self):
+        original=(self.output/'protocol.json').read_bytes()
+        with patch.object(flow.corrections,'verify',return_value={'status':'pending'}), \
+             patch.object(flow.corrections,'advance',return_value={'status':'blocked'}) as advance, \
+             patch.object(flow.signals,'initialize') as init_signal:
+            result=flow.advance(self.output)
+        self.assertEqual(result['stage'],'corrections');self.assertEqual(result['status'],'blocked')
+        advance.assert_called_once_with(self.output);init_signal.assert_not_called()
+        self.assertEqual((self.output/'protocol.json').read_bytes(),original)
+        self.base_run.assert_not_called();self.init.assert_not_called()
+
+    def test_new_experiment_or_excess_round_budget_is_refused_before_execution(self):
+        for patch_values in ({'new_experiment':True},{'prior_rounds':1,'max_rounds':2}):
+            with self.subTest(patch_values=patch_values),patch.dict(self.protocol,patch_values), \
+                 patch.object(flow.corrections,'verify') as verify,patch.object(flow.corrections,'advance') as advance:
+                with self.assertRaisesRegex(ValueError,'original correction budget'):flow.advance(self.output)
+                verify.assert_not_called();advance.assert_not_called()
+
+    def test_missing_required_source_stage_flags_refuses_direct_continuation(self):
+        for field in ('deterministic_corrections','report_signals'):
+            with self.subTest(field=field),patch.dict(self.protocol['source_protocol'],{field:False}), \
+                 patch.object(flow.corrections,'advance') as advance:
+                with self.assertRaisesRegex(ValueError,'reviewed signals'):flow.advance(self.output)
+                advance.assert_not_called()
+
+    def test_correction_acceptance_defers_signal_worker_then_uses_continuation_seed(self):
+        edition=self.output.with_name(self.output.name+'-signals')
+        with patch.object(flow.corrections,'verify',side_effect=[{'status':'pending'},{'status':'accepted'}]), \
+             patch.object(flow.corrections,'advance',return_value={'status':'accepted'}) as correction, \
+             patch.object(flow.signals,'initialize') as initialize, \
+             patch.object(flow.signals,'advance',return_value={'status':'pending'}) as signal:
+            first=flow.advance(self.output)
+            self.assertEqual(first,{'status':'pending','stage':'signals'})
+            signal.assert_not_called();initialize.assert_not_called()
+            second=flow.advance(self.output)
+        self.assertEqual(second['stage'],'signals')
+        correction.assert_called_once_with(self.output)
+        initialize.assert_called_once_with(self.output,edition)
+        signal.assert_called_once_with(edition,True)
+
+    def test_nonexecuting_direct_route_never_starts_workers_or_initializers(self):
+        edition=self.output.with_name(self.output.name+'-signals')
+        with patch.object(flow.corrections,'verify',side_effect=[{'status':'pending'},{'status':'accepted'},{'status':'accepted'}]), \
+             patch.object(flow.corrections,'advance') as correction, \
+             patch.object(flow.signals,'initialize') as initialize, \
+             patch.object(flow.signals,'advance',return_value={'status':'pending'}) as signal:
+            self.assertEqual(flow.advance(self.output,False)['stage'],'corrections')
+            self.assertEqual(flow.advance(self.output,False)['stage'],'signals')
+            self.assertFalse(edition.exists());signal.assert_not_called()
+            edition.mkdir();base.save(edition/'protocol.json',{})
+            self.assertEqual(flow.advance(self.output,False)['stage'],'signals')
+        correction.assert_not_called();initialize.assert_not_called()
+        signal.assert_called_once_with(edition,False)
+
+    def test_report_exposed_only_after_signal_acceptance(self):
+        edition=self.output.with_name(self.output.name+'-signals');edition.mkdir()
+        base.save(edition/'protocol.json',{});(edition/'report.html').write_text('Fictional reviewed report')
+        with patch.object(flow.corrections,'verify',return_value={'status':'accepted'}), \
+             patch.object(flow.corrections,'advance') as correction, \
+             patch.object(flow.signals,'advance',side_effect=[{'status':'blocked'},{'status':'accepted'}]):
+            self.assertNotIn('report',flow.advance(self.output,False))
+            result=flow.advance(self.output,False)
+        self.assertEqual(result['report'],str(edition/'report.html'))
+        self.assertEqual(result['report_sha256'],base.sha(edition/'report.html'))
+        correction.assert_not_called()
+
+
 class PreparedFlowTests(unittest.TestCase):
     """Exercise production preparation, not a prebuilt experiment-case shortcut."""
     def setUp(self):
