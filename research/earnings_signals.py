@@ -141,7 +141,7 @@ def initialize(seed, output):
     names=list(Path(__file__).parent.glob('earnings_*.py'))+[Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol={'version':VERSION,'seed':str(seed),'source_bindings':bound,'source_protocol':exported['source_protocol'],
               'state_sha256':base.digest(exported['state']),'code':[{'path':str(f),'sha256':base.sha(f)} for f in names],
-              'source_code':p['code']+p.get('source_code',[]),'model':list(MODEL),'max_tokens':400000,'max_prompt_chars':750000}
+              'source_code':p['code']+p.get('source_code',[]),'model':list(MODEL),'max_tokens':400000,'max_prompt_chars':1500000}
     repair.write(root/'protocol.json',protocol);repair.write(root/'state.json',exported['state'])
     return {'status':'pending','next_role':'analysis'}
 
@@ -187,7 +187,8 @@ def advance(output, execute=True):
             bindings={'protocol_sha256':base.sha(root/'protocol.json'),'report_sha256':report_digest(state),'role':role}
             if not (job/'output.json').exists():
                 if (job/'request.json').exists():return {'status':'launch_uncertain','role':role}
-                if tokens>=p['max_tokens'] or len(text)>p['max_prompt_chars']:return {'status':'budget_exhausted','role':role,'tokens':tokens}
+                if tokens>=p['max_tokens']:return {'status':'budget_exhausted','role':role,'tokens':tokens}
+                if len(text)>p['max_prompt_chars']:return {'status':'prompt_too_large','role':role,'tokens':tokens}
                 if not execute:return {'status':'pending','role':role,'tokens':tokens}
                 run_role(job,text,*MODEL,bindings,timeout=1200)
                 execute=False
