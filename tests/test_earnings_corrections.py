@@ -31,6 +31,20 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
                 'operations': [{'id': o['id'], 'approve': True, **claim} for o in plan['operations']],
                 'resolutions': [{'id': f['id'], 'status': 'closed', **claim} for f in state['findings']], 'findings': []}
 
+    def test_proposal_supplies_executable_layout_contract(self):
+        prompt = c.prompt('propose', self.state(), self.bundle, self.catalog, 'Concise.')
+        self.assertIn('"layout_contract"', prompt)
+        self.assertIn('"version":"compact-financial-v1"', prompt)
+        spec = {'version':'compact-financial-v1', 'fold':[], 'detail_rows':[],
+                'summaries':[], 'basis_position':'before_tables'}
+        op = self.op(self.state(), kind='layout')
+        op.update(op='set_layout', value=spec)
+        revised = c.apply(self.state(), self.plan(self.state(),op),self.bundle,self.catalog)
+        self.assertEqual(revised['format']['layout'],spec)
+        op['value']={**spec,'invented':True}
+        with self.assertRaisesRegex(ValueError,'layout schema'):
+            c.apply(self.state(),self.plan(self.state(),op),self.bundle,self.catalog)
+
     def test_export_reuses_only_bound_transitive_proposal_on_identical_snapshot(self):
         import contextlib, io, sys
         job=self.root/'original-proposal';job.mkdir()

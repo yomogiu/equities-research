@@ -356,6 +356,21 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
                         'Exact unchanged instructions are retained for review, never counted as text repairs. '
                         'Use only registry or occurrence_inventory paths; explicit unchanged paths may describe paraphrases without matching a literal alias. '
                         'A complete list of pending findings is provided; do not fix them one at a time.')
+        # Supply the executable contract: a vague request for a supported layout
+        # previously invited invented fields and wasted the whole atomic repair.
+        data['layout_contract'] = {
+            'operation': 'set_layout',
+            'value_example': {'version': 'compact-financial-v1', 'fold': [],
+                              'detail_rows': [], 'summaries': [], 'basis_position': 'before_tables'},
+            'fold_item_fields': ['row_id', 'into_row_id', 'label'],
+            'summary_item_fields': ['text', 'citations', 'row_ids'],
+            'basis_position_values': ['before_tables', 'after_tables'],
+            'rules': ['Use exactly the example value keys; no other schema is accepted.',
+                      'Row IDs must come from the provided row catalog, never labels or fact IDs.',
+                      'A fold joins a ratio row to a monetary row with identical periods and dimensions.',
+                      'No fold chains/cycles; folded rows cannot also be detail_rows.',
+                      'Summaries cite sources and nonduplicate row_ids drawn only from detail_rows.',
+                      'Keep every numeric observation visible or available in expandable detail.']}
         # Only cited evidence is needed to author a bounded repair.
         ids = set(snapshot['artifacts']['retrieval']['selected_document_ids'])
         def collect(value):
