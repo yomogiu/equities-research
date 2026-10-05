@@ -374,6 +374,9 @@ def materialize(root, packet):
             variants = snapshot['documents'][d['catalog_document_id']]['sources']
             require(any(all(d.get(k) == v for k,v in source.items()) for source in variants),
                     'Packet source timestamps differ from catalog evidence')
+        if d.get('source_check_status') == 'scoped_transcript_verified' or d.get('scoped_currentness'):
+            from .transcript_currentness import replay
+            replay(root, d['scoped_currentness'], d, issuer_id=packet['issuer_id'])
         text = load_bytes(root, d['text_path'], d['text_sha256']).decode('utf-8')
         load_bytes(root, d['raw_path'], d['raw_sha256'])
         require(d['document_id'] == digest([d['source_url'], text]), 'Inconsistent evidence document ID')

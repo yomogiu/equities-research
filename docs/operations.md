@@ -80,3 +80,19 @@ matches still need a proposed operation or an explicit disposition. Unknown path
 stale hashes, altered observations and unadjudicated repeated claims remain errors.
 This never grants acceptance: the reviewer receives each retained instruction, every
 actual delta and the original findings, and must approve the exact report.
+
+### Scoped transcript currentness
+
+A changed market quote on a recognized transcript page can be checked separately
+from the archived call. The scoped-currentness verifier requires exact complete
+speaker blocks, fiscal metadata and all extracted text outside one structurally
+identified market widget. It archives the new raw page and extracted text, binds
+the actual HTTP observation and original qualification, and retains every original
+source hash and evidence offset. New packets state the scoped freshness basis;
+materialization replays the proof and rejects conflicting newer observations.
+This never asserts that changed full-page text or bytes are identical.
+
+Repair review metadata uses a lossless columnar passage index to avoid repeated
+field names. Original evidence and Unicode offsets remain available in full.
+Explicit formatting remediation may correct table captions and period labels with
+source citations, while preserving numeric values, units, periods and group identity.

@@ -37,11 +37,13 @@ def assess_document(doc, limits, moment):
     limit = limits['annual_background_max_age_hours' if doc.get('kind') == 'annual_background' else 'event_max_age_hours']
     checked, retrieved = timestamp(doc.get('checked_at')), timestamp(doc.get('retrieved_at'))
     basis = 'checked_at' if checked else 'retrieved_at' if retrieved else None
-    observed = checked or retrieved
+    scoped = timestamp(doc.get('scoped_checked_at')) if doc.get('source_check_status') == 'scoped_transcript_verified' and doc.get('scoped_currentness') else None
+    if scoped: basis = 'scoped_transcript_checked_at'
+    observed = scoped or checked or retrieved
     age = (moment - datetime.fromisoformat(observed)).total_seconds() / 3600 if observed else None
     if doc.get('source_check_status') == 'content_changed':
         state = 'content_changed'
-    elif any(v and datetime.fromisoformat(v) > moment for v in (checked, retrieved)):
+    elif any(v and datetime.fromisoformat(v) > moment for v in (checked, retrieved, scoped)):
         state = 'future_timestamp'
     elif observed is None:
         state = 'unknown'
