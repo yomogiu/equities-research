@@ -259,7 +259,13 @@ if protocol.get('version') == 'deterministic-corrections-v1':
     if len(sys.argv)>2 and sys.argv[2]=='reuse':
         if not ((progress['status'] in ('pending','budget_exhausted','prompt_too_large') and progress.get('role')=='review') or progress['status']=='invalid_patch'):
             raise ValueError('Only an authenticated unreviewed proposal may be reused')
-        job=root/'rounds'/str(progress['round'])/'propose'
+        prior=cp.get('imported_proposal') if progress['round']==0 else None
+        job=Path(prior['job']) if prior else root/'rounds'/str(progress['round'])/'propose'
+        c.verify_job(job)
+        if prior and (b.sha(job/'output.json')!=prior['output_sha256'] or cp['source_bindings'].get(str(job/'output.json'))!=prior['output_sha256']):
+            raise ValueError('Transitive proposal source binding changed')
+        if b.read(job/'request.json')['bindings'].get('snapshot_sha256')!=b.digest(snapshot):
+            raise ValueError('Reusable proposal snapshot changed')
         imported={'job':str(job),'output_sha256':b.sha(job/'output.json')}
 elif protocol.get('version') == r.VERSION:
     _,bundle,catalog,writing=r.load(root)

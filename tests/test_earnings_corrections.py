@@ -31,6 +31,33 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
                 'operations': [{'id': o['id'], 'approve': True, **claim} for o in plan['operations']],
                 'resolutions': [{'id': f['id'], 'status': 'closed', **claim} for f in state['findings']], 'findings': []}
 
+    def test_export_reuses_only_bound_transitive_proposal_on_identical_snapshot(self):
+        import contextlib, io, sys
+        job=self.root/'original-proposal';job.mkdir()
+        snapshot=self.state();binding={'snapshot_sha256':base.digest(snapshot)}
+        (job/'output.json').write_text('{}')
+        (job/'request.json').write_text(json.dumps({'bindings':binding}))
+        cp={'version':'deterministic-corrections-v1','source_protocol':{},
+            'imported_proposal':{'job':str(job),'output_sha256':base.sha(job/'output.json')},
+            'source_bindings':{str(job/'output.json'):base.sha(job/'output.json')},
+            'prior_rounds':0,'inherited_tokens':123}
+        seed=self.root/'successor';seed.mkdir();(seed/'protocol.json').write_text(json.dumps(cp))
+        progress={'status':'prompt_too_large','role':'review','round':0,'tokens':0,'state':snapshot}
+        def run():
+            with patch.object(sys,'argv',['export',str(seed),'reuse']), patch.object(c,'load',return_value=(cp,{}, {},'')), \
+                 patch.object(c,'replay',return_value=progress), patch.object(c,'verify_job') as verify, \
+                 contextlib.redirect_stdout(io.StringIO()) as out:
+                exec(c.EXPORT,{})
+                verify.assert_called_once_with(job)
+                return json.loads(out.getvalue())
+        result=run();self.assertEqual(result['imported_proposal'],cp['imported_proposal'])
+        self.assertEqual(result['spent_tokens'],123);self.assertEqual(result['used_rounds'],0)
+        cp['source_bindings'][str(job/'output.json')]='0'*64
+        with self.assertRaisesRegex(ValueError,'source binding'):run()
+        cp['source_bindings'][str(job/'output.json')]=base.sha(job/'output.json')
+        (job/'request.json').write_text(json.dumps({'bindings':{'snapshot_sha256':'0'*64}}))
+        with self.assertRaisesRegex(ValueError,'snapshot'):run()
+
     def test_exact_replacement_preserves_financial_retrieval_and_unrelated_prose(self):
         state=self.state(); plan=self.plan(state); result=c.apply(state,plan,self.bundle,self.catalog)
         self.assertEqual(result['artifacts']['analysis']['opening'],plan['operations'][0]['value'])
