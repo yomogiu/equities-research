@@ -54,8 +54,12 @@ def prepare(root, packet_id, output, writing, authorization):
         raise ValueError('No structured filing observations; financial preparation needs review')
     text = library.load_bytes(root, call['text_path'], call['text_sha256']).decode('utf-8')
     call_raw = library.load_bytes(root, call['raw_path'], call['raw_sha256'])
-    index = transcript.index_publisher_transcript(
-        text, {k: call[k] for k in ('document_id', 'text_sha256', 'raw_sha256')}, call_raw)
+    current_catalog = library.catalog(root)
+    issuer_name = current_catalog['issuers'][packet['issuer_id']].get('issuer')
+    call_source = {k: call[k] for k in ('document_id', 'text_sha256', 'raw_sha256')}
+    call_source.update(issuer_id=packet['issuer_id'], catalog_id=current_catalog['catalog_id'],
+                       issuer_names=[issuer_name] if isinstance(issuer_name, str) else [])
+    index = transcript.index_publisher_transcript(text, call_source, call_raw)
     if not index['exchanges']:
         raise ValueError('Q&A boundaries need review before transcript-led analysis')
     # Keep provisional speaker/boundary uncertainty in the evidence for review.

@@ -27,7 +27,7 @@ def fixture():
            + '<div>Publisher footer: Subscribe.</div></body></html>').encode()
     text = page(raw, '').text
     source = {'document_id': 'fictional-call', 'text_sha256': hashlib.sha256(text.encode()).hexdigest(),
-              'raw_sha256': hashlib.sha256(raw).hexdigest()}
+              'raw_sha256': hashlib.sha256(raw).hexdigest(), 'issuer_names': ['Fictional Widgets, Inc.']}
     return raw, text, source
 
 
@@ -59,13 +59,36 @@ class PublisherTranscriptTests(unittest.TestCase):
                + '<div>Footer</div></html>').encode()
         text = page(raw, '').text
         source = {'document_id': 'fictional-call', 'text_sha256': hashlib.sha256(text.encode()).hexdigest(),
-                  'raw_sha256': hashlib.sha256(raw).hexdigest()}
+                  'raw_sha256': hashlib.sha256(raw).hexdigest(), 'issuer_names': ['Fictional Widgets, Inc.']}
         index = transcript.index_publisher_transcript(text, source, raw)
         self.assertEqual(index['turns'][0]['speaker'], 'Speaker 1')
         self.assertEqual(index['turns'][0]['role'], 'unknown')
         self.assertEqual(index['call_span']['start'], text.index('Speaker 1'))
         self.assertEqual(len(index['exchanges']), 1)
         self.assertIn('Opening prepared remarks.', text[index['sections'][0]['start']:index['sections'][0]['end']])
+
+    def test_external_leadership_is_not_issuer_management(self):
+        raw = ('<html>'
+               + block('Jane Example', 'CEO, Fictional Widgets, Inc.', 'Welcome.')
+               + block('External Leader', 'Chairman and CEO, Fictional Research', 'What drives growth?')
+               + block('External Analyst', 'Institutional Research Analyst, Fictional Research', 'What changed?')
+               + block('Independent Person', 'Independent Analyst', 'What about margins?')
+               + block('Unknown Executive', 'CFO', 'Unattributed company role.')
+               + block('Jane Example', 'CEO, Fictional Widgets', 'More shipments.')
+               + '</html>').encode()
+        text = page(raw, '').text
+        source = {'document_id': 'fictional-call', 'text_sha256': hashlib.sha256(text.encode()).hexdigest(),
+                  'raw_sha256': hashlib.sha256(raw).hexdigest(), 'issuer_names': ['FICTIONAL WIDGETS INC']}
+        index = transcript.index_publisher_transcript(text, source, raw)
+        self.assertEqual([t['role'] for t in index['turns']],
+                         ['management', 'unknown', 'analyst', 'analyst', 'unknown', 'management'])
+        self.assertEqual(index['issuer_affiliation']['names'], ['FICTIONAL WIDGETS INC'])
+        self.assertEqual(index['boundary_review'], 'provisional')
+        no_identity = transcript.index_publisher_transcript(text, dict(source, issuer_names=[]), raw)
+        self.assertEqual(no_identity['turns'][0]['role'], 'unknown')
+        self.assertEqual(no_identity['turns'][-1]['role'], 'unknown')
+        wrong_identity = transcript.index_publisher_transcript(text, dict(source, issuer_names=['Fictional Widgets Research']), raw)
+        self.assertEqual(wrong_identity['turns'][0]['role'], 'unknown')
 
     def test_mutated_raw_or_text_rejected_and_missing_interior_block_fails(self):
         raw, text, source = fixture()
@@ -88,7 +111,7 @@ class PublisherTranscriptTests(unittest.TestCase):
         raw = b'<p>Unstructured fictional text.</p>'
         text = page(raw, '').text
         source = {'document_id': 'fictional', 'text_sha256': hashlib.sha256(text.encode()).hexdigest(),
-                  'raw_sha256': hashlib.sha256(raw).hexdigest()}
+                  'raw_sha256': hashlib.sha256(raw).hexdigest(), 'issuer_names': ['Fictional Widgets, Inc.']}
         index = transcript.index_publisher_transcript(text, source, raw)
         self.assertEqual(index['exchanges'], [])
         self.assertNotIn('call_span', index)
@@ -132,6 +155,7 @@ class PreparePublisherTranscriptTests(unittest.TestCase):
                       'period': 'FY2040-Q1', 'issuer_id': 'fictional:widgets'}
             with patch.object(flow, 'validate_packet', return_value=packet), \
                  patch.object(flow.financial, 'extract_inline_xbrl', return_value={'observations': [{}]}), \
+                 patch.object(flow.library, 'catalog', return_value={'catalog_id': 'fictional-catalog', 'issuers': {'fictional:widgets': {'issuer': 'Fictional Widgets, Inc.'}}}), \
                  patch.object(flow.base, 'validate_case'):
                 flow.prepare(root, 'fictional-packet', root/'prepared', root/'writing.md', 'Fictional test')
             index = json.loads((root/'prepared/transcript-index.json').read_text())

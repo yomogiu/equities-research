@@ -252,10 +252,44 @@ class _TranscriptRole(HTMLParser):
             self.parts.append(text)
 
 
+_LEGAL_SUFFIXES = {'inc', 'incorporated', 'corp', 'corporation', 'co', 'company',
+                   'ltd', 'limited', 'plc', 'llc', 'lp', 'llp', 'ag', 'se', 'nv', 'sa'}
+
+
+def _issuer_name_key(name):
+    """Normalize typography and terminal legal forms, never invent brand aliases."""
+    words = re.findall(r'[^\W_]+', name.casefold().replace('&', ' and '))
+    while words and words[-1] in _LEGAL_SUFFIXES:
+        words.pop()
+    return ''.join(words)
+
+
+def _publisher_speaker_role(name, label, issuer_names):
+    if name.casefold() == 'operator':
+        return 'operator'
+    # Explicit professional analyst labels, including senior/research variants.
+    # A reference to analyst relations elsewhere in a title is not this role.
+    title = label.split(',', 1)[0].strip()
+    if re.search(r'\banalyst$', title, re.I):
+        return 'analyst'
+    names = {_issuer_name_key(n) for n in issuer_names if isinstance(n, str)} - {''}
+    # A title alone cannot distinguish issuer management from an external firm's
+    # CEO/chairperson. Require a matching company suffix in the rendered label.
+    for comma in re.finditer(',', label):
+        title, affiliation = label[:comma.start()], label[comma.end():]
+        if _issuer_name_key(affiliation) in names and re.search(
+                r'\b(?:CEO|CFO|COO|CTO|chief|president|chairman|chairwoman|chair|founder|investor relations|treasurer|controller)\b',
+                title, re.I):
+            return 'management'
+    return 'unknown'
+
+
 def index_publisher_transcript(text, source, raw):
     """Index timed HTML call blocks against unchanged text and original offsets.
 
     The rendered speaker/role labels are evidence, not independent qualification.
+    source.issuer_names must come from verified catalog identity or separately
+    approved aliases; names discovered in this page are never affiliation proof.
     Unsupported layouts retain the conservative plain-text parser. Recognized
     layouts fail closed on a text mismatch rather than dropping unparsed speech.
     """
@@ -268,6 +302,9 @@ def index_publisher_transcript(text, source, raw):
         raise ValueError('Timed transcript sentences occur outside recognized speaker blocks')
     if not parser.blocks:
         return index_transcript(text, source)
+    issuer_names = source.get('issuer_names', [])
+    if not isinstance(issuer_names, list) or any(not isinstance(n, str) or not n.strip() for n in issuer_names):
+        raise ValueError('Verified issuer names must be a list of nonempty strings')
     turns, cursor = [], 0
     for block in parser.blocks:
         body = page(block.encode('utf-8'), '').text
@@ -281,14 +318,7 @@ def index_publisher_transcript(text, source, raw):
         metadata = _TranscriptRole()
         metadata.feed(block)
         label = ''.join(metadata.parts).strip()
-        if name.casefold() == 'operator':
-            role = 'operator'
-        elif re.match(r'^analyst(?:\b|,)', label, re.I):
-            role = 'analyst'
-        elif re.search(r'\b(?:CEO|CFO|COO|CTO|chief|president|chairman|chairwoman|chair|founder|investor relations|treasurer|controller)\b', label, re.I):
-            role = 'management'
-        else:
-            role = 'unknown'
+        role = _publisher_speaker_role(name, label, issuer_names)
         cursor = start + len(body)
         turns.append({'start': start, 'end': cursor, 'speaker': name, 'role': role})
     first, last = turns[0]['start'], turns[-1]['end']
@@ -304,6 +334,9 @@ def index_publisher_transcript(text, source, raw):
         'source_sha256': source['text_sha256'], 'sections': sections, 'turns': turns})
     result['layout'] = 'timed-publisher-blocks-v1'
     result['raw_sha256'] = source['raw_sha256']
+    result['issuer_affiliation'] = {'issuer_id': source.get('issuer_id'),
+                                    'catalog_id': source.get('catalog_id'),
+                                    'names': source.get('issuer_names', [])}
     result['call_span'] = {'start': first, 'end': last}
     result['excluded_spans'] = [{'start': a, 'end': b, 'reason': 'outside_rendered_call'}
                                 for a, b in ((0, first), (last, len(text))) if a < b]
