@@ -66,8 +66,30 @@ def row_catalog(financial, bundle):
     return result
 
 
+def table_catalog(financial, bundle):
+    """Stable source-derived groups; display labels never change their identity."""
+    return {'table-' + base.digest([g['unit'], g['periods']])[:20]: g
+            for g in display.build(financial, bundle)['groups']}
+
+
+def validate_table_labels(labels, financial, bundle):
+    groups = table_catalog(financial, bundle)
+    if not isinstance(labels, dict) or len(labels) > len(groups):
+        raise ValueError('Bounded financial table labels required')
+    for key, item in labels.items():
+        if key not in groups or not isinstance(item, dict) or set(item) != {'unit_label', 'period_labels', 'citations'}:
+            raise ValueError('Unknown table or executable table label field')
+        texts = item['period_labels']
+        if not isinstance(texts, list) or len(texts) != len(groups[key]['periods']):
+            raise ValueError('Table labels must preserve original column count and order')
+        for text in [item['unit_label'], *texts]:
+            if not isinstance(text, str) or not text.strip() or len(text) > 160:
+                raise ValueError('Bounded nonempty table labels required')
+        legacy.check_ids(item['citations'], legacy.ids_for(bundle), 'table label sources')
+
+
 def validate_format(spec, financial, bundle):
-    if not isinstance(spec, dict) or set(spec) not in ({'rows', 'basis'}, {'rows', 'basis', 'layout'}) or not isinstance(spec['rows'], dict):
+    if not isinstance(spec, dict) or not {'rows', 'basis'} <= set(spec) or set(spec) - {'rows', 'basis', 'layout', 'tables'} or not isinstance(spec['rows'], dict):
         raise ValueError('Formatting requires rows, basis and optional declarative layout')
     allowed = legacy.ids_for(bundle); rows = row_catalog(financial, bundle)
     for key, item in spec['rows'].items():
@@ -85,6 +107,8 @@ def validate_format(spec, financial, bundle):
 
     if 'layout' in spec:
         validate_layout(spec['layout'], rows, allowed)
+    if 'tables' in spec:
+        validate_table_labels(spec['tables'], financial, bundle)
 
 
 def validate_layout(layout, rows, allowed):
@@ -171,8 +195,15 @@ def table(financial, bundle, spec, refs=None):
                     visible.append((key, row))
             if not visible:
                 continue
-            lines.extend([group['unit'], 'Metric | ' + ' | '.join(p['label'] for p in group['periods'])])
-            parts.append('<table><caption>' + e(group['unit']) + '</caption><tr><th>Metric</th>' + ''.join('<th>' + e(p['label']) + '</th>' for p in group['periods']) + '</tr>')
+            table_key = 'table-' + base.digest([group['unit'], group['periods']])[:20]
+            labels = spec.get('tables', {}).get(table_key, {})
+            unit = labels.get('unit_label', group['unit'])
+            periods = labels.get('period_labels', [p['label'] for p in group['periods']])
+            # Source periods, units, divisors, values and group membership are inert.
+            # Semantic label changes carry original evidence and require review.
+            citations = labels.get('citations', [])
+            lines.extend([unit + (' [' + ', '.join(citations) + ']' if citations else ''), 'Metric | ' + ' | '.join(periods)])
+            parts.append('<table><caption>' + e(unit) + ((' ' + refs(citations)) if refs and citations else '') + '</caption><tr><th>Metric</th>' + ''.join('<th>' + e(label) + '</th>' for label in periods) + '</tr>')
             for key, row in visible:
                 override = spec['rows'].get(key, {})
                 cells = []; label = full_label(key)

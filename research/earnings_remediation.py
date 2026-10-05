@@ -56,6 +56,7 @@ def targets(snapshot, bundle):
         add(['format', 'rows', key], 'display_row', snapshot['format']['rows'].get(key))
     add(['format', 'basis'], 'display_basis', snapshot['format']['basis'])
     add(['format', 'layout'], 'layout', snapshot['format'].get('layout'))
+    add(['format', 'tables'], 'display_tables', snapshot['format'].get('tables'))
     return result
 
 
@@ -94,6 +95,8 @@ def apply(snapshot, plan, bundle, catalog):
             legacy.check_ids(value, legacy.ids_for(bundle), 'replacement citations')
         elif op['kind'] == 'layout':
             repair.validate_layout(value, repair.row_catalog(out['artifacts']['financial'], bundle), legacy.ids_for(bundle))
+        elif op['kind'] == 'display_tables':
+            repair.validate_table_labels(value, out['artifacts']['financial'], bundle)
         else:
             names = ('label', 'dimensions', 'citations') if op['kind'] == 'display_row' else ('text', 'citations')
             corrections.fields(value, names, 'display metadata')

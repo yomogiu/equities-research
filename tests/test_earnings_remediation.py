@@ -112,6 +112,44 @@ class RemediationTests(PassageFixture, unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Duplicate'):m.apply(state,plan,self.bundle,self.catalog)
         self.assertEqual(state,self.state())
 
+    def test_source_bound_table_labels_preserve_original_financial_data(self):
+        state = self.state(); original = copy.deepcopy(state)
+        bundle = copy.deepcopy(self.bundle)
+        groups = m.repair.table_catalog(state['artifacts']['financial'], self.bundle)
+        key, group = next(iter(groups.items()))
+        labels = {key: {'unit_label': 'Fictional source unit <label>',
+                        'period_labels': ['Fictional source date ' + str(i) for i in range(len(group['periods']))],
+                        'citations': ['D001']}}
+        op = self.operation(state, ['format', 'tables'], labels, 'display_tables')
+        candidate = m.apply(state, self.plan(state, op), self.bundle, self.catalog)
+        self.assertEqual(state, original)
+        self.assertEqual(self.bundle, bundle)
+        self.assertEqual(candidate['artifacts'], state['artifacts'])
+        self.assertEqual(m.repair.table_catalog(candidate['artifacts']['financial'], self.bundle), groups)
+        plain = m.repair.table(candidate['artifacts']['financial'], self.bundle, candidate['format'])
+        rendered = m.repair.table(candidate['artifacts']['financial'], self.bundle, candidate['format'], lambda ids: '|'.join(ids))
+        self.assertIn('Fictional source date 0', plain)
+        self.assertIn('Fictional source unit &lt;label&gt;', rendered)
+        self.assertNotIn('Fictional source unit <label>', rendered)
+        self.assertIn('D001', rendered)
+        for row in group['rows']:
+            for cell in row['cells']:
+                self.assertIn(cell['value'], plain)
+                for fact in cell['fact_ids']: self.assertIn(fact, rendered)
+
+    def test_table_labels_reject_column_changes_unknown_tables_and_numeric_overrides(self):
+        state = self.state()
+        key, group = next(iter(m.repair.table_catalog(state['artifacts']['financial'], self.bundle).items()))
+        value = {'unit_label': group['unit'], 'period_labels': [p['label'] for p in group['periods']], 'citations': ['D001']}
+        bad = [{'unknown': value}, {key: {**value, 'values': ['999']}},
+               {key: {**value, 'period_labels': []}}, {key: {**value, 'unit_label': ''}},
+               {key: {**value, 'unit_label': 'x' * 161}}, {key: {**value, 'citations': ['invented']}}]
+        for labels in bad:
+            with self.subTest(labels=labels), self.assertRaises(ValueError):
+                op = self.operation(state, ['format', 'tables'], labels, 'display_tables')
+                m.apply(state, self.plan(state, op), self.bundle, self.catalog)
+        self.assertEqual(state, self.state())
+
     def test_authorization_and_historical_budget_preserved_without_author_calls(self):
         out = self.edition(); p = base.read(out/'protocol.json')
         self.assertEqual(p['history'],{'status':'blocked','prior_rounds':2,'prior_tokens':54321})

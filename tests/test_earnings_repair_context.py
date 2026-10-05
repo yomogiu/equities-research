@@ -8,6 +8,10 @@ from research import earnings_repair_context as c
 from research import earnings_experiment as base
 
 
+def passage_rows(ctx):
+    return [dict(zip(ctx['passages']['columns'], row)) for row in ctx['passages']['rows']]
+
+
 class RepairContextTests(PassageFixture, unittest.TestCase):
     def state(self):
         return {'artifacts': {'financial': copy.deepcopy(self.financial), 'retrieval': copy.deepcopy(self.retrieval), 'analysis': copy.deepcopy(self.report)},
@@ -31,7 +35,7 @@ class RepairContextTests(PassageFixture, unittest.TestCase):
         self.assertNotIn('original_artifacts', ctx)
         self.assertEqual(ctx['candidate_sha256'], base.digest(after))
         blocks = {b['block_id']: b for b in ctx['source_blocks']}
-        for p in ctx['passages']:
+        for p in passage_rows(ctx):
             block = blocks[p['block_id']]
             restored = {k: v for k, v in p.items() if k != 'block_id'}
             restored.update({k: block[k] for k in ('path', 'sha256', 'document_id', 'offset_unit')})
@@ -54,7 +58,7 @@ class RepairContextTests(PassageFixture, unittest.TestCase):
         selected = rows[1]
         plan['operations'][0]['passage_ids'] = [selected['passage_id']]
         ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
-        actual = {p['passage_id'] for p in ctx['passages']}
+        actual = {p['passage_id'] for p in passage_rows(ctx)}
         self.assertTrue({p['passage_id'] for p in rows[:3]} <= actual)
 
     def test_compact_passages_reconstruct_unicode_without_source_duplication(self):
@@ -79,17 +83,27 @@ class RepairContextTests(PassageFixture, unittest.TestCase):
             self.assertEqual(restored, passage)
         self.assertLess(len(json.dumps(refs)), len(json.dumps(passages)))
 
+    def test_passage_table_is_lossless_and_smaller_for_repeated_metadata(self):
+        rows = [{'passage_id': 'P'+str(i), 'scope_id': 'T'+str(i), 'start': i,
+                 'end': i+1, 'span_sha256': 'f'*64, 'block_id': 'B-fake'} for i in range(100)]
+        table = c._passage_table(rows)
+        self.assertEqual([dict(zip(table['columns'], row)) for row in table['rows']], rows)
+        self.assertLess(len(json.dumps(table)), len(json.dumps(rows)))
+        self.assertEqual(c._passage_table([]), {'columns': [], 'rows': []})
+        with self.assertRaises(ValueError):
+            c._passage_table([rows[0], {**rows[1], 'extra': None}])
+
     def test_compact_passages_refuses_tampering_missing_and_ambiguous_blocks(self):
         before = self.state(); after, plan = self.edit(before)
         ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
-        original = next(p for p in self.catalog['passages'] if p['passage_id'] == ctx['passages'][0]['passage_id'])
+        original = next(p for p in self.catalog['passages'] if p['passage_id'] == passage_rows(ctx)[0]['passage_id'])
         for key, value in [('text', 'Invented'), ('sha256', '0'*64), ('span_sha256', '0'*64),
                            ('document_id', 'wrong'), ('offset_unit', 'utf8_byte'), ('end', 10**9)]:
             changed = copy.deepcopy(original); changed[key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
                 c._compact_passages([changed], ctx['source_blocks'])
         with self.assertRaises(ValueError): c._compact_passages([original], [])
-        block = next(b for b in ctx['source_blocks'] if b['block_id'] == ctx['passages'][0]['block_id'])
+        block = next(b for b in ctx['source_blocks'] if b['block_id'] == passage_rows(ctx)[0]['block_id'])
         with self.assertRaisesRegex(ValueError, 'Duplicate'): c._compact_passages([original], [block, block])
         changed = copy.deepcopy(block); changed['text'] = 'Corrupt'
         with self.assertRaisesRegex(ValueError, 'changed'): c._compact_passages([original], [changed])
