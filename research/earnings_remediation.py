@@ -26,7 +26,7 @@ from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'targeted-remediation-v2'
 MODEL = ('gpt-6.1-sol', 'medium')
-MAX_PROMPT_CHARS = 260000
+MAX_PROMPT_CHARS = 350000
 STOPPED = {'blocked', 'budget_exhausted', 'invalid_patch', 'invalid_review', 'prompt_too_large', 'evidence_insufficient'}
 
 

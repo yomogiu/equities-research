@@ -194,7 +194,7 @@ class RemediationTests(PassageFixture, unittest.TestCase):
             with self.assertRaises(ValueError): m.stage_plan(out, self.plan())
         protocol = base.read(out/'protocol.json')
         self.assertEqual(protocol['version'], 'targeted-remediation-v2')
-        self.assertEqual(protocol['max_prompt_chars'], 260000)
+        self.assertEqual(protocol['max_prompt_chars'], 350000)
         protocol['max_review_attempts'] = 2
         (out/'protocol.json').write_text(json.dumps(protocol))
         with self.assertRaisesRegex(ValueError, 'budget'): m.load(out)

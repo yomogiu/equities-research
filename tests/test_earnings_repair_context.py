@@ -34,6 +34,13 @@ class RepairContextTests(PassageFixture, unittest.TestCase):
         self.assertEqual(ctx['source_index']['span_columns'], ['source_index','start','end'])
         self.assertTrue(all(len(span) == 3 for _, spans in ctx['source_index']['rows'] for span in spans))
 
+    def test_unchanged_report_direct_citations_supplied_without_second_lookup(self):
+        before=self.state();after,plan=self.edit(before)
+        after['artifacts']['analysis']['opening_citations']=['D002']
+        ctx=c.build(before,after,plan,self.bundle,self.catalog,'Entire report','Rules')
+        self.assertIn('D002',ctx['scope_ids'])
+        self.assertTrue(any(row['id']=='D002' for row in ctx['scopes']))
+
     def test_passage_neighbors_do_not_cross_scope(self):
         before = self.state(); after, plan = self.edit(before)
         rows = [p for p in self.catalog['passages'] if p['scope_id'] == 'D001']

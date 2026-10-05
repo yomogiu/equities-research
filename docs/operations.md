@@ -53,7 +53,9 @@ an explicit repair or a reason to retain it. This check does not infer semantic
 similarity; the author and reviewer must choose the complete aliases and affected fields.
 
 Subsequent reviews receive the complete rendered report, exact field changes, pending
-findings and relevant original passages, with source hashes and character offsets.
+findings and original passages cited by the complete report, with source hashes and
+character offsets. Supplying all direct report citations up front avoids a second
+lookup for unchanged claims. Review prompts are bounded at 350,000 characters.
 Repeated source spans share one source block. The original full-source audit stays
 in the immutable history. A reviewer can request exact source IDs once; that evidence
 expansion consumes measured tokens but no correction round. Insufficient evidence,

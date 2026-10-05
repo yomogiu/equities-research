@@ -13,7 +13,7 @@ from research import earnings_compact_evidence as evidence
 from research import earnings_experiment as base
 
 VERSION = 'focused-repair-context-v1'
-MAX_CONTEXT_CHARACTERS = 240000
+MAX_CONTEXT_CHARACTERS = 330000
 
 
 class ContextTooLarge(ValueError):
@@ -292,6 +292,10 @@ def build(before, candidate, plan, bundle, catalog, rendered_report, writing, ex
             elif isinstance(value, list):
                 for child in value: quotes(child)
         quotes(candidate['artifacts'][role])
+    # The full report is reviewed for coherence. Supply its direct citations
+    # initially so unchanged but visible claims do not require a second lookup.
+    for value in (candidate['artifacts']['analysis'], candidate['format']):
+        a, b = _references(value); selected.update(a); pids.update(b)
     financial = bundle['financial']
     fact_ids, _ = _references(candidate['artifacts']['financial']['rows'])
     if not fact_ids <= set(scopes):

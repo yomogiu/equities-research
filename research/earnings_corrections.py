@@ -402,7 +402,7 @@ def replay(root, p, bundle, catalog, writing):
                     lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, scopes),
                     bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan), identities,
                     p['max_tokens'] - p.get('inherited_tokens', 0) - tokens,
-                    p.get('max_prompt_chars', 260000), verify_job)
+                    min(p.get('max_prompt_chars', 350000), 350000), verify_job)
                 tokens += progress['tokens']
                 if progress['status'] != 'completed':
                     return {**progress, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role}
