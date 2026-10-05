@@ -2,7 +2,7 @@
 
 This is a new user-directed edition, never an ordinary correction continuation.
 No author model runs here. An exact field plan is staged, then a fresh reviewer
-accepts or rejects it against complete original evidence and the writing rubric.
+accepts or rejects the complete report using source-bound focused evidence and the writing rubric.
 """
 from __future__ import annotations
 import copy
@@ -20,12 +20,14 @@ from research import earnings_passage_pipeline as pipe
 from research import earnings_mixed_pipeline as legacy
 from research import earnings_compact_evidence as evidence
 from research import earnings_passages as passages
+from research import earnings_repair_context as context
+from research import earnings_repair_review as review_loop
 from research.earnings_mixed_runner import run_role, verify_job
 
-VERSION = 'targeted-remediation-v1'
+VERSION = 'targeted-remediation-v2'
 MODEL = ('gpt-6.1-sol', 'medium')
-MAX_PROMPT_CHARS = 1500000
-STOPPED = {'blocked', 'budget_exhausted', 'invalid_patch', 'invalid_review', 'prompt_too_large'}
+MAX_PROMPT_CHARS = 260000
+STOPPED = {'blocked', 'budget_exhausted', 'invalid_patch', 'invalid_review', 'prompt_too_large', 'evidence_insufficient'}
 
 
 def targets(snapshot, bundle):
@@ -53,12 +55,14 @@ def targets(snapshot, bundle):
     for key in repair.row_catalog(art['financial'], bundle):
         add(['format', 'rows', key], 'display_row', snapshot['format']['rows'].get(key))
     add(['format', 'basis'], 'display_basis', snapshot['format']['basis'])
+    add(['format', 'layout'], 'layout', snapshot['format'].get('layout'))
     return result
 
 
 def apply(snapshot, plan, bundle, catalog):
     """Atomic compare-and-swap; source observations and list membership are inert."""
-    corrections.fields(plan, ('snapshot_sha256', 'operations'), 'remediation plan')
+    if not isinstance(plan, dict) or set(plan) not in ({'snapshot_sha256', 'operations'}, {'snapshot_sha256', 'operations', 'claim_groups'}):
+        raise ValueError('Unexpected remediation plan schema')
     if plan['snapshot_sha256'] != base.digest(snapshot):
         raise ValueError('Stale remediation snapshot')
     ops = plan['operations']
@@ -88,6 +92,8 @@ def apply(snapshot, plan, bundle, catalog):
             if len(value) > 4000: raise ValueError('Remediation text exceeds 4000 characters')
         elif op['kind'] == 'citations':
             legacy.check_ids(value, legacy.ids_for(bundle), 'replacement citations')
+        elif op['kind'] == 'layout':
+            repair.validate_layout(value, repair.row_catalog(out['artifacts']['financial'], bundle), legacy.ids_for(bundle))
         else:
             names = ('label', 'dimensions', 'citations') if op['kind'] == 'display_row' else ('text', 'citations')
             corrections.fields(value, names, 'display metadata')
@@ -99,26 +105,37 @@ def apply(snapshot, plan, bundle, catalog):
     for role in ('financial', 'retrieval', 'analysis'):
         pipe.validate(role, out['artifacts'][role], bundle, catalog)
     repair.validate_format(out['format'], out['artifacts']['financial'], bundle)
+    context.propagation_check(snapshot, out, plan)
     return out
 
 
 EXPORT = '''
 import json,sys
 from pathlib import Path
-from research import earnings_corrections as c
-root=Path(sys.argv[1]);p,b,k,w=c.load(root);v=c.replay(root,p,b,k,w)
+root=Path(sys.argv[1]);p=json.loads((root/'protocol.json').read_text())
+if p['version'].startswith('targeted-remediation-'):
+ from research import earnings_remediation as c
+ p,b,k,w=c.load(root);v=c._replay(root,p,b,k,w)
+ rounds=p['history']['prior_rounds']+v['review_attempts']
+ tokens=p['history']['prior_tokens']+v['tokens']
+else:
+ from research import earnings_corrections as c
+ p,b,k,w=c.load(root);v=c.replay(root,p,b,k,w)
+ rounds=p.get('prior_rounds',0)+v['round']
+ tokens=p.get('inherited_tokens',0)+v['tokens']
 print(json.dumps({'status':v['status'],'snapshot':v['state'],'source_protocol':p['source_protocol'],
- 'prior_rounds':p.get('prior_rounds',0)+v['round'],'prior_tokens':p.get('inherited_tokens',0)+v['tokens']}))
+ 'prior_rounds':rounds,'prior_tokens':tokens}))
 '''
 
 
 def export_seed(seed):
     p = base.read(seed/'protocol.json')
-    if p.get('version') != corrections.VERSION:
-        raise ValueError('A stopped deterministic-corrections seed is required')
+    if p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', 'targeted-remediation-v1', VERSION}:
+        raise ValueError('A stopped corrections or remediation seed is required')
     for item in p['code']:
         if base.sha(item['path']) != item['sha256']: raise ValueError('Seed verifier code changed')
-    code = Path(next(x['path'] for x in p['code'] if x['path'].endswith('/earnings_corrections.py'))).parent.parent
+    verifier_name = 'earnings_remediation.py' if p['version'].startswith('targeted-remediation-') else 'earnings_corrections.py'
+    code = Path(next(x['path'] for x in p['code'] if x['path'].endswith('/' + verifier_name))).parent.parent
     result = subprocess.run([sys.executable, '-c', EXPORT, str(seed)], cwd=code,
                             env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
     exported = json.loads(result.stdout)
@@ -136,8 +153,8 @@ def _authorization(value, seed, plan, output):
         raise ValueError('Authorization binds a different seed or plan')
     if not isinstance(value['output_path'], str) or not Path(value['output_path']).is_absolute() or Path(value['output_path']).resolve() != output:
         raise ValueError('Authorization binds a different edition path')
-    if type(value['max_review_attempts']) is not int or value['max_review_attempts'] != 2:
-        raise ValueError('Exactly two bounded new review attempts required')
+    if type(value['max_review_attempts']) is not int or value['max_review_attempts'] not in (1, 2):
+        raise ValueError('One or two explicitly authorized review attempts required')
     if type(value['max_tokens']) is not int or value['max_tokens'] <= 0:
         raise ValueError('Positive explicit remediation token budget required')
     for key in ('authorization_id', 'reason'): legacy.check_text(value[key], key)
@@ -174,7 +191,7 @@ def initialize(seed, output, plan, authorization):
                 'authorization_sha256': base.digest(authorization), 'initial_sha256': base.digest(snapshot),
                 'history': {k: exported[k] for k in ('status', 'prior_rounds', 'prior_tokens')},
                 'excluded_session_ids': sorted(set(prior_sessions)), 'model': list(MODEL),
-                'max_review_attempts': 2, 'max_tokens': authorization['max_tokens'], 'max_prompt_chars': MAX_PROMPT_CHARS}
+                'max_review_attempts': authorization['max_review_attempts'], 'max_tokens': authorization['max_tokens'], 'max_prompt_chars': MAX_PROMPT_CHARS}
     # Validate the plan against original evidence before creating any edition.
     sp = protocol['source_protocol']; bundle = evidence.load_bundle(sp['evidence_manifest'])
     catalog = passages.catalog(bundle['manifest']); candidate = apply(snapshot, plan, bundle, catalog)
@@ -187,12 +204,13 @@ def initialize(seed, output, plan, authorization):
 
 def load(output):
     root = Path(output).resolve(); p = base.read(root/'protocol.json'); auth = base.read(root/'authorization.json')
-    if p['version'] != VERSION or p['model'] != list(MODEL) or p['max_review_attempts'] != 2 or p['max_prompt_chars'] != MAX_PROMPT_CHARS:
+    if p['version'] != VERSION or p['model'] != list(MODEL) or p['max_review_attempts'] not in (1, 2) or p['max_prompt_chars'] != MAX_PROMPT_CHARS:
         raise ValueError('Remediation policy changed')
     if base.digest(auth) != p['authorization_sha256'] or base.digest(base.read(root/'initial.json')) != p['initial_sha256']:
         raise ValueError('Remediation authorization or initial snapshot changed')
     _authorization(auth, Path(p['seed']), base.read(root/'attempts/0/plan.json'), root)
-    if p['max_tokens'] != auth['max_tokens']: raise ValueError('Remediation budget changed')
+    if p['max_tokens'] != auth['max_tokens'] or p['max_review_attempts'] != auth['max_review_attempts']:
+        raise ValueError('Remediation budget changed')
     for c in p['code']:
         if base.sha(c['path']) != c['sha256'] or base.sha(Path(__file__).parent/Path(c['path']).name) != c['sha256']:
             raise ValueError('Remediation code changed')
@@ -223,16 +241,15 @@ def _stage(root, number, before, plan, candidate, bundle, catalog):
     legacy.immutable_text(folder/'candidate.html', corrections.rendered(candidate, bundle, catalog))
 
 
-def prompt(before, plan, candidate, bundle, catalog, writing):
-    text = corrections.prompt('review', before, bundle, catalog, writing, plan, candidate)
-    changes = [{'path': op['path'], 'kind': op['kind'], 'before_sha256': op['before_sha256'],
-                'after_sha256': op['after_sha256'], 'before': targets(before, bundle)[tuple(op['path'])]['value'],
-                'after': op['value'], 'citations': op['citations'], 'passage_ids': op['passage_ids']} for op in plan['operations']]
-    return text + '\nEXPLICIT USER-DIRECTED REMEDIATION EDITION\n' + (
-        'This separately authorized edition preserves the exhausted historical run. No author model will rewrite your approved candidate. '
-        'Audit the complete original artifacts, deterministic metadata/prose changes, exact rendered report, all original sources and writing rubric. '
-        'Upstream metadata edits require checking their downstream implications, not merely the changed wording. No mechanical validation grants acceptance.\n') + legacy.packed(
-        {'original_artifacts': before['artifacts'], 'original_format': before['format'], 'field_changes': changes})
+def prompt(before, plan, candidate, bundle, catalog, writing, extra_scope_ids=()):
+    return corrections.prompt('review', before, bundle, catalog, writing, plan, candidate,
+                              extra_scope_ids=extra_scope_ids) + (
+        '\nEXPLICIT USER-DIRECTED REMEDIATION EDITION\n'
+        'This separately authorized edition preserves the exhausted historical run and accepted evidence. '
+        'No author model will rewrite approved deterministic changes. Review the complete rendered report, '
+        'all corrections and their repeated occurrences together. Upstream metadata edits require checking '
+        'their downstream implications. Request original evidence only where the supplied context is insufficient. '
+        'Formatting does not require re-extraction of unchanged observations. Mechanical checks alone never grant acceptance.')
 
 
 def _replay(root, p, bundle, catalog, writing):
@@ -249,22 +266,17 @@ def _replay(root, p, bundle, catalog, writing):
         candidates.add(candidate_digest)
         if (folder/'candidate.html').read_text() != corrections.rendered(candidate, bundle, catalog):
             raise ValueError('Rendered remediation candidate changed')
-        text = prompt(state, plan, candidate, bundle, catalog, writing); job = folder/'review'
         bindings = {'protocol_sha256': base.sha(root/'protocol.json'), 'authorization_sha256': p['authorization_sha256'],
                     'attempt': number, 'role': 'review', 'before_sha256': base.digest(state),
                     'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan)}
-        if not (job/'output.json').exists():
-            status = ('launch_uncertain' if (job/'request.json').exists() else
-                      'budget_exhausted' if tokens >= p['max_tokens'] else
-                      'prompt_too_large' if len(text) > p['max_prompt_chars'] else 'pending')
-            return {'status': status, 'state': state, 'tokens': tokens, 'review_attempts': number,
-                    'job': job, 'prompt': text, 'bindings': bindings}
-        result = verify_job(job); request = base.read(job/'request.json')
-        if request['bindings'] != bindings or (request['model'], request['effort']) != MODEL or (job/'prompt.txt').read_text() != text:
-            raise ValueError('Review differs from exact remediation request')
-        sid = result['receipt']['session']['id']
-        if not sid or sid in seen_sessions: raise ValueError('A fresh independent remediation reviewer is required')
-        seen_sessions.add(sid); tokens += result['receipt']['session']['usage']['totalTokens']
+        reviewed = review_loop.replay(
+            folder/'review', lambda extra: prompt(state, plan, candidate, bundle, catalog, writing, extra),
+            bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan),
+            seen_sessions, p['max_tokens'] - tokens, p['max_prompt_chars'], verify_job)
+        tokens += reviewed['tokens']
+        if reviewed['status'] != 'completed':
+            return {**reviewed, 'state': state, 'tokens': tokens, 'review_attempts': number}
+        result, job = reviewed['result'], reviewed['job']
         state, status = corrections.adjudicate(state, candidate, plan, result['content'], bundle, catalog)
         decision = {'before_sha256': plan['snapshot_sha256'], 'candidate_sha256': base.digest(candidate),
                     'plan_sha256': base.digest(plan), 'review_output_sha256': base.sha(job/'output.json'),
@@ -301,7 +313,7 @@ def advance(output, execute=False):
         if execute and progress['status'] == 'pending':
             run_role(progress['job'], progress['prompt'], *MODEL, progress['bindings'], timeout=1200)
             progress = _replay(root, p, b, c, w)
-        summary = {k: v for k, v in progress.items() if k not in ('state', 'prompt', 'bindings', 'job')}
+        summary = {k: v for k, v in progress.items() if k not in ('state', 'prompt', 'bindings', 'job', 'result')}
         if progress['status'] == 'accepted':
             repair.render(root/'report.html', {**progress['state'], 'status': 'accepted'}, b, c)
             repair.write(root/'result.json', {**summary, 'state': progress['state'],

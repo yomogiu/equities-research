@@ -239,8 +239,11 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
             job=folder/role;job.mkdir(parents=True)
             text=c.prompt(role,state,self.bundle,self.catalog,'Fictional',plan if role=='review' else None,candidate if role=='review' else None)
             (job/'prompt.txt').write_text(text)
-            base.save(job/'request.json',{'model':c.MODEL[0],'effort':c.MODEL[1],'bindings':{'protocol_sha256':base.sha(root/'protocol.json'),'snapshot_sha256':base.digest(state),'round':0,'role':role}})
-            base.save(job/'output.json',value);results[str(job)]={'content':value,'receipt':{'session':{'id':role,'usage':{'totalTokens':10}}}}
+            bindings={'protocol_sha256':base.sha(root/'protocol.json'),'snapshot_sha256':base.digest(state),'round':0,'role':role}
+            if role=='review':
+                bindings.update(review_context_version=c.review_loop.VERSION,candidate_sha256=base.digest(candidate),plan_sha256=base.digest(plan),evidence_expansion=0,evidence_requests_sha256=base.digest([]),extra_scope_ids_sha256=base.digest([]),prior_review_output_sha256=None)
+            base.save(job/'request.json',{'model':c.MODEL[0],'effort':c.MODEL[1],'bindings':bindings,'prompt_sha256':base.sha(job/'prompt.txt')})
+            base.save(job/'output.json',{'content':value,'request_sha256':base.digest(base.read(job/'request.json'))});results[str(job)]={'content':value,'receipt':{'session':{'id':role,'usage':{'totalTokens':10}}}}
         with patch.object(c,'verify_job',side_effect=lambda path:results[str(path)]):
             result=c.replay(root,p,self.bundle,self.catalog,'Fictional')
             self.assertEqual(result['status'],'accepted');self.assertEqual(result['tokens'],20)
@@ -274,10 +277,13 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
         for role in values:
             job=root/'rounds/0'/role;job.mkdir(parents=True)
             (job/'prompt.txt').write_text(c.prompt(role,state,self.bundle,self.catalog,'Fictional',plan if role=='review' else None,candidate if role=='review' else None))
-            base.save(job/'request.json',{'model':c.MODEL[0],'effort':c.MODEL[1],'bindings':{'protocol_sha256':base.sha(root/'protocol.json'),'snapshot_sha256':base.digest(state),'round':0,'role':role}})
-            base.save(job/'output.json',values[role])
+            bindings={'protocol_sha256':base.sha(root/'protocol.json'),'snapshot_sha256':base.digest(state),'round':0,'role':role}
+            if role=='review':
+                bindings.update(review_context_version=c.review_loop.VERSION,candidate_sha256=base.digest(candidate),plan_sha256=base.digest(plan),evidence_expansion=0,evidence_requests_sha256=base.digest([]),extra_scope_ids_sha256=base.digest([]),prior_review_output_sha256=None)
+            base.save(job/'request.json',{'model':c.MODEL[0],'effort':c.MODEL[1],'bindings':bindings,'prompt_sha256':base.sha(job/'prompt.txt')})
+            base.save(job/'output.json',{'content':values[role],'request_sha256':base.digest(base.read(job/'request.json'))})
         with patch.object(c,'verify_job',side_effect=lambda path:{'content':values[path.name],'receipt':{'session':{'id':'same','usage':{'totalTokens':10}}}}):
-            with self.assertRaisesRegex(ValueError,'Independent fresh sessions'):c.replay(root,{'max_rounds':2,'max_tokens':100},self.bundle,self.catalog,'Fictional')
+            with self.assertRaisesRegex(ValueError,'Independent fresh review sessions'):c.replay(root,{'max_rounds':2,'max_tokens':100},self.bundle,self.catalog,'Fictional')
 
     def test_proposal_passages_omit_repeated_provenance_without_losing_text(self):
         import json

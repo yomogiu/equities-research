@@ -41,7 +41,7 @@ class RemediationTests(PassageFixture, unittest.TestCase):
                 'resolutions': [{'id': f['id'], 'status': 'closed' if verdict == 'pass' else 'open', **claim} for f in before['findings']],
                 'findings': []}
 
-    def edition(self):
+    def edition(self, attempts=2):
         self.seed = self.root/'seed'; self.seed.mkdir()
         writing = self.root/'writing.txt'; writing.write_text('Fictional concise writing rubric.')
         sp = {'code': [], 'case_path': str(self.casepath), 'case_sha256': base.sha(self.casepath),
@@ -52,7 +52,7 @@ class RemediationTests(PassageFixture, unittest.TestCase):
         state = self.state(); plan = self.plan(state)
         auth = {'kind': 'targeted_remediation', 'enabled': True, 'authorization_id': 'explicit-fake-authority',
                 'source_protocol_sha256': base.sha(self.seed/'protocol.json'), 'first_plan_sha256': base.digest(plan),
-                'max_review_attempts': 2, 'max_tokens': 10000, 'reason': 'Explicit fictional new edition',
+                'max_review_attempts': attempts, 'max_tokens': 10000, 'reason': 'Explicit fictional new edition',
                 'output_path': str(self.root/'remediation')}
         exported = {'status': 'blocked', 'snapshot': state, 'source_protocol': sp, 'prior_rounds': 2, 'prior_tokens': 54321}
         output = self.root/'remediation'
@@ -65,9 +65,11 @@ class RemediationTests(PassageFixture, unittest.TestCase):
         p, b, cat, w = m.load(output); progress = m._replay(output, p, b, cat, w)
         job = progress['job']; job.mkdir(parents=True)
         plan = base.read(job.parent/'plan.json'); candidate = base.read(job.parent/'candidate.json')
-        m.repair.write(job/'request.json', {'bindings': progress['bindings'], 'model': m.MODEL[0], 'effort': m.MODEL[1]})
         (job/'prompt.txt').write_text(progress['prompt'])
-        result = {'content': self.review(progress['state'], plan, candidate, verdict, approve),
+        request = {'bindings': progress['bindings'], 'model': m.MODEL[0], 'effort': m.MODEL[1],
+                   'prompt_sha256': base.sha(job/'prompt.txt')}
+        m.repair.write(job/'request.json', request)
+        result = {'request_sha256': base.digest(request), 'content': self.review(progress['state'], plan, candidate, verdict, approve),
                   'receipt': {'session': {'id': session, 'usage': {'totalTokens': 123}}}}
         m.repair.write(job/'output.json', result)
         return result
@@ -119,10 +121,10 @@ class RemediationTests(PassageFixture, unittest.TestCase):
         auth=base.read(out/'authorization.json');auth['reason']='changed';(out/'authorization.json').write_text(json.dumps(auth))
         with self.assertRaisesRegex(ValueError,'authorization'):m.load(out)
 
-    def test_full_source_review_includes_original_and_staged_metadata_and_writing(self):
+    def test_compact_review_includes_full_report_deltas_evidence_and_writing(self):
         state=self.state();plan=self.plan(state);candidate=m.apply(state,plan,self.bundle,self.catalog)
         text=m.prompt(state,plan,candidate,self.bundle,self.catalog,'Fictional strict writing standard')
-        for word in ('original_evidence','original_artifacts','field_changes','Fictional strict writing standard',
+        for word in ('source_index','scopes','field_changes','Fictional strict writing standard',
                      'Fictional old comparison.','Fictional corrected comparison.'):
             self.assertIn(word,text)
 
@@ -133,7 +135,7 @@ class RemediationTests(PassageFixture, unittest.TestCase):
             self.assertEqual(m.verify(out),result)
         self.assertTrue((out/'report.html').exists())
         self.assertEqual(base.read(out/'result.json')['state']['findings'],[])
-        self.assertIn("p['version']=='targeted-remediation-v1'",signals.EXPORT)
+        self.assertIn("targeted-remediation-v2",signals.EXPORT)
 
     def test_revise_commits_approved_state_and_requires_changed_second_plan(self):
         out=self.edition();self.complete(out,'revise')
@@ -167,7 +169,7 @@ class RemediationTests(PassageFixture, unittest.TestCase):
             m.verify(out);after=base.read(out/'attempts/0/decision.json')['after']
             m.stage_plan(out,self.plan(after,self.operation(after,['artifacts','analysis','opening'],'Another fictional opening.')))
             self.complete(out,session='fresh-review')
-            with self.assertRaisesRegex(ValueError,'fresh independent'):m.verify(out)
+            with self.assertRaisesRegex(ValueError,'fresh review'):m.verify(out)
         (self.seed/'protocol.json').write_text('{}')
         with self.assertRaises(ValueError):m.load(out)
 
@@ -181,6 +183,83 @@ class RemediationTests(PassageFixture, unittest.TestCase):
             self.assertFalse((out/'result.json').exists())
             with self.assertRaises(ValueError):m.stage_plan(out,self.plan(after))
         self.assertEqual(base.read(out/'protocol.json')['history']['prior_tokens'],54321)
+
+    def test_one_authorized_review_is_terminal_and_budget_is_bound(self):
+        out = self.edition(attempts=1); self.complete(out, 'revise')
+        with patch.object(m, 'verify_job', side_effect=lambda job: base.read(job/'output.json')):
+            result = m.verify(out)
+            self.assertEqual(result['status'], 'blocked')
+            self.assertEqual(result['review_attempts'], 1)
+            self.assertEqual(result['tokens'], 123)
+            with self.assertRaises(ValueError): m.stage_plan(out, self.plan())
+        protocol = base.read(out/'protocol.json')
+        self.assertEqual(protocol['version'], 'targeted-remediation-v2')
+        self.assertEqual(protocol['max_prompt_chars'], 260000)
+        protocol['max_review_attempts'] = 2
+        (out/'protocol.json').write_text(json.dumps(protocol))
+        with self.assertRaisesRegex(ValueError, 'budget'): m.load(out)
+
+    def test_optional_claim_groups_require_all_repeated_occurrences(self):
+        state = self.state()
+        state['artifacts']['analysis']['opening'] = 'Fictional old comparison. More context.'
+        plan = self.plan(state)
+        plan['claim_groups'] = [{'id': 'comparison', 'aliases': ['Fictional old comparison.'],
+                                 'required_paths': [plan['operations'][0]['path']], 'unchanged': []}]
+        with self.assertRaisesRegex(ValueError, 'Unadjudicated'): m.apply(state, plan, self.bundle, self.catalog)
+        op = self.operation(state, ['artifacts','analysis','opening'], 'Fictional corrected comparison. More context.')
+        op['id'] = 'change-2'; plan['operations'].append(op)
+        self.assertIn('corrected', m.apply(state, plan, self.bundle, self.catalog)['artifacts']['analysis']['opening'])
+
+    def test_layout_target_preserves_original_artifacts(self):
+        state = self.state()
+        layout = {'version':'compact-financial-v1', 'fold':[], 'detail_rows':[], 'summaries':[], 'basis_position':'after_tables'}
+        plan = self.plan(state, self.operation(state, ['format','layout'], layout, 'layout'))
+        candidate = m.apply(state, plan, self.bundle, self.catalog)
+        self.assertEqual(candidate['artifacts'], state['artifacts'])
+        self.assertEqual(candidate['format']['layout'], layout)
+        self.assertNotIn('layout', state['format'])
+
+    def test_evidence_expansion_preserves_correction_budget_and_exact_candidate(self):
+        out = self.edition(attempts=1)
+        result = self.complete(out)
+        first = out/'attempts/0/review'
+        content = result['content']
+        result['content'] = {'verdict':'needs_evidence', 'candidate_sha256':content['candidate_sha256'],
+                             'plan_sha256':content['plan_sha256'],
+                             'requests':[{'scope_id':'D002','reason':'Fictional additional original context needed'}]}
+        (first/'output.json').write_text(json.dumps(result))
+        with patch.object(m, 'verify_job', side_effect=lambda job: base.read(job/'output.json')):
+            progress = m.verify(out)
+            self.assertEqual(progress['status'], 'pending')
+            self.assertEqual(progress['review_attempts'], 0)
+            self.assertEqual(progress['evidence_expansion'], 1)
+            self.assertEqual(progress['tokens'], 123)
+            self.assertFalse((out/'result.json').exists())
+            self.complete(out, session='independent-expanded-review')
+            final = m.verify(out)
+            self.assertEqual(final['status'], 'accepted')
+            self.assertEqual(final['review_attempts'], 1)
+            self.assertEqual(final['tokens'], 246)
+        self.assertFalse((out/'attempts/1').exists())
+
+    def test_export_selects_frozen_remediation_verifier_and_accumulates_history(self):
+        # Use a tiny fictitious frozen verifier in a subprocess; never import
+        # the live module as authority for a historical protocol's accepted state.
+        frozen = self.root/'frozen-code'; package = frozen/'research'; package.mkdir(parents=True)
+        (package/'__init__.py').write_text('')
+        verifier = package/'earnings_remediation.py'
+        verifier.write_text("import json\ndef load(root):\n return json.loads((root/'protocol.json').read_text()),None,None,None\ndef _replay(root,p,b,k,w):\n return {'status':'blocked','state':{'fictional':True},'review_attempts':2,'tokens':321}\n")
+        seed = self.root/'prior-edition'; seed.mkdir()
+        protocol = {'version':'targeted-remediation-v1','code':[{'path':str(verifier),'sha256':base.sha(verifier)}],
+                    'history':{'prior_rounds':4,'prior_tokens':1000},'source_protocol':{'fictional':True}}
+        m.repair.write(seed/'protocol.json', protocol)
+        old, exported = m.export_seed(seed)
+        self.assertEqual(old, protocol)
+        self.assertEqual(exported['prior_rounds'], 6)
+        self.assertEqual(exported['prior_tokens'], 1321)
+        self.assertEqual(exported['snapshot'], {'fictional':True})
+        verifier.write_text(verifier.read_text() + '# changed\n')
+        with self.assertRaisesRegex(ValueError, 'verifier code changed'): m.export_seed(seed)
 
 
 if __name__ == '__main__': unittest.main()

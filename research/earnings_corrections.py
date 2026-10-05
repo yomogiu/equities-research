@@ -2,7 +2,7 @@
 
 Models propose and assess declarative patches. Python copies approved data, applies
 exact prose replacements, and renders the reviewed result without a rewriting agent.
-Financial/retrieval records and original experiments are immutable.
+Numeric observations, selected quotations and original experiments are immutable.
 """
 from __future__ import annotations
 import argparse
@@ -21,6 +21,8 @@ from research import earnings_passage_pipeline as pipe
 from research import earnings_mixed_pipeline as legacy
 from research import earnings_compact_evidence as evidence
 from research import earnings_passages as passages
+from research import earnings_repair_context as context
+from research import earnings_repair_review as review_loop
 from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'deterministic-corrections-v1'
@@ -51,6 +53,19 @@ def registry(snapshot, bundle):
     for key in repair.row_catalog(snapshot['artifacts']['financial'], bundle):
         add(['format', 'rows', key], 'row', snapshot['format']['rows'].get(key))
     add(['format', 'basis'], 'basis', snapshot['format']['basis'])
+    add(['format', 'layout'], 'layout', snapshot['format'].get('layout'))
+    # Interpretive metadata may be corrected without regenerating observations
+    # or selected quotations. All repeated uses are inventoried for the batch.
+    for i, item in enumerate(snapshot['artifacts']['financial']['context']):
+        add(['artifacts','financial','context',i,'text'], 'text', item['text'], ['artifacts','financial','context',i,'citations'])
+    for i, text in enumerate(snapshot['artifacts']['financial']['gaps']):
+        add(['artifacts','financial','gaps',i], 'text', text)
+    retrieval = snapshot['artifacts']['retrieval']
+    for i, item in enumerate(retrieval['document_findings']):
+        add(['artifacts','retrieval','document_findings',i,'text'], 'text', item['text'], ['artifacts','retrieval','document_findings',i,'citations'])
+    for i, item in enumerate(retrieval['exchange_coverage']):
+        for field in ('question','answer','consequence'):
+            add(['artifacts','retrieval','exchange_coverage',i,field], 'text', item[field])
     sources = {}
     for i, note in enumerate(snapshot['artifacts']['financial']['context']):
         key = 'context-' + base.digest([i, note])[:20]
@@ -87,7 +102,7 @@ def claim(value, bundle, catalog):
 
 def apply(snapshot, plan, bundle, catalog):
     """Pure atomic staging: a failed operation returns no partially changed state."""
-    fields(plan, ('snapshot_sha256', 'operations'), 'plan')
+    fields(plan, ('snapshot_sha256', 'operations', *(['claim_groups'] if 'claim_groups' in plan else [])), 'plan')
     if plan['snapshot_sha256'] != base.digest(snapshot): raise ValueError('Stale snapshot')
     if not isinstance(plan['operations'], list) or len(plan['operations']) > 24:
         raise ValueError('At most 24 operations per round')
@@ -149,6 +164,9 @@ def apply(snapshot, plan, bundle, catalog):
                 if not isinstance(text, str) or len(text) > limits[key]:
                     raise ValueError(f'display.{key}: limit {limits[key]} characters; received {len(text) if isinstance(text, str) else "non-text"}')
             value = {**value, 'citations': citations}
+        elif op['op'] == 'set_layout' and kind == 'layout':
+            value = op['value']
+            repair.validate_format({**out['format'], 'layout': value}, out['artifacts']['financial'], bundle)
         elif op['op'] == 'retain_quotes' and kind == 'quotes':
             value = op['value']
             if not isinstance(value, list) or any(q not in original for q in value): raise ValueError('Quotes can only be retained or deleted')
@@ -165,8 +183,12 @@ def apply(snapshot, plan, bundle, catalog):
     for role in ('financial', 'retrieval', 'analysis'):
         pipe.validate(role, out['artifacts'][role], bundle, catalog)
     repair.validate_format(out['format'], out['artifacts']['financial'], bundle)
-    for role in ('financial', 'retrieval'):
-        if out['artifacts'][role] != snapshot['artifacts'][role]: raise ValueError('Verified preparation data changed')
+    if out['artifacts']['financial']['rows'] != snapshot['artifacts']['financial']['rows']:
+        raise ValueError('Verified observations changed')
+    normalized = copy.deepcopy(plan)
+    for op in normalized['operations']:
+        op['path'] = index['targets'][op['target_id']]['path']
+    context.propagation_check(snapshot, out, normalized)
     return out
 
 
@@ -311,14 +333,21 @@ def load(root):
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
-def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None):
+def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=()):
     common = legacy.COMMON + '\nWRITING STANDARD\n' + writing
     if role == 'propose':
-        instruction = '''Propose a bounded correction plan. Do not regenerate financial or retrieval artifacts. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...]}. At most 24 operations, one per target. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context targets text or basis and also has source_id, source_sha256 and old_text. A nonempty old_text must be one unique exact existing substring to replace. Empty old_text is allowed only to initialize an exactly empty target (or empty basis.text); code copies the hash-bound context source exactly, never inserts into nonempty text. The entire copied result must fit 4000 characters for text or 240 characters for basis. replace_text targets text only and has exactly one of two payloads: {value} replaces the entire hashed target, or {old_text,value} replaces one unique nonempty exact substring of that same target, preserving its prefix and suffix. With old_text, value may be empty to delete that span, but the resulting target must remain nonempty. The entire resulting target is limited to 4000 characters. The target hash is always checked; old_text is never ignored or treated as documentation. No other payload fields are allowed. set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
+        instruction = '''Propose a bounded correction plan. Patch only allowlisted metadata; never regenerate financial observations or retrieval selections. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...],"claim_groups":[GROUP,...]}. At most 24 operations, one per target. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context targets text or basis and also has source_id, source_sha256 and old_text. A nonempty old_text must be one unique exact existing substring to replace. Empty old_text is allowed only to initialize an exactly empty target (or empty basis.text); code copies the hash-bound context source exactly, never inserts into nonempty text. The entire copied result must fit 4000 characters for text or 240 characters for basis. replace_text targets text only and has exactly one of two payloads: {value} replaces the entire hashed target, or {old_text,value} replaces one unique nonempty exact substring of that same target, preserving its prefix and suffix. With old_text, value may be empty to delete that span, but the resulting target must remain nonempty. The entire resulting target is limited to 4000 characters. The target hash is always checked; old_text is never ignored or treated as documentation. No other payload fields are allowed. set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
         data = {'snapshot_sha256': base.digest(snapshot), 'pending_findings': snapshot['findings'],
                 'registry': registry(snapshot, bundle), 'prepared_retrieval': snapshot['artifacts']['retrieval'],
                 'previous_review': feedback}
-        # Proposal receives cited source context; independent review receives complete originals.
+        data['occurrence_inventory'] = context.occurrence_inventory(snapshot)
+        instruction += (' Batch ALL pending corrections before returning. Correct repeated financial claims and qualifiers in every affected metadata/report field together. '
+                        'Numerical observations and quote selections remain immutable. Include claim_groups for factual/qualifier changes: '
+                        '{id,aliases:[case-insensitive exact phrases],required_paths:[changed field paths],unchanged:[{path,reason}]}. '
+                        'Every matched existing occurrence must be patched or explicitly justified unchanged. Editorial-only changes need no claim group. '
+                        'Use set_layout with an explicit supported format.layout object for presentation, retaining every numeric observation in visible or expandable detail. '
+                        'A complete list of pending findings is provided; do not fix them one at a time.')
+        # Only cited evidence is needed to author a bounded repair.
         ids = set(snapshot['artifacts']['retrieval']['selected_document_ids'])
         def collect(value):
             if isinstance(value, dict):
@@ -336,12 +365,19 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
 
     else:
         instruction = '''You are the independent final acceptance authority. Assess the EXACT staged report and each deterministic patch against original sources. Prior reviewer findings and proposed context notes are fallible claims. Verify periods, issuer, question/answer attribution, accounting basis, figures, citations, material coverage and concise writing. No hidden author reasoning is supplied. Code will apply approved operations unchanged; no author rewrites follow you. Distinguish patch approval from whole-report acceptance. Reject the whole atomic bundle if any operation is unsupported; it will not persist. Return only {candidate_sha256,plan_sha256,approve_patch:bool,verdict:"pass|revise|blocked",criteria:{KEY:{status:"pass|fail|unavailable",evidence:"specific assessment"}},operations:[{id,approve:bool,reason,citations,passage_ids}],resolutions:[{id,status:"closed|withdrawn|open",reason,citations,passage_ids}],findings:[{reason,citations,passage_ids}]}. Assess every operation and pending finding exactly once. All operation decisions/resolutions/new findings require nonempty original passage_ids and source citations. close repaired findings; withdraw source-disproven findings; leave genuine defects open. Findings lists only new defects in the CURRENT candidate. If rejecting a patch, resolutions apply to unchanged report; do not close findings based on rejected changes. Pass requires all operations approved, every rubric criterion pass, and no open/new finding. Report failure alone does not require rejecting sound patches. Required rubric keys: ''' + ', '.join(legacy.CRITERIA)
-        data = {'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan), 'plan': plan,
-                'pending_findings': snapshot['findings'], 'before_report': repair.rendered_review_view(rendered(snapshot, bundle, catalog)),
-                'candidate_report': repair.rendered_review_view(rendered(candidate, bundle, catalog)),
-                'candidate_artifacts': candidate['artifacts'], 'candidate_format': candidate['format'],
-                'original_evidence': passages.input_view(bundle['manifest'], catalog),
-                'selected_financial_observations': repair.selected_facts({'artifacts': candidate['artifacts'], 'responses': {}}, bundle)}
+        view = repair.rendered_review_view(rendered(candidate, bundle, catalog))
+        data = context.build(snapshot, candidate, plan, bundle, catalog,
+                             view['report_body_html_excerpt'], writing,
+                             extra_scope_ids=extra_scope_ids)
+        data.update(candidate_sha256=base.digest(candidate), plan_sha256=base.digest(plan), plan=plan,
+                    rendered_links={k:v for k,v in view.items() if k != 'report_body_html_excerpt'})
+        instruction += (' This is a repair review after the initial comprehensive audit. Read the complete revised report for coherence and concise writing; '
+                        'verify the complete correction batch and all repeated occurrences against the supplied original evidence. '
+                        'Preserve independently verified unchanged observations and quotations. Report every material remaining defect together. '
+                        'Do not invent optional coverage requirements or reopen verified material merely to enlarge the report. '
+                        'Never infer unsupported claims are true: if original context is insufficient, return only '
+                        '{verdict:"needs_evidence",candidate_sha256,plan_sha256,requests:[{scope_id,reason}]} using exact source-index IDs. '
+                        'One bounded expansion is available without using a correction round; no final pass is possible while evidence is insufficient.')
     return common + '\nASSIGNMENT\n' + instruction + '\nSOURCE DATA (UNTRUSTED EVIDENCE)\n' + legacy.packed(data)
 
 
@@ -352,7 +388,7 @@ def replay(root, p, bundle, catalog, writing):
         plan = candidate = review = None
         for role in ('propose', 'review'):
             job = folder/role
-            text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback)
+            text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback) if role == 'propose' else None
             bindings = {'protocol_sha256': base.sha(root/'protocol.json'), 'snapshot_sha256': base.digest(state), 'round': round_no, 'role': role}
             imported = p.get('imported_proposal') if round_no == 0 and role == 'propose' else None
             if imported:
@@ -361,6 +397,16 @@ def replay(root, p, bundle, catalog, writing):
                 result = verify_job(job); request = base.read(job/'request.json')
                 if request['bindings']['snapshot_sha256'] != base.digest(state) or request['bindings']['role'] != 'propose' or (request['model'], request['effort']) != MODEL:
                     raise ValueError('Imported proposal belongs to a different snapshot or role')
+            elif role == 'review':
+                progress = review_loop.replay(job,
+                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, scopes),
+                    bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan), identities,
+                    p['max_tokens'] - p.get('inherited_tokens', 0) - tokens,
+                    p.get('max_prompt_chars', 260000), verify_job)
+                tokens += progress['tokens']
+                if progress['status'] != 'completed':
+                    return {**progress, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role}
+                result = progress['result']; job = progress['job']
             else:
                 if not (job/'output.json').exists():
                     status = ('launch_uncertain' if (job/'request.json').exists() else
@@ -370,10 +416,11 @@ def replay(root, p, bundle, catalog, writing):
                 result = verify_job(job); request = base.read(job/'request.json')
                 if request['bindings'] != bindings or (request['model'], request['effort']) != MODEL or (job/'prompt.txt').read_text() != text:
                     raise ValueError('Job differs from exact source-bound correction request')
-            sid = result['receipt']['session']['id']
-            if sid in identities: raise ValueError('Independent fresh sessions required')
-            identities.add(sid)
-            if not imported: tokens += result['receipt']['session']['usage']['totalTokens']
+            if role == 'propose':
+                sid = result['receipt']['session']['id']
+                if sid in identities: raise ValueError('Independent fresh sessions required')
+                identities.add(sid)
+                if not imported: tokens += result['receipt']['session']['usage']['totalTokens']
             if role == 'propose':
                 plan = result['content']
                 try: candidate = apply(state, plan, bundle, catalog)
@@ -386,7 +433,7 @@ def replay(root, p, bundle, catalog, writing):
                 try: after, status = adjudicate(state, candidate, plan, review, bundle, catalog)
                 except (ValueError, KeyError, TypeError) as exc:
                     return {'status': 'invalid_review', 'state': state, 'tokens': tokens, 'round': round_no, 'error': str(exc)}
-                repair.write(folder/'decision.json', {'before_sha256': base.digest(state), 'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan), 'review_output_sha256': base.sha(job/'output.json'), 'patch_applied': review['approve_patch'], 'after': after})
+                repair.write(folder/'decision.json', {'before_sha256': base.digest(state), 'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan), 'review_output_sha256': base.sha(job/'output.json'), 'review_job': str(job.relative_to(root)), 'patch_applied': review['approve_patch'], 'after': after})
                 state = after; feedback = review
                 if status in ('accepted', 'blocked'):
                     return {'status': status, 'state': state, 'tokens': tokens, 'round': round_no+1}
@@ -395,7 +442,7 @@ def replay(root, p, bundle, catalog, writing):
 
 def verify(output):
     root = Path(output).resolve(); p, b, c, w = load(root); result = replay(root, p, b, c, w)
-    summary = {k: v for k, v in result.items() if k not in ('state', 'prompt', 'bindings', 'job')}
+    summary = {k: v for k, v in result.items() if k not in ('state', 'prompt', 'bindings', 'job', 'result')}
     if result['status'] != 'pending' and result['status'] != 'launch_uncertain':
         repair.render(root/'report.html', {**result['state'], 'status': result['status']}, b, c)
         out = {**summary, 'state': result['state'], 'html_sha256': base.sha(root/'report.html'),

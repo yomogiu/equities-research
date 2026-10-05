@@ -69,6 +69,7 @@ def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=No
             'Narrative paraphrases use ordinary citations and must not be presented as quotations.')
     if role == 'review':
         text += '\n\nRENDERING CONTRACT\nCode materializes selected quotations and inserts displayed citation brackets. '
+        text += (' Complete one comprehensive audit before returning: reconcile every repeated claim across financial context, retrieval summaries and analysis; verify guidance ranges, conditions and accounting basis; inspect material coverage and concise writing. Return the complete actionable correction batch, with every affected occurrence and specific required edit. Separate factual defects from optional additions; do not withhold known findings for later rounds. ')
         text += 'Judge quote relevance and context against original sources; do not charge renderer-added brackets as an author-formatting defect.'
     return text
 

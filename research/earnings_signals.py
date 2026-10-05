@@ -113,7 +113,7 @@ import json,sys
 from pathlib import Path
 from research import earnings_experiment as b
 root=Path(sys.argv[1]); p=b.read(root/'protocol.json')
-if p['version']=='targeted-remediation-v1':
+if p['version'] in ('targeted-remediation-v1','targeted-remediation-v2'):
  from research import earnings_remediation as c
  r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
 elif p['version']=='deterministic-corrections-v1':

@@ -41,3 +41,30 @@ do not recreate already accepted packets or assume an unlimited unattended budge
 Live research starts only after a reviewed watchlist, public-source network access,
 private storage, and an actual cloud task invocation have been verified. The fake
 example is for tests only and must never be queried as a real company.
+
+
+## Batched report repair
+
+The initial independent audit lists every material defect in one correction batch,
+including repeated claims across financial context, retrieval summaries and prose.
+Corrections are hash-bound field patches; financial observations and selected
+quotations remain fixed. Claim groups enumerate every matching occurrence and require
+an explicit repair or a reason to retain it. This check does not infer semantic
+similarity; the author and reviewer must choose the complete aliases and affected fields.
+
+Subsequent reviews receive the complete rendered report, exact field changes, pending
+findings and relevant original passages, with source hashes and character offsets.
+Repeated source spans share one source block. The original full-source audit stays
+in the immutable history. A reviewer can request exact source IDs once; that evidence
+expansion consumes measured tokens but no correction round. Insufficient evidence,
+failed provenance, an uncertain launch or an exhausted budget cannot become acceptance.
+
+The reviewer approves the exact staged candidate. Python applies the approved patch
+and renders the result; no author rewrites follow acceptance. Optional
+`format.layout` (`compact-financial-v1`) folds compatible ratio rows into monetary
+rows and moves secondary tables into expandable detail while retaining every original
+value and citation. Independent signal review and private persistence remain required.
+Historical pinned runs replay with their original code. Explicit v2 remediation
+editions may descend from a conclusively stopped correction or remediation run; they
+preserve the entire prior history and cannot retry an unchanged candidate or fork a
+second descendant from the same source.
