@@ -116,7 +116,7 @@ root=Path(sys.argv[1]); p=b.read(root/'protocol.json')
 if p['version'] in ('targeted-remediation-v1','targeted-remediation-v2'):
  from research import earnings_remediation as c
  r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
-elif p['version'] in ('deterministic-corrections-v1','deterministic-corrections-regression-v1'):
+elif p['version'] in ('deterministic-corrections-v1','deterministic-corrections-regression-v1','deterministic-corrections-cited-passages-v1'):
  from research import earnings_corrections as c
  r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
 elif p['version']=='reviewer-repair-v1':

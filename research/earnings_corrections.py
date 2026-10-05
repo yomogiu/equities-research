@@ -24,6 +24,7 @@ from research import earnings_passages as passages
 from research import earnings_repair_context as context
 from research import earnings_repair_review as review_loop
 from research import earnings_regression_findings as regression
+from research import earnings_cited_passages as cited_passages
 from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'deterministic-corrections-v1'
@@ -260,7 +261,7 @@ from research import earnings_experiment as b
 from research import earnings_report_repair as r
 from research import earnings_passage_pipeline as p
 root=Path(sys.argv[1]); protocol=b.read(root/'protocol.json'); imported=None; spent_tokens=0
-if protocol.get('version') in ('deterministic-corrections-v1', 'deterministic-corrections-regression-v1'):
+if protocol.get('version') in ('deterministic-corrections-v1', 'deterministic-corrections-regression-v1', 'deterministic-corrections-cited-passages-v1'):
     from research import earnings_corrections as c
     cp,bundle,catalog,writing=c.load(root)
     progress=c.replay(root,cp,bundle,catalog,writing)
@@ -302,7 +303,26 @@ def export_seed(seed, reuse_proposal=False):
     return json.loads(process.stdout)
 
 
-def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=False, reuse_proposal=False, regression_findings=None):
+def resolved_import(snapshot, imported, bundle, catalog):
+    """Authenticate the unchanged author output before completing source locations."""
+    fields(imported, ('job', 'output_sha256'), 'Imported proposal')
+    job = Path(imported['job'])
+    if base.sha(job/'output.json') != imported['output_sha256']:
+        raise ValueError('Imported proposal changed')
+    result = verify_job(job)
+    request = base.read(job/'request.json')
+    if (request['bindings'].get('snapshot_sha256') != base.digest(snapshot)
+            or request['bindings'].get('role') != 'propose'
+            or (request['model'], request['effort']) != MODEL):
+        raise ValueError('Imported proposal belongs to a different snapshot or role')
+    effective, manifest = cited_passages.resolve(result['content'], bundle, catalog, imported['output_sha256'])
+    # The ordinary atomic validator remains authoritative for every operation,
+    # including immutable observations, quotes, hashes and claim propagation.
+    apply(snapshot, effective, bundle, catalog)
+    return effective, manifest
+
+
+def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False):
     seed = Path(seed).resolve(); root = Path(output).resolve()
     if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
         raise ValueError('Use a new private directory outside code and the seed')
@@ -310,6 +330,11 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
         raise ValueError('One or two rounds and a positive token budget required')
     if regression_findings is not None and (reuse_proposal or new_experiment):
         raise ValueError('Regression findings cannot reuse a proposal or reset the experiment')
+    if resolve_cited_passages and (not reuse_proposal or new_experiment or regression_findings is not None):
+        raise ValueError('Cited-passage resolution requires proposal reuse without new experiment or regression findings')
+    seed_protocol = base.read(seed/'protocol.json')
+    if reuse_proposal and seed_protocol.get('version') == cited_passages.VERSION and not resolve_cited_passages:
+        raise ValueError('Reusing a resolved proposal requires explicit cited-passage resolution')
     exported = export_seed(seed, reuse_proposal)
     snapshot = exported['snapshot']; sp = exported['source_protocol']
     if reuse_proposal and not exported['imported_proposal']: raise ValueError('No reusable staged proposal')
@@ -317,6 +342,14 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
     if remaining <= 0: raise ValueError('Prior correction budget exhausted; a separately authorized experiment requires --new-experiment')
     if set(snapshot['artifacts']) != {'financial', 'retrieval', 'analysis'}: raise ValueError('Complete prepared report required')
     supplemental_bindings = {}
+    resolution = None
+    if resolve_cited_passages:
+        bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+        if base.digest(catalog) != base.digest(base.read(Path(sp['evidence_manifest']).parent.parent/'passages.json')):
+            raise ValueError('Original passages changed')
+        _, resolution = resolved_import(snapshot, exported['imported_proposal'], bundle, catalog)
+        regression.budget({'prior_rounds': exported['used_rounds'], 'inherited_tokens': exported['spent_tokens'],
+                           'max_rounds': remaining, 'max_tokens': max_tokens}, exported, seed_protocol)
     if regression_findings is not None:
         bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
         additions, supplemental_bindings = regression.read(regression_findings, sp, bundle, catalog)
@@ -344,6 +377,9 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
         path = str(Path(regression_findings).resolve())
         protocol['version'] = regression.VERSION
         protocol['regression_findings'] = {'path': path, 'sha256': supplemental_bindings[path]}
+    if resolve_cited_passages:
+        protocol['version'] = cited_passages.VERSION
+        protocol['passage_resolution'] = resolution
     repair.write(root/'protocol.json', protocol); repair.write(root/'initial.json', snapshot)
     load(root)
     return {'status': 'pending', 'max_rounds': remaining, 'findings': len(snapshot['findings'])}
@@ -351,7 +387,13 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
 
 def load(root):
     p = base.read(root/'protocol.json')
-    if p['version'] not in (VERSION, regression.VERSION) or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
+    if p['version'] not in (VERSION, regression.VERSION, cited_passages.VERSION) or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
+    if p['version'] == cited_passages.VERSION:
+        if (not isinstance(p.get('passage_resolution'), dict) or not p.get('imported_proposal')
+                or p.get('new_experiment') or 'regression_findings' in p):
+            raise ValueError('Cited-passage resolution requires its manifest and original imported proposal')
+    elif 'passage_resolution' in p:
+        raise ValueError('Cited-passage resolution requires its explicit protocol version')
     if p['version'] == regression.VERSION:
         regression.fields(p.get('regression_findings'), ('path', 'sha256'), 'Regression findings binding')
     elif 'regression_findings' in p:
@@ -375,10 +417,23 @@ def load(root):
         if source['source_protocol'] != sp:
             raise ValueError('Regression findings original source protocol changed')
         regression.verify(p, base.read(root/'initial.json'), bundle, catalog, source, base.read(Path(p['seed'])/'protocol.json'))
+    if p['version'] == cited_passages.VERSION:
+        source = export_seed(Path(p['seed']), reuse_proposal=True)
+        initial = base.read(root/'initial.json')
+        if (source['source_protocol'] != sp or source['snapshot'] != initial
+                or source['imported_proposal'] != p['imported_proposal']):
+            raise ValueError('Resolved proposal differs from authenticated source handoff')
+        regression.budget(p, source, base.read(Path(p['seed'])/'protocol.json'))
+        imported = p['imported_proposal']
+        if p['source_bindings'].get(str(Path(imported['job'])/'output.json')) != imported['output_sha256']:
+            raise ValueError('Resolved proposal original output binding changed')
+        _, manifest = resolved_import(initial, imported, bundle, catalog)
+        if manifest != p['passage_resolution']:
+            raise ValueError('Cited-passage resolution manifest changed')
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
-def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=()):
+def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=(), passage_resolution=None):
     common = legacy.COMMON + '\nWRITING STANDARD\n' + writing
     if role == 'propose':
         instruction = '''Propose a bounded correction plan. Patch only allowlisted metadata; never regenerate financial observations or retrieval selections. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...],"claim_groups":[GROUP,...]}. At most 24 operations, one per target. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context targets text or basis and also has source_id, source_sha256 and old_text. A nonempty old_text must be one unique exact existing substring to replace. Empty old_text is allowed only to initialize an exactly empty target (or empty basis.text); code copies the hash-bound context source exactly, never inserts into nonempty text. The entire copied result must fit 4000 characters for text or 240 characters for basis. replace_text targets text only and has exactly one of two payloads: {value} replaces the entire hashed target, or {old_text,value} replaces one unique nonempty exact substring of that same target, preserving its prefix and suffix. With old_text, value may be empty to delete that span, but the resulting target must remain nonempty. The entire resulting target is limited to 4000 characters. The target hash is always checked; old_text is never ignored or treated as documentation. No other payload fields are allowed. set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
@@ -439,6 +494,17 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
                              extra_scope_ids=extra_scope_ids)
         data.update(candidate_sha256=base.digest(candidate), plan_sha256=base.digest(plan), plan=plan,
                     rendered_links={k:v for k,v in view.items() if k != 'report_body_html_excerpt'})
+        if passage_resolution is not None:
+            if passage_resolution['resolved_plan_sha256'] != base.digest(plan):
+                raise ValueError('Reviewer resolution provenance differs from effective plan')
+            data['proposal_resolution'] = copy.deepcopy(passage_resolution)
+            instruction += (' The saved author proposal contained empty passage lists. An explicitly authorized '
+                            'deterministic derivation filled only those lists with ALL catalog passages in each '
+                            'original explicit cited scope; proposal_resolution records the exact delta and hashes. '
+                            'No prose, citations, quotes, numeric observations or author decisions were altered. '
+                            'This source-location completion is not evidence of factual support or approval. '
+                            'Independently assess every operation, including removal of source-uncertainty notes; '
+                            'retain and consider the original provisional transcript annotations in supplied evidence.')
         instruction += (' This is a repair review after the initial comprehensive audit. Read the complete revised report for coherence and concise writing; '
                         'verify the complete correction batch and all repeated occurrences against the supplied original evidence. '
                         'Preserve independently verified unchanged observations and quotations. Report every material remaining defect together. '
@@ -454,6 +520,7 @@ def replay(root, p, bundle, catalog, writing):
     for round_no in range(p['max_rounds']):
         folder = root/'rounds'/str(round_no)
         plan = candidate = review = None
+        resolution = p.get('passage_resolution') if round_no == 0 else None
         for role in ('propose', 'review'):
             job = folder/role
             text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback) if role == 'propose' else None
@@ -467,7 +534,7 @@ def replay(root, p, bundle, catalog, writing):
                     raise ValueError('Imported proposal belongs to a different snapshot or role')
             elif role == 'review':
                 progress = review_loop.replay(job,
-                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, scopes),
+                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, scopes, resolution),
                     bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan), identities,
                     p['max_tokens'] - p.get('inherited_tokens', 0) - tokens,
                     min(p.get('max_prompt_chars', 350000), 350000), verify_job)
@@ -491,6 +558,12 @@ def replay(root, p, bundle, catalog, writing):
                 if not imported: tokens += result['receipt']['session']['usage']['totalTokens']
             if role == 'propose':
                 plan = result['content']
+                if resolution is not None:
+                    if not imported:
+                        raise ValueError('Only an authenticated imported proposal may resolve cited passages')
+                    plan, actual = cited_passages.resolve(plan, bundle, catalog, imported['output_sha256'])
+                    if actual != resolution:
+                        raise ValueError('Cited-passage resolution manifest changed')
                 try: candidate = apply(state, plan, bundle, catalog)
                 except (ValueError, KeyError, TypeError) as exc:
                     return {'status': 'invalid_patch', 'state': state, 'tokens': tokens, 'round': round_no, 'error': str(exc)}
@@ -543,9 +616,10 @@ def main():
     init.add_argument('--new-experiment', action='store_true', help='Explicit separately authorized test; preserves exhausted prior run')
     init.add_argument('--reuse-proposal', action='store_true', help='Reuse a verified pending proposal from a prior correction experiment; no new author call')
     init.add_argument('--regression-findings', help='Private source-bound supplemental audit findings JSON; pending independent review')
+    init.add_argument('--resolve-cited-passages', action='store_true', help='With --reuse-proposal only: complete exactly empty passage lists from all original explicitly cited scopes; independent review remains required')
     for name in ('advance', 'run', 'verify'): sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
-    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings) if args.command == 'init' else globals()[args.command](args.output)
+    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings, args.resolve_cited_passages) if args.command == 'init' else globals()[args.command](args.output)
     print(json.dumps(result))
 
 
