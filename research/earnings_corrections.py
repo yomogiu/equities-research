@@ -282,7 +282,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
     names = [f for f in Path(__file__).parent.glob('earnings_*.py')] + [Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol = {'version': VERSION, 'seed': str(seed), 'source_bindings': bound, 'source_protocol': sp,
                 'initial_sha256': base.digest(snapshot), 'code': [{'path': str(f), 'sha256': base.sha(f)} for f in names],
-                'model': list(MODEL), 'max_rounds': remaining, 'max_tokens': max_tokens, 'max_prompt_chars': 750000, 'imported_proposal': exported['imported_proposal'],
+                'model': list(MODEL), 'max_rounds': remaining, 'max_tokens': max_tokens, 'max_prompt_chars': 1500000, 'imported_proposal': exported['imported_proposal'],
                 'source_code': seed_protocol['code'] + seed_protocol.get('source_code', []),
                 'new_experiment': bool(new_experiment), 'prior_rounds': exported['used_rounds'],
                 'inherited_tokens': 0 if new_experiment else exported['spent_tokens']}
