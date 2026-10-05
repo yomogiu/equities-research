@@ -53,7 +53,9 @@ def prepare(root, packet_id, output, writing, authorization):
     if not facts['observations']:
         raise ValueError('No structured filing observations; financial preparation needs review')
     text = library.load_bytes(root, call['text_path'], call['text_sha256']).decode('utf-8')
-    index = transcript.index_transcript(text, {k: call[k] for k in ('document_id', 'text_sha256')})
+    call_raw = library.load_bytes(root, call['raw_path'], call['raw_sha256'])
+    index = transcript.index_publisher_transcript(
+        text, {k: call[k] for k in ('document_id', 'text_sha256', 'raw_sha256')}, call_raw)
     if not index['exchanges']:
         raise ValueError('Q&A boundaries need review before transcript-led analysis')
     # Keep provisional speaker/boundary uncertainty in the evidence for review.

@@ -125,13 +125,27 @@ def _runtime_paths():
     executable = shutil.which('prime-agent')
     if not executable:
         raise RuntimeError('Installed Prime Agent is required')
-    sdk = Path(executable).resolve().parents[2]
-    node = sdk.parents[2] / 'bin' / 'node'
-    if not node.exists():
-        node = Path(shutil.which('node') or '')
-    if not (sdk / 'dist/index.js').is_file() or not node.is_file():
-        raise RuntimeError('Prime SDK or Node runtime unavailable')
-    return node, sdk
+    launcher = Path(executable).absolute()
+    resolved = launcher.resolve()
+    # A standalone CLI update can replace an npm bin symlink while leaving the
+    # installed SDK beside that bin directory. Inspect only these installation
+    # locations; never search user configuration or authentication directories.
+    candidates = [resolved.parents[2]] if len(resolved.parents) > 2 else []
+    candidates.append(launcher.parent.parent / 'lib/node_modules/prime-agent')
+    for sdk in dict.fromkeys(candidates):
+        try:
+            package = read(sdk / 'package.json')
+        except (OSError, ValueError):
+            continue
+        if package.get('name') != 'prime-agent' or not all((sdk / relative).is_file() for relative in (
+                'dist/index.js', 'node_modules/@earendil-works/pi-ai/dist/oauth.js')):
+            continue
+        node = sdk.parents[2] / 'bin/node' if len(sdk.parents) > 2 else Path()
+        if not node.is_file():
+            node = Path(shutil.which('node') or '')
+        if node.is_file():
+            return node, sdk.resolve()
+    raise RuntimeError('Prime SDK or Node runtime unavailable; the standalone CLI also requires an installed Prime SDK')
 
 
 def verify_job(job_path):
@@ -269,6 +283,10 @@ def main():
         result = subprocess.run([str(node), str(HELPER), str(sdk), directory, '--probe'],
                                 capture_output=True, text=True, timeout=30)
         if result.returncode:
+            failure = Path(directory) / 'runtime-failure.json'
+            stage = read(failure).get('stage') if failure.is_file() else None
+            if stage == 'auth_storage':
+                raise RuntimeError('Prime credential storage unavailable; allow its normal local auth-store lock')
             raise RuntimeError('Prime registration probe failed')
         print(json.dumps(json.loads(result.stdout), indent=2))
 

@@ -49,13 +49,18 @@ def input_view(manifest, value=None):
     value = value or catalog(manifest)
     view = evidence.transcript_view(manifest)
     turns = sorted(view['index']['turns'], key=lambda t: t['start'])
-    gaps, cursor = [], 0
+    call_span = view['index'].get('call_span', {'start': 0, 'end': len(view['text'])})
+    call_start, call_end = call_span['start'], call_span['end']
+    if not 0 <= call_start < call_end <= len(view['text']) or any(
+            not call_start <= t['start'] < t['end'] <= call_end for t in turns):
+        raise ValueError('Invalid source-bound call span')
+    gaps, cursor = [], call_start
     for turn in turns:
         if cursor < turn['start']:
             gaps.append({'start': cursor, 'end': turn['start'], 'text': view['text'][cursor:turn['start']]})
         cursor = turn['end']
-    if cursor < len(view['text']):
-        gaps.append({'start': cursor, 'end': len(view['text']), 'text': view['text'][cursor:]})
+    if cursor < call_end:
+        gaps.append({'start': cursor, 'end': call_end, 'text': view['text'][cursor:call_end]})
     # Group by original scope and use columnar rows to avoid repeating long source
     # identifiers/provenance thousands of times in the model's input. Full offsets
     # and hashes remain in the frozen catalogue and materialized quote artifacts.
@@ -66,7 +71,8 @@ def input_view(manifest, value=None):
         groups[-1]['rows'].append([p['passage_id'], p['text']])
     return {'columns': ['passage_id', 'text'], 'passage_groups': groups,
             'transcript_index': view['index'], 'unassigned_transcript_spans': gaps,
-            'notice': 'Passages plus unassigned spans retain all original text. Passage boundaries are mechanical; read adjacent passages and the complete speaker turn for context. Select only passage_id; never retype quotes or offsets. Unassigned spans are context, not selectable quotations.'}
+            'excluded_transcript_spans': view['index'].get('excluded_spans', []),
+            'notice': 'Passages plus unassigned spans retain all original call text; explicitly bounded publisher material outside the call is excluded from this view and remains in the archived source. Passage boundaries are mechanical; read adjacent passages and the complete speaker turn for context. Select only passage_id; never retype quotes or offsets. Unassigned spans are context, not selectable quotations.'}
 
 
 def quote_slots(role, out):

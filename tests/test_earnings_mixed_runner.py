@@ -8,6 +8,50 @@ from unittest.mock import patch
 from research import earnings_mixed_runner as runner
 
 
+class RuntimeDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.prefix = Path(self.temp.name) / 'node-version'
+        self.launcher = self.prefix / 'bin/prime-agent'
+        self.launcher.parent.mkdir(parents=True)
+        self.node = self.prefix / 'bin/node'
+        self.node.touch()
+        self.sdk = self.prefix / 'lib/node_modules/prime-agent'
+        for name in ('dist/index.js', 'dist/cli.js', 'node_modules/@earendil-works/pi-ai/dist/oauth.js'):
+            p = self.sdk / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.touch()
+        (self.sdk / 'package.json').write_text('{"name":"prime-agent","version":"0.0.0-test"}')
+
+    def discover(self):
+        with patch.object(runner.shutil, 'which', side_effect=lambda name: str(self.launcher) if name == 'prime-agent' else None):
+            return runner._runtime_paths()
+
+    def test_npm_cli_layout(self):
+        self.launcher.symlink_to(self.sdk / 'dist/cli.js')
+        self.assertEqual(self.discover(), (self.node, self.sdk.resolve()))
+
+    def test_standalone_cli_keeps_existing_npm_sdk(self):
+        binary = Path(self.temp.name) / 'releases/fake/prime-agent'
+        binary.parent.mkdir(parents=True)
+        binary.touch()
+        self.launcher.symlink_to(binary)
+        self.assertEqual(self.discover(), (self.node, self.sdk.resolve()))
+
+    def test_unrelated_package_rejected(self):
+        self.launcher.touch()
+        (self.sdk / 'package.json').write_text('{"name":"different-package"}')
+        with self.assertRaisesRegex(RuntimeError, 'Prime SDK'):
+            self.discover()
+
+    def test_missing_oauth_dependency_rejected(self):
+        self.launcher.touch()
+        (self.sdk / 'node_modules/@earendil-works/pi-ai/dist/oauth.js').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'Prime SDK'):
+            self.discover()
+
+
 class RunnerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
