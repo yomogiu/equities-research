@@ -23,6 +23,7 @@ from research import earnings_compact_evidence as evidence
 from research import earnings_passages as passages
 from research import earnings_repair_context as context
 from research import earnings_repair_review as review_loop
+from research import earnings_regression_findings as regression
 from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'deterministic-corrections-v1'
@@ -259,7 +260,7 @@ from research import earnings_experiment as b
 from research import earnings_report_repair as r
 from research import earnings_passage_pipeline as p
 root=Path(sys.argv[1]); protocol=b.read(root/'protocol.json'); imported=None; spent_tokens=0
-if protocol.get('version') == 'deterministic-corrections-v1':
+if protocol.get('version') in ('deterministic-corrections-v1', 'deterministic-corrections-regression-v1'):
     from research import earnings_corrections as c
     cp,bundle,catalog,writing=c.load(root)
     progress=c.replay(root,cp,bundle,catalog,writing)
@@ -291,22 +292,37 @@ print(json.dumps({'snapshot':snapshot,'source_protocol':sp,'used_rounds':used_ro
 '''
 
 
-def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=False, reuse_proposal=False):
-    seed = Path(seed).resolve(); root = Path(output).resolve()
-    if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
-        raise ValueError('Use a new private directory outside code and the seed')
-    if type(max_rounds) is not int or not 1 <= max_rounds <= 2 or type(max_tokens) is not int or max_tokens <= 0:
-        raise ValueError('One or two rounds and a positive token budget required')
+def export_seed(seed, reuse_proposal=False):
+    """Authenticate and replay a seed using its own frozen verifier checkout."""
     sp = base.read(seed/'protocol.json')
     for record in sp['code']:
         if base.sha(record['path']) != record['sha256']: raise ValueError('Frozen source code changed')
     code = Path(next(c['path'] for c in sp['code'] if c['path'].endswith('/earnings_passage_pipeline.py'))).parent.parent
     process = subprocess.run([sys.executable, '-c', EXPORT, str(seed), 'reuse' if reuse_proposal else 'fresh'], cwd=code, env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
-    exported = json.loads(process.stdout); snapshot = exported['snapshot']; sp = exported['source_protocol']
+    return json.loads(process.stdout)
+
+
+def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=False, reuse_proposal=False, regression_findings=None):
+    seed = Path(seed).resolve(); root = Path(output).resolve()
+    if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
+        raise ValueError('Use a new private directory outside code and the seed')
+    if type(max_rounds) is not int or not 1 <= max_rounds <= 2 or type(max_tokens) is not int or max_tokens <= 0:
+        raise ValueError('One or two rounds and a positive token budget required')
+    if regression_findings is not None and (reuse_proposal or new_experiment):
+        raise ValueError('Regression findings cannot reuse a proposal or reset the experiment')
+    exported = export_seed(seed, reuse_proposal)
+    snapshot = exported['snapshot']; sp = exported['source_protocol']
     if reuse_proposal and not exported['imported_proposal']: raise ValueError('No reusable staged proposal')
     remaining = max_rounds if new_experiment else min(max_rounds, 2-exported['used_rounds'])
     if remaining <= 0: raise ValueError('Prior correction budget exhausted; a separately authorized experiment requires --new-experiment')
     if set(snapshot['artifacts']) != {'financial', 'retrieval', 'analysis'}: raise ValueError('Complete prepared report required')
+    supplemental_bindings = {}
+    if regression_findings is not None:
+        bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+        additions, supplemental_bindings = regression.read(regression_findings, sp, bundle, catalog)
+        snapshot = regression.append(snapshot, additions)
+        regression.budget({'prior_rounds': exported['used_rounds'], 'inherited_tokens': exported['spent_tokens'],
+                           'max_rounds': remaining, 'max_tokens': max_tokens}, exported, base.read(seed/'protocol.json'))
     if not snapshot['findings']: raise ValueError('No unresolved review findings')
     root.mkdir(parents=True, exist_ok=True)
     if any(root.iterdir()): raise ValueError('New correction directory must be empty')
@@ -316,6 +332,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
     bound = {str(f): base.sha(f) for d in dirs for f in d.rglob('*') if f.is_file() and not f.name.startswith('.')}
     seed_protocol = base.read(seed/'protocol.json')
     bound.update(seed_protocol.get('source_bindings', {}))
+    bound.update(supplemental_bindings)
     names = [f for f in Path(__file__).parent.glob('earnings_*.py')] + [Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol = {'version': VERSION, 'seed': str(seed), 'source_bindings': bound, 'source_protocol': sp,
                 'initial_sha256': base.digest(snapshot), 'code': [{'path': str(f), 'sha256': base.sha(f)} for f in names],
@@ -323,6 +340,10 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
                 'source_code': seed_protocol['code'] + seed_protocol.get('source_code', []),
                 'new_experiment': bool(new_experiment), 'prior_rounds': exported['used_rounds'],
                 'inherited_tokens': 0 if new_experiment else exported['spent_tokens']}
+    if regression_findings is not None:
+        path = str(Path(regression_findings).resolve())
+        protocol['version'] = regression.VERSION
+        protocol['regression_findings'] = {'path': path, 'sha256': supplemental_bindings[path]}
     repair.write(root/'protocol.json', protocol); repair.write(root/'initial.json', snapshot)
     load(root)
     return {'status': 'pending', 'max_rounds': remaining, 'findings': len(snapshot['findings'])}
@@ -330,7 +351,11 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
 
 def load(root):
     p = base.read(root/'protocol.json')
-    if p['version'] != VERSION or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
+    if p['version'] not in (VERSION, regression.VERSION) or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
+    if p['version'] == regression.VERSION:
+        regression.fields(p.get('regression_findings'), ('path', 'sha256'), 'Regression findings binding')
+    elif 'regression_findings' in p:
+        raise ValueError('Regression findings require their supplemental protocol version')
     for c in p['code']:
         if base.sha(c['path']) != c['sha256'] or base.sha(Path(__file__).parent/Path(c['path']).name) != c['sha256']:
             raise ValueError('Correction code changed')
@@ -345,6 +370,11 @@ def load(root):
     bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
     if base.digest(catalog) != base.digest(base.read(Path(sp['evidence_manifest']).parent.parent/'passages.json')):
         raise ValueError('Original passages changed')
+    if p['version'] == regression.VERSION:
+        source = export_seed(Path(p['seed']))
+        if source['source_protocol'] != sp:
+            raise ValueError('Regression findings original source protocol changed')
+        regression.verify(p, base.read(root/'initial.json'), bundle, catalog, source, base.read(Path(p['seed'])/'protocol.json'))
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
@@ -512,9 +542,10 @@ def main():
     init.add_argument('--max-rounds', type=int, default=2); init.add_argument('--max-tokens', type=int, default=600000)
     init.add_argument('--new-experiment', action='store_true', help='Explicit separately authorized test; preserves exhausted prior run')
     init.add_argument('--reuse-proposal', action='store_true', help='Reuse a verified pending proposal from a prior correction experiment; no new author call')
+    init.add_argument('--regression-findings', help='Private source-bound supplemental audit findings JSON; pending independent review')
     for name in ('advance', 'run', 'verify'): sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
-    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal) if args.command == 'init' else globals()[args.command](args.output)
+    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings) if args.command == 'init' else globals()[args.command](args.output)
     print(json.dumps(result))
 
 

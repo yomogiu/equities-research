@@ -133,7 +133,7 @@ print(json.dumps({'status':v['status'],'snapshot':v['state'],'source_protocol':p
 
 def export_seed(seed):
     p = base.read(seed/'protocol.json')
-    if p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', 'targeted-remediation-v1', VERSION}:
+    if p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, 'targeted-remediation-v1', VERSION}:
         raise ValueError('A stopped corrections or remediation seed is required')
     for item in p['code']:
         if base.sha(item['path']) != item['sha256']: raise ValueError('Seed verifier code changed')
