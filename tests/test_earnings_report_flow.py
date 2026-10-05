@@ -259,6 +259,7 @@ class PreparedSidecarTests(unittest.TestCase):
         self.writing=self.root/'writing.txt';self.writing.write_text('Fictional concise writing standard')
         def document(name,kind):
             return {'document_id':source['document_id'] if kind=='transcript' else 'fake-filing',
+                    'catalog_document_id':source['document_id'] if kind=='transcript' else 'catalog-filing',
                     'kind':kind,'period':'FY2040-Q1','completeness':'full',
                     'source_url':'https://example.invalid/'+name,'raw_path':name+'.html','text_path':name+'.txt',
                     'raw_sha256':base.sha(self.root/(name+'.html')),'text_sha256':base.sha(self.root/(name+'.txt'))}
@@ -285,6 +286,39 @@ class PreparedSidecarTests(unittest.TestCase):
         self.assertEqual(bundle['transcript_index']['reviewed_sidecar']['review']['sha256'],self.selection['review_sha256'])
         (self.root/'mapping.json').write_text('{}')
         with self.assertRaisesRegex(ValueError,'Frozen input changed'):base.validate_case(case)
+
+    def test_distinct_packet_and_catalog_ids_prepare_freeze_and_build_role_inputs(self):
+        call=self.packet['documents'][1]
+        call['document_id']='qualified-packet-call-id'
+        path=self.prepare(self.selection);case=base.read(path)
+        index=base.read(case['transcript_index_path'])
+        self.assertEqual(index['source']['document_id'],call['catalog_document_id'])
+        transcript_sources=[x for x in case['sources'] if x['kind']=='transcript']
+        self.assertEqual(len(transcript_sources),2)
+        for source in transcript_sources:
+            self.assertEqual(source['document_id'],call['catalog_document_id'])
+            self.assertEqual(source['packet_document_id'],call['document_id'])
+            self.assertEqual(source['catalog_document_id'],call['catalog_document_id'])
+        pipe.freeze(path,self.root/'frozen',self.writing,deterministic_corrections=True,signals=True)
+        _,bundle,catalog=pipe.load(self.root/'frozen')
+        fid=bundle['financial']['observations'][0]['id']
+        did=bundle['documents']['chunks'][0]['id']
+        quote_ids=[p['passage_id'] for p in catalog['passages'] if p['text'].strip()][:4]
+        deps={'financial':{'rows':[{'label':'Fictional revenue','fact_ids':[fid]}],'context':[],'gaps':[]},
+              'retrieval':{'selected_document_ids':[did],'exchange_coverage':[],'document_findings':[],'quotes':[{'passage_id':x} for x in quote_ids]},
+              'analysis':{'title':'Fictional report','opening':'Fictional source-backed overview.',
+                          'opening_citations':[did],'findings':[],'next_tests':[],'scope':'Fictional scope'}}
+        for role in ('financial','retrieval','analysis','review'):
+            prompt=pipe.prompt(role,bundle,self.writing.read_text(),deps,[],catalog)
+            self.assertIn('fake-packet',prompt)
+        self.assertEqual(self.packet['documents'][1]['document_id'],'qualified-packet-call-id')
+
+    def test_sidecar_requires_explicit_catalog_identity_and_rejects_wrong_identity(self):
+        call=self.packet['documents'][1];call.pop('catalog_document_id')
+        with self.assertRaisesRegex(ValueError,'catalog document identity'):self.prepare(self.selection)
+        call['catalog_document_id']='another-catalog-document'
+        with self.assertRaisesRegex(ValueError,'source identity mismatch'):self.prepare(self.selection)
+        self.assertFalse((self.root/'prepared').exists())
 
     def test_mismatched_sidecar_fails_before_output(self):
         selection=copy.deepcopy(self.selection);selection['text_sha256']='wrong'

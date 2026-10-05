@@ -64,6 +64,13 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
     current_catalog = library.catalog(root)
     issuer_name = current_catalog['issuers'][packet['issuer_id']].get('issuer')
     call_source = {k: call[k] for k in ('document_id', 'text_sha256', 'raw_sha256')}
+    if reviewed_sidecar is not None:
+        # Native mapping receipts identify the durable catalog document. Packet
+        # document_id is a separate qualified-packet identity; keep both bound.
+        catalog_document_id = call.get('catalog_document_id')
+        if not isinstance(catalog_document_id, str) or not catalog_document_id:
+            raise ValueError('Reviewed transcript requires explicit catalog document identity')
+        call_source['document_id'] = catalog_document_id
     call_source.update(issuer_id=packet['issuer_id'], catalog_id=current_catalog['catalog_id'],
                        issuer_names=[issuer_name] if isinstance(issuer_name, str) else [])
     mapping_artifacts = []
@@ -92,9 +99,13 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
             path = library.resolve(root, doc[name+'_path'])
             if path.suffix == '.gz':
                 raise ValueError('Compressed sources require a separately bound uncompressed representation')
-            sources.append({'document_id': doc['document_id'], 'kind': 'filing' if doc['kind'] in ('periodic_filing', 'annual_background') else doc['kind'],
+            evidence_id = call_source['document_id'] if doc is call else doc['document_id']
+            sources.append({'document_id': evidence_id, 'kind': 'filing' if doc['kind'] in ('periodic_filing', 'annual_background') else doc['kind'],
                             'representation': representation, 'path': str(path),
                             'sha256': doc[name+'_sha256'], 'url': doc['source_url']})
+            if doc is call and reviewed_sidecar is not None:
+                sources[-1]['packet_document_id'] = doc['document_id']
+                sources[-1]['catalog_document_id'] = call_source['document_id']
     artifacts = [{'path': str(p), 'sha256': base.sha(p)} for p in (output/'financial.json', output/'transcript-index.json', writing)]
     if reviewed_sidecar is not None:
         selection_path = output/'transcript-sidecar-selection.json'
