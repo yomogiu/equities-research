@@ -52,7 +52,7 @@ class RemediationTests(PassageFixture, unittest.TestCase):
         state = self.state(); plan = self.plan(state)
         auth = {'kind': 'targeted_remediation', 'enabled': True, 'authorization_id': 'explicit-fake-authority',
                 'source_protocol_sha256': base.sha(self.seed/'protocol.json'), 'first_plan_sha256': base.digest(plan),
-                'max_review_attempts': attempts, 'max_tokens': 10000, 'reason': 'Explicit fictional new edition',
+                'max_review_attempts': attempts, 'max_tokens': 600000, 'reason': 'Explicit fictional new edition',
                 'output_path': str(self.root/'remediation')}
         exported = {'status': 'blocked', 'snapshot': state, 'source_protocol': sp, 'prior_rounds': 2, 'prior_tokens': 54321}
         output = self.root/'remediation'
@@ -73,6 +73,21 @@ class RemediationTests(PassageFixture, unittest.TestCase):
                   'receipt': {'session': {'id': session, 'usage': {'totalTokens': 123}}}}
         m.repair.write(job/'output.json', result)
         return result
+
+    def test_completed_overbudget_review_is_validated_and_visible_without_acceptance(self):
+        output = self.edition(); result = self.complete(output)
+        # Simulated authenticated runtime receipt, never model-supplied usage.
+        result['receipt']['session']['usage']['totalTokens'] = 600001
+        before = base.read(output/'initial.json')
+        with patch.object(m, 'verify_job', return_value=result), patch.object(m, 'run_role') as worker:
+            progress = m.advance(output, execute=True)
+        self.assertEqual(progress['status'], 'budget_exhausted')
+        self.assertEqual(progress['substantive_review']['verdict'], 'pass')
+        self.assertEqual(progress['substantive_review']['validation'], 'valid')
+        self.assertEqual(progress['budget_compliance']['overrun_tokens'], 1)
+        self.assertFalse((output/'result.json').exists())
+        self.assertEqual(base.read(output/'initial.json'), before)
+        worker.assert_not_called()
 
     def test_metadata_patch_preserves_facts_quotes_membership_and_unrelated_fields(self):
         state = self.state(); original = copy.deepcopy(state)

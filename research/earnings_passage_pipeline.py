@@ -13,6 +13,7 @@ from research import earnings_experiment as base
 from research import earnings_compact_evidence as evidence
 from research import earnings_mixed_pipeline as legacy
 from research import earnings_passages as passages
+from research import earnings_qa_grounding as grounding
 from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'luna6-sol-presentation-v4'
@@ -29,13 +30,18 @@ QUOTE_RULE = ('Quotations are selected ONLY as {"passage_id":"exact catalogue ID
 def validate(role, out, bundle, catalog):
     hydrated = passages.hydrate(role, out, catalog)
     legacy.validate_output(role, hydrated, bundle)
+    if role == 'retrieval':
+        grounding.require_analysis_ready(out, bundle, catalog)
     return hydrated
 
 
 def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=None, efficient=False, extra_scope_ids=()):
+    if role in ('analysis', 'review') and 'retrieval' in deps:
+        grounding.require_analysis_ready(deps['retrieval'], bundle, catalog)
+    grounding_prompt = grounding.prompt_contract(role, bundle)
     if efficient and issues is None:
         from research import earnings_efficient_evidence as reuse
-        return reuse.prompt(role, bundle, writing, deps, feedback, catalog, extra_scope_ids)
+        return reuse.prompt(role, bundle, writing, deps, feedback, catalog, extra_scope_ids) + grounding_prompt
     if issues is not None:
         view = passages.repair_view(role, prior, issues, catalog)
         if view['unresolved_paths']:
@@ -64,7 +70,7 @@ def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=No
         case = base.read(bundle['manifest']['case_path'])
         return head + '\n\nFROZEN EVIDENCE / ARTIFACTS\n' + legacy.packed({
             'case_id': case['case_id'], 'scope_notes': case['scope_notes'],
-            'source_catalogue': passages.input_view(bundle['manifest'], catalog)})
+            'source_catalogue': passages.input_view(bundle['manifest'], catalog)}) + grounding_prompt
     text = legacy.prompt_for(role, bundle, writing, hydrated, feedback)
     if role == 'analysis':
         text = text.replace('"quotes":[{"scope_id":"EXACT SOURCE ID","text":"exact substring"}]',
@@ -76,7 +82,7 @@ def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=No
         text += '\n\nRENDERING CONTRACT\nCode materializes selected quotations and inserts displayed citation brackets. '
         text += (' Complete one comprehensive audit before returning: reconcile every repeated claim across financial context, retrieval summaries and analysis; verify guidance ranges, conditions and accounting basis; inspect material coverage and concise writing. Return the complete actionable correction batch, with every affected occurrence and specific required edit. Separate factual defects from optional additions; do not withhold known findings for later rounds. ')
         text += 'Judge quote relevance and context against original sources; do not charge renderer-added brackets as an author-formatting defect.'
-    return text
+    return text + grounding_prompt
 
 
 def bounded_patch(role, prior, patch, catalog):
@@ -117,21 +123,16 @@ def repair_handoff(root, deps, prior, issues, review, catalog, refusals=None):
     return None
 
 
-def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False):
+def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False, qa_grounding=True):
     if repair_loop and deterministic_corrections:
         raise ValueError("Choose one correction strategy")
     root = Path(output).resolve(); root.mkdir(parents=True, exist_ok=True)
     manifest = evidence.prepare(case_path, root / 'evidence')
     base.save(root / 'passages.json', passages.catalog(manifest))
-    names = ('earnings_passage_pipeline.py', 'earnings_passages.py', 'earnings_mixed_pipeline.py',
-             'earnings_compact_evidence.py', 'earnings_experiment.py', 'earnings_mixed_runner.py',
-             'earnings_mixed_prime.mjs', 'earnings_financial_display.py')
-    if deterministic_corrections:
-        names += ('earnings_corrections.py', 'earnings_report_repair.py')
-    if signals:
-        names += ('earnings_signals.py', 'earnings_report_repair.py')
-    if efficient:
-        names += ('earnings_efficient_evidence.py', 'earnings_financial_context.py', 'earnings_repair_context.py')
+    # Every new freeze binds imported helpers, including opt-out runs whose
+    # validation still imports the grounding module. Legacy load is unchanged.
+    names = tuple(sorted(p.name for p in Path(__file__).parent.glob('earnings_*')
+                         if p.suffix in ('.py', '.mjs')))
     protocol = {'report_signals': bool(signals), 'version': EFFICIENT_VERSION if efficient else VERSION, 'repair_loop': bool(repair_loop), 'deterministic_corrections': bool(deterministic_corrections), 'case_path': str(Path(case_path).resolve()),
                 'case_sha256': base.sha(case_path), 'evidence_manifest': str(root / 'evidence/manifest.json'),
                 'evidence_sha256': base.sha(root / 'evidence/manifest.json'),
@@ -141,6 +142,11 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
                 'code': [{'path': str(Path(__file__).parent / n), 'sha256': base.sha(Path(__file__).parent / n)} for n in names]}
     if efficient:
         protocol['evidence_reuse'] = copy.deepcopy(EFFICIENT_POLICY)
+    if qa_grounding:
+        qa_index = grounding.build(evidence.load_bundle(manifest), base.read(root / 'passages.json'))
+        base.save(root / 'qa-grounding.json', qa_index)
+        protocol.update(qa_grounding=grounding.VERSION, qa_grounding_path=str(root / 'qa-grounding.json'),
+                        qa_grounding_sha256=base.sha(root / 'qa-grounding.json'))
     base.save(root / 'protocol.json', protocol)
     return protocol
 
@@ -161,6 +167,7 @@ def load(root):
     catalog = passages.catalog(p['evidence_manifest'])
     if catalog != base.read(root / 'passages.json'):
         raise ValueError('Passage catalogue differs from original evidence')
+    grounding.attach(root, p, bundle, catalog)
     return p, bundle, catalog
 
 
@@ -492,12 +499,14 @@ def main():
     f = sub.add_parser('freeze'); f.add_argument('case'); f.add_argument('output'); f.add_argument('writing'); f.add_argument('--repair-loop', action='store_true'); f.add_argument('--deterministic-corrections', action='store_true')
     f.add_argument('--signals', action=argparse.BooleanOptionalAction, default=True,
                    help='Add independently reviewed signals after acceptance (default: enabled; --no-signals opts out)')
+    f.add_argument('--qa-grounding', action=argparse.BooleanOptionalAction, default=True,
+                   help='Bind retrieval to indexed Q&A membership before analysis (new freezes only)')
     f.add_argument('--efficient', action='store_true', help='Opt into source-bound role evidence reuse; leaves v4 defaults unchanged')
     for name in ('run', 'verify'):
         sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
     if args.command == 'freeze':
-        freeze(args.case, args.output, args.writing, args.repair_loop, args.deterministic_corrections, args.signals, efficient=args.efficient); print('Frozen passage-selection protocol')
+        freeze(args.case, args.output, args.writing, args.repair_loop, args.deterministic_corrections, args.signals, efficient=args.efficient, qa_grounding=args.qa_grounding); print('Frozen passage-selection protocol')
     else:
         result = (run if args.command == 'run' else verify)(args.output)
         summary = {k: result[k] for k in ('status', 'correction_rounds', 'wall_seconds')}

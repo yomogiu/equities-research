@@ -138,7 +138,7 @@ def occurrence_inventory(snapshot):
         if isinstance(value, dict):
             own = value.get('citations', citations)
             for key, child in value.items():
-                if key in ('quotes', 'citations', 'opening_citations', 'selected_document_ids') or key.endswith('_id'):
+                if key in ('quotes', 'citations', 'opening_citations', 'selected_document_ids', 'question_passage_ids', 'answer_passage_ids', 'continuation_exchange_ids', 'grounding_status', 'grounding_notes') or key.endswith('_id'):
                     continue
                 visit(child, path + [key], value.get('opening_citations', own) if key == 'opening' else own)
         elif isinstance(value, list):
@@ -172,6 +172,10 @@ def addressable_inventory(snapshot, bundle=None):
                            for i, row in enumerate(snapshot['artifacts'][role][section]) if 'citations' in row]
     paths = [['format', key] for key in ('basis', 'layout', 'tables')] + citation_paths
     paths += [['format', 'rows', key] for key in keys]
+    table_keys = snapshot.get('format', {}).get('tables', {})
+    if bundle is not None:
+        table_keys = repair.table_catalog(snapshot['artifacts']['financial'], bundle)
+    paths += [['format', 'tables', key] for key in table_keys]
     for path in paths:
         value = _get(snapshot, path)
         rows[tuple(path)] = {'path': path, 'text': json.dumps(value, ensure_ascii=False, sort_keys=True),
@@ -288,7 +292,7 @@ def _references(value):
                     scopes.update(child)
                 elif key in ('scope_id', 'exchange_id') and isinstance(child, str):
                     scopes.add(child)
-                elif key == 'passage_ids':
+                elif key in ('passage_ids', 'question_passage_ids', 'answer_passage_ids'):
                     pids.update(child)
                 elif key == 'passage_id' and isinstance(child, str):
                     pids.add(child)
@@ -469,21 +473,14 @@ def build(before, candidate, plan, bundle, catalog, rendered_report, writing, ex
     deltas = []
     before_rows = {tuple(r['path']): r for r in occurrence_inventory(before)}
     after_rows = {tuple(r['path']): r for r in occurrence_inventory(candidate)}
-    normalized_plan = copy.deepcopy(plan)
-    if any('path' not in op for op in normalized_plan['operations']):
-        from research import earnings_corrections as corrections
-        registry = corrections.registry(before, bundle)['targets']
-        for op in normalized_plan['operations']:
-            if 'path' not in op:
-                if op.get('target_id') not in registry:
-                    raise ValueError('Unknown correction target ID')
-                op['path'] = registry[op['target_id']]['path']
+    from research import earnings_corrections as corrections
+    normalized_plan = corrections.normalize_plan(before, plan, bundle)
     for op in normalized_plan['operations']:
         path = op['path']
         old, new = _get(before, path), _get(candidate, path)
         deltas.append({'id': op['id'], 'path': path, 'before': old, 'after': new,
                        'before_sha256': base.digest(old), 'after_sha256': base.digest(new),
-                       'reason': op['reason']})
+                       'reason': op['reason'], 'parent_operation_id': op.get('parent_operation_id', op['id'])})
         for value in (op, before_rows.get(tuple(path), {}), after_rows.get(tuple(path), {}), old, new,
                       _get(before, path[:-1]) if len(path) > 3 else {},
                       _get(candidate, path[:-1]) if len(path) > 3 else {}):

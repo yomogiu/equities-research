@@ -197,7 +197,9 @@ def initialize(seed, output, plan, authorization):
                 'max_review_attempts': authorization['max_review_attempts'], 'max_tokens': authorization['max_tokens'], 'max_prompt_chars': MAX_PROMPT_CHARS}
     # Validate the plan against original evidence before creating any edition.
     sp = protocol['source_protocol']; bundle = evidence.load_bundle(sp['evidence_manifest'])
-    catalog = passages.catalog(bundle['manifest']); candidate = apply(snapshot, plan, bundle, catalog)
+    catalog = passages.catalog(bundle['manifest'])
+    corrections.qa_grounding.attach(None, sp, bundle, catalog)
+    candidate = apply(snapshot, plan, bundle, catalog)
     root.mkdir(parents=True, exist_ok=True)
     repair.write(root/'authorization.json', authorization); repair.write(root/'initial.json', snapshot)
     repair.write(root/'protocol.json', protocol)
@@ -234,6 +236,7 @@ def load(output):
                     (sp['evidence_manifest'], sp['evidence_sha256'])):
         if base.sha(name) != h: raise ValueError('Original evidence or writing changed')
     bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+    corrections.qa_grounding.attach(None, sp, bundle, catalog)
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
@@ -277,10 +280,19 @@ def _replay(root, p, bundle, catalog, writing):
             bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan),
             seen_sessions, p['max_tokens'] - tokens, p['max_prompt_chars'], verify_job)
         tokens += reviewed['tokens']
-        if reviewed['status'] != 'completed':
+        if reviewed['status'] != 'completed' and not reviewed.get('requires_adjudication'):
             return {**reviewed, 'state': state, 'tokens': tokens, 'review_attempts': number}
         result, job = reviewed['result'], reviewed['job']
-        state, status = corrections.adjudicate(state, candidate, plan, result['content'], bundle, catalog)
+        after, status = corrections.adjudicate(state, candidate, plan, result['content'], bundle, catalog)
+        if reviewed['status'] != 'completed':
+            substantive = {'verdict': result['content']['verdict'], 'validation': 'valid', 'outcome': status,
+                           'approve_patch': result['content']['approve_patch'], 'output_path': str(job/'output.json'),
+                           'output_sha256': base.sha(job/'output.json'), 'candidate_sha256': base.digest(candidate),
+                           'plan_sha256': base.digest(plan)}
+            return {**reviewed, 'state': state, 'tokens': tokens, 'review_attempts': number + 1,
+                    'substantive_review': substantive,
+                    'budget_compliance': corrections.budget.compliance(tokens, p['max_tokens'])}
+        state = after
         decision = {'before_sha256': plan['snapshot_sha256'], 'candidate_sha256': base.digest(candidate),
                     'plan_sha256': base.digest(plan), 'review_output_sha256': base.sha(job/'output.json'),
                     'patch_applied': result['content']['approve_patch'], 'status': status, 'after': state}
