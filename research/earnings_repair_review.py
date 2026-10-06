@@ -11,6 +11,7 @@ from pathlib import Path
 
 from research import earnings_experiment as base
 from research import earnings_repair_context as context
+from research import earnings_budget as budget
 
 VERSION = 'focused-repair-review-v1'
 
@@ -60,9 +61,11 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
             # A partial write, launch marker, journal, or request is uncertainty.
             # Never turn a missing output into an automatic duplicate launch.
             uncertain = job.exists() and any(job.iterdir())
-            status = ('launch_uncertain' if uncertain else 'budget_exhausted' if tokens >= remaining_tokens
-                      else 'prompt_too_large' if len(prompt) > max_prompt_chars else 'pending')
-            return {**response, 'status': status}
+            admission = budget.admission(prompt, remaining_tokens - tokens)
+            status = ('launch_uncertain' if uncertain else
+                      'prompt_too_large' if len(prompt) > max_prompt_chars else
+                      'budget_exhausted' if not admission['admitted'] else 'pending')
+            return {**response, 'status': status, 'budget_admission': admission}
         result = verifier(job)
         request = base.read(job/'request.json')
         saved_output = base.read(job/'output.json')
@@ -82,25 +85,32 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
             raise ValueError('Measured nonnegative integer token usage required')
         seen_sessions.add(sid)
         tokens += used
-        response.update(tokens=tokens, result=result)
-        if tokens > remaining_tokens:
-            return {**response, 'status': 'budget_exhausted'}
-        if len(prompt) > max_prompt_chars:
-            return {**response, 'status': 'prompt_too_large'}
+        compliance = budget.compliance(tokens, remaining_tokens)
+        response.update(tokens=tokens, result=result, budget_compliance=compliance)
         content = result.get('content')
         if (not isinstance(content, dict) or content.get('candidate_sha256') != candidate_sha256
                 or content.get('plan_sha256') != plan_sha256):
             raise ValueError('Review candidate or plan binding mismatch')
         if content.get('verdict') != 'needs_evidence':
             # The caller remains responsible for complete final review schema,
-            # rubric and operation adjudication; completed never means accepted.
-            return {**response, 'status': 'completed'}
+            # rubric and operation adjudication EVEN when measured usage or the
+            # prompt exceeds its limit. A saved verdict is never approval alone.
+            status = ('budget_exhausted' if not compliance['within_budget'] else
+                      'prompt_too_large' if len(prompt) > max_prompt_chars else 'completed')
+            return {**response, 'status': status, 'requires_adjudication': True,
+                    'review_verdict': content.get('verdict')}
         if set(content) != {'verdict', 'candidate_sha256', 'plan_sha256', 'requests'}:
             raise ValueError('Evidence request requires only verdict, candidate, plan, requests')
         try:
             expansion_data = context.evidence_response(bundle, catalog, content['requests'], extra_scopes)
         except context.ContextTooLarge as exc:
             return {**response, 'status': 'prompt_too_large', 'error': str(exc)}
+        # Validate even an over-budget evidence request before halting. Never
+        # hide malformed/foreign references behind a budget status.
+        if not compliance['within_budget']:
+            return {**response, 'status': 'budget_exhausted', 'review_verdict': 'needs_evidence'}
+        if len(prompt) > max_prompt_chars:
+            return {**response, 'status': 'prompt_too_large', 'review_verdict': 'needs_evidence'}
         if expansion == 1 or not expansion_data['scope_ids']:
             return {**response, 'status': 'evidence_insufficient',
                     'error': 'One evidence expansion exhausted; no final review verdict was obtained'}

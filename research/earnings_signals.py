@@ -162,6 +162,9 @@ def load(root):
     for path,digest in [(sp['case_path'],sp['case_sha256']),(sp['evidence_manifest'],sp['evidence_sha256']),(sp['writing_standard'],sp['writing_sha256'])]:
         if base.sha(path)!=digest:raise ValueError('Original source changed')
     b=evidence.load_bundle(sp['evidence_manifest']);cat=passages.catalog(b['manifest'])
+    from research import earnings_qa_grounding as grounding
+    grounding.attach(None, sp, b, cat)
+    grounding.require_analysis_ready(state['artifacts']['retrieval'], b, cat)
     return p,state,b,cat,Path(sp['writing_standard']).read_text()
 
 
