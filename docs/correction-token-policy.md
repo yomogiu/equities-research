@@ -31,3 +31,15 @@ not change admission, the uncapped correction policy, or the two-round limit.
 Use these counts to compare prompt sizes and compaction. Actual usage receipts
 remain authoritative for runtime framing, generated reasoning/output, caching,
 and repeated calls. See https://developers.openai.com/api/docs/guides/token-counting.
+
+New role executions write `token-estimate.json` before launch and bind its hash
+in `launch.json`. Successful `execution.json` records `token_accounting` alongside
+the authenticated session usage, separating estimated prompt tokens, recorded
+input including cache, output and total. Replay verifies these bindings without
+recounting with a potentially different tokenizer version.
+
+Run the Python worker from an environment with the optional tokenizer requirement
+installed for tiktoken counts. Unmapped aliases explicitly assume `o200k_base`.
+If the dependency or tokenizer cache is unavailable, a labelled bytes/4 estimate
+is recorded. Neither method blocks a call. Failed calls retain their preflight
+estimate; missing actual usage remains unavailable, never inferred to be zero.
