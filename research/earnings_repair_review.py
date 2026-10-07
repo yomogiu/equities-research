@@ -28,7 +28,7 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
     """
     if not isinstance(seen_sessions, set):
         raise ValueError('Replay requires a mutable set of prior session IDs')
-    if type(remaining_tokens) is not int or type(max_prompt_chars) is not int or max_prompt_chars <= 0:
+    if (remaining_tokens is not None and type(remaining_tokens) is not int) or type(max_prompt_chars) is not int or max_prompt_chars <= 0:
         raise ValueError('Integer token budget and positive prompt bound required')
     if not isinstance(bindings, dict) or not isinstance(model, (list, tuple)) or len(model) != 2:
         raise ValueError('Exact bindings and model/effort pair required')
@@ -61,7 +61,7 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
             # A partial write, launch marker, journal, or request is uncertainty.
             # Never turn a missing output into an automatic duplicate launch.
             uncertain = job.exists() and any(job.iterdir())
-            admission = (admission_fn or budget.admission)(prompt, remaining_tokens - tokens)
+            admission = (admission_fn or budget.admission)(prompt, budget.remaining(remaining_tokens, tokens))
             status = ('launch_uncertain' if uncertain else
                       'prompt_too_large' if len(prompt) > max_prompt_chars else
                       'budget_exhausted' if not admission['admitted'] else 'pending')

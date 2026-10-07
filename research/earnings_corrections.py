@@ -428,12 +428,12 @@ def resolved_import(snapshot, imported, bundle, catalog):
     return effective, manifest
 
 
-def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False):
+def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False):
     seed = Path(seed).resolve(); root = Path(output).resolve()
     if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
         raise ValueError('Use a new private directory outside code and the seed')
-    if type(max_rounds) is not int or not 1 <= max_rounds <= 2 or type(max_tokens) is not int or max_tokens <= 0:
-        raise ValueError('One or two rounds and a positive token budget required')
+    if type(max_rounds) is not int or not 1 <= max_rounds <= 2 or (max_tokens is not None and (type(max_tokens) is not int or max_tokens <= 0)):
+        raise ValueError('One or two rounds and a positive token budget or None required')
     if regression_findings is not None and (reuse_proposal or new_experiment):
         raise ValueError('Regression findings cannot reuse a proposal or reset the experiment')
     if resolve_cited_passages and (not reuse_proposal or new_experiment or regression_findings is not None):
@@ -681,7 +681,7 @@ def replay(root, p, bundle, catalog, writing):
                 progress = review_loop.replay(job,
                     lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, scopes, resolution),
                     bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan), identities,
-                    p['max_tokens'] - p.get('inherited_tokens', 0) - tokens,
+                    budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), tokens),
                     min(p.get('max_prompt_chars', 350000), 350000), verify_job)
                 tokens += progress['tokens']
                 if progress['status'] != 'completed' and not progress.get('requires_adjudication'):
@@ -689,7 +689,7 @@ def replay(root, p, bundle, catalog, writing):
                 result = progress['result']; job = progress['job']
             else:
                 if not (job/'output.json').exists():
-                    admission = budget.admission(text, p['max_tokens'] - p.get('inherited_tokens', 0) - tokens)
+                    admission = budget.admission(text, budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), tokens))
                     uncertain = job.exists() and any(job.iterdir())
                     status = ('launch_uncertain' if uncertain else
                               'prompt_too_large' if len(text) > p.get('max_prompt_chars', 750000) else
@@ -767,7 +767,7 @@ def advance(output):
         except BlockingIOError: return {'status': 'running'}
         p, b, c, w = load(root); next_job = replay(root, p, b, c, w)
         if next_job['status'] != 'pending': return verify(root)
-        admission = budget.admission(next_job['prompt'], p['max_tokens'] - p.get('inherited_tokens', 0) - next_job['tokens'])
+        admission = budget.admission(next_job['prompt'], budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), next_job['tokens']))
         if not admission['admitted']:
             return {'status': 'budget_exhausted', 'tokens': next_job['tokens'], 'budget_admission': admission}
         run_role(next_job['job'], next_job['prompt'], *MODEL, next_job['bindings'], timeout=1200)
@@ -783,7 +783,7 @@ def run(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__); sub = parser.add_subparsers(dest='command', required=True)
     init = sub.add_parser('init'); init.add_argument('seed'); init.add_argument('output')
-    init.add_argument('--max-rounds', type=int, default=2); init.add_argument('--max-tokens', type=int, default=600000)
+    init.add_argument('--max-rounds', type=int, default=2); init.add_argument('--max-tokens', type=int, default=None, help='Optional correction token cap; default unlimited with usage accounting')
     init.add_argument('--new-experiment', action='store_true', help='Explicit separately authorized test; preserves exhausted prior run')
     init.add_argument('--reuse-proposal', action='store_true', help='Reuse a verified pending proposal from a prior correction experiment; no new author call')
     init.add_argument('--regression-findings', help='Private source-bound supplemental audit findings JSON; pending independent review')
