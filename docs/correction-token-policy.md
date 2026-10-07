@@ -13,3 +13,21 @@ to correction authors and reviewers; it does not change signal-stage policies.
 Frozen runs retain their original code and policy. To unblock a previously capped
 run, initialize a new correction continuation with this code, retaining its source,
 used rounds and inherited usage. Never edit the old protocol or restart its calls.
+
+## Local token diagnostics
+
+Install the optional `requirements-token-counting.txt` in a separate environment,
+then run `python scripts/count_prompt_tokens.py /private/run --encoding o200k_base`.
+Directories scan only `prompt.txt`; files count their exact UTF-8 text. Use
+`--output /private/new-counts.json` to save a new receipt. Counts and hashes are
+returned, never prompt contents. Keep paths and diagnostics private.
+
+Use `--model` when tiktoken recognizes the model. Unknown aliases require an
+explicit `--encoding`; that is a disclosed assumption, not a verified model
+mapping. Tokenizer data may download on first use; text is encoded locally and
+is not sent to a model. No account login/API key is needed. This diagnostic does
+not change admission, the uncapped correction policy, or the two-round limit.
+
+Use these counts to compare prompt sizes and compaction. Actual usage receipts
+remain authoritative for runtime framing, generated reasoning/output, caching,
+and repeated calls. See https://developers.openai.com/api/docs/guides/token-counting.
