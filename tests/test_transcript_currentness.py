@@ -27,6 +27,26 @@ class CurrentnessTest(unittest.TestCase):
                         html(block='<span class="transcript-sentence">Unbound</span>'+BLOCK)]:
             with self.subTest(changed=changed),self.assertRaises(ValueError):scope.compare(html(),changed,URL)
 
+    def test_app_counts_only_and_legacy_strictness(self):
+        footer = ('<footer>Install The App<a href="https://apps.apple.com/us/app/stock-analysis-app/id6751272467">'
+                  '<span>4.9</span><span class="text-gray-400">6.9K</span></a>'
+                  '<a href="https://play.google.com/store/apps/details?id=com.stockanalysis.app">'
+                  '<span>4.9</span><span class="text-gray-400">7.5K</span></a></footer>').encode()
+        before = html().replace(b'<footer>Fictional attribution</footer>', footer)
+        after = before.replace(b'6.9K', b'7.0K').replace(b'7.5K', b'7.7K')
+        scope.compare(before, after, URL)
+        with self.assertRaises(ValueError):
+            scope.compare(before, after, URL, allow_app_counters=False)
+        for changed in [after.replace(b'4.9',b'4.8'), after.replace(b'dialogue',b'changed'),
+                        after.replace(b'Install The App',b'New business claim'),
+                        after.replace(b'id6751272467',b'id0000000000'),
+                        after.replace(b'7.7K',b'profit rose')]:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                scope.compare(before, changed, URL)
+        with self.assertRaises(ValueError):
+            scope.compare(before.replace(b'<footer>',b'<section>').replace(b'</footer>',b'</section>'),
+                          after.replace(b'<footer>',b'<section>').replace(b'</footer>',b'</section>'), URL)
+
     def fixture(self,root):
         old,new=html(),html('99 Pre-market:');text=source_parse.page(old,URL).text.encode()
         for name,body in [('old.html',old),('old.txt',text),('sources/test/objects/new.html',new)]:
