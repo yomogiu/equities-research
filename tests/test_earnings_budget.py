@@ -11,6 +11,14 @@ from research import earnings_experiment as base
 
 
 class AdmissionTests(unittest.TestCase):
+    def test_uncapped_admission_and_accounting(self):
+        self.assertTrue(budget.admission('x' * 720950, None)['admitted'])
+        self.assertIsNone(budget.remaining(None, 9000000, 300000))
+        result = budget.compliance(300000, None, 9000000)
+        self.assertTrue(result['within_budget'])
+        self.assertEqual(result['total_measured_tokens'], 9300000)
+        self.assertIsNone(result['max_tokens'])
+
     def test_utf8_reservation_includes_input_runtime_and_output_without_measured_usage(self):
         text = 'Fictional café 😀'
         reserved = len(text.encode('utf-8')) + budget.FRAMING_ALLOWANCE + budget.OUTPUT_ALLOWANCE
@@ -126,6 +134,35 @@ class BudgetCorrectionTests(PassageFixture, unittest.TestCase):
             results[str(job)] = {'content': value, 'receipt': {'session': {'id': 'fake-' + role,
                 'usage': {'totalTokens': 50 if role == 'propose' else 150}}}}
         return root, state, results
+
+    def test_uncapped_review_accepts_and_retains_large_inherited_usage(self):
+        root, _, results = self.completed_pair()
+        with patch.object(corrections, 'verify_job', side_effect=lambda job: results[str(job)]):
+            result = corrections.replay(root, {'max_rounds': 2, 'max_tokens': None,
+                                               'inherited_tokens': 9000000},
+                                        self.bundle, self.catalog, 'Fictional')
+        self.assertEqual(result['status'], 'accepted')
+        self.assertEqual(result['tokens'], 200)
+        self.assertEqual(result['round'], 1)
+
+    def test_uncapped_still_blocks_at_round_boundary(self):
+        root = self.root/'round-limit'; root.mkdir()
+        base.save(root/'initial.json', self.state())
+        # Zero remaining rounds is the replay boundary; initialization separately
+        # rejects any continuation whose two historical rounds are already used.
+        result = corrections.replay(root, {'max_rounds': 0, 'max_tokens': None},
+                                    self.bundle, self.catalog, 'Fictional')
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('round limit', result['error'])
+        self.assertFalse((root/'rounds').exists())
+
+    def test_uncapped_retains_prompt_size_gate(self):
+        root = self.root/'prompt-limit'; root.mkdir()
+        base.save(root/'initial.json', self.state()); base.save(root/'protocol.json', {})
+        result = corrections.replay(root, {'max_rounds': 2, 'max_tokens': None,
+                                          'max_prompt_chars': 1},
+                                    self.bundle, self.catalog, 'Fictional')
+        self.assertEqual(result['status'], 'prompt_too_large')
 
     def test_saved_pass_has_valid_substantive_metadata_but_cannot_accept_or_apply(self):
         root, state, results = self.completed_pair()

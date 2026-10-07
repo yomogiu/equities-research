@@ -59,6 +59,7 @@ def calibrated_admission(prompt, remaining_tokens, references):
     """
     result = admission(prompt, remaining_tokens)
     if not references: raise ValueError('Authenticated review calibration required')
+    if remaining_tokens is None: return result
     rate = max(Fraction(1, 2), max(Fraction(r['input_including_cache_tokens'], r['prompt_utf8_bytes'])
                                  for r in references) * Fraction(5, 4))
     ceiling = lambda value: (value.numerator + value.denominator - 1) // value.denominator
@@ -77,6 +78,10 @@ def calibrated_admission(prompt, remaining_tokens, references):
 def admission(prompt, remaining_tokens):
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError('Budget admission requires a nonempty exact prompt')
+    if remaining_tokens is None:
+        return {'policy': 'uncapped-usage-accounting-v1', 'admitted': True,
+                'remaining_tokens': None, 'prompt_utf8_bytes': len(prompt.encode('utf-8')),
+                'reserved_tokens': None, 'notice': 'Token cap disabled; authenticated usage is still recorded.'}
     if type(remaining_tokens) is not int:
         raise ValueError('Budget admission requires integer remaining tokens')
     prompt_bytes = len(prompt.encode('utf-8'))
@@ -91,10 +96,17 @@ def admission(prompt, remaining_tokens):
 
 
 def compliance(measured_tokens, max_tokens, inherited_tokens=0):
-    if (type(measured_tokens) is not int or measured_tokens < 0 or type(max_tokens) is not int
+    if (type(measured_tokens) is not int or measured_tokens < 0 or (max_tokens is not None and type(max_tokens) is not int)
             or type(inherited_tokens) is not int or inherited_tokens < 0):
         raise ValueError('Budget compliance requires measured integer counters')
     total = measured_tokens + inherited_tokens
-    return {'within_budget': total <= max_tokens, 'measured_tokens': measured_tokens,
+    return {'within_budget': max_tokens is None or total <= max_tokens, 'measured_tokens': measured_tokens,
             'inherited_tokens': inherited_tokens, 'total_measured_tokens': total,
-            'max_tokens': max_tokens, 'overrun_tokens': max(0, total - max_tokens)}
+            'max_tokens': max_tokens, 'overrun_tokens': 0 if max_tokens is None else max(0, total - max_tokens)}
+
+
+def remaining(max_tokens, *spent):
+    """Keep unlimited policies explicit while retaining measured counters."""
+    if any(type(x) is not int or x < 0 for x in spent):
+        raise ValueError("Nonnegative integer usage required")
+    return None if max_tokens is None else max_tokens - sum(spent)
