@@ -646,6 +646,10 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
                             'This source-location completion is not evidence of factual support or approval. '
                             'Independently assess every operation, including removal of source-uncertainty notes; '
                             'retain and consider the original provisional transcript annotations in supplied evidence.')
+        # Include the complete logical plan/provenance in the same lossless
+        # transport dictionary as its leaf deltas and original source context.
+        # Repeated replacement text is supplied once, never dropped or shortened.
+        data = context.compact_context(context.expand_context(data))
         instruction += (' This is a repair review after the initial comprehensive audit. Read the complete revised report for coherence and concise writing; '
                         'verify the complete correction batch and all repeated occurrences against the supplied original evidence. '
                         'Preserve independently verified unchanged observations and quotations. Report every material remaining defect together. '

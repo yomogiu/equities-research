@@ -112,8 +112,12 @@ EXPORT = '''
 import json,sys
 from pathlib import Path
 from research import earnings_experiment as b
-root=Path(sys.argv[1]); p=b.read(root/'protocol.json')
-if p['version'] in ('targeted-remediation-v1','targeted-remediation-v2'):
+root=Path(sys.argv[1]); p=b.read(root/'protocol.json'); excluded=[]
+if p['version']=='authorized-acceptance-exception-v1':
+ from research import earnings_acceptance_exception as c
+ r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
+ excluded=p['excluded_session_ids']
+elif p['version'] in ('targeted-remediation-v1','targeted-remediation-v2','targeted-remediation-v3'):
  from research import earnings_remediation as c
  r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
 elif p['version'] in ('deterministic-corrections-v1','deterministic-corrections-regression-v1','deterministic-corrections-cited-passages-v1'):
@@ -126,7 +130,7 @@ else:
  from research import earnings_passage_pipeline as c
  r=c.verify(root); state={'artifacts':b.read(root/'artifacts.json'),'format':{'rows':{},'basis':{'text':'','citations':[]}}};sp=p
 if r['status']!='accepted':raise ValueError('Signals require an accepted source report')
-print(json.dumps({'state':{'artifacts':state['artifacts'],'format':state['format']},'source_protocol':sp}))
+print(json.dumps({'state':{'artifacts':state['artifacts'],'format':state['format']},'source_protocol':sp,'excluded_session_ids':excluded}))
 '''
 
 
@@ -144,7 +148,8 @@ def initialize(seed, output):
     names=list(Path(__file__).parent.glob('earnings_*.py'))+[Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol={'version':VERSION,'seed':str(seed),'source_bindings':bound,'source_protocol':exported['source_protocol'],
               'state_sha256':base.digest(exported['state']),'code':[{'path':str(f),'sha256':base.sha(f)} for f in names],
-              'source_code':p['code']+p.get('source_code',[]),'model':list(MODEL),'max_tokens':400000,'max_prompt_chars':1500000}
+              'source_code':p['code']+p.get('source_code',[]),'model':list(MODEL),'max_tokens':400000,'max_prompt_chars':1500000,
+              'excluded_session_ids':exported.get('excluded_session_ids',[])}
     repair.write(root/'protocol.json',protocol);repair.write(root/'state.json',exported['state'])
     return {'status':'pending','next_role':'analysis'}
 
@@ -158,6 +163,9 @@ def load(root):
         if base.sha(c['path'])!=c['sha256']:raise ValueError('Seed verifier changed')
     for name,digest in p['source_bindings'].items():
         if base.sha(name)!=digest:raise ValueError('Accepted report inputs changed')
+    seed_protocol=base.read(Path(p['seed'])/'protocol.json')
+    if seed_protocol.get('version')=='authorized-acceptance-exception-v1' and p.get('excluded_session_ids')!=seed_protocol['excluded_session_ids']:
+        raise ValueError('Exception source session exclusions changed')
     sp=p['source_protocol']
     for path,digest in [(sp['case_path'],sp['case_sha256']),(sp['evidence_manifest'],sp['evidence_sha256']),(sp['writing_standard'],sp['writing_sha256'])]:
         if base.sha(path)!=digest:raise ValueError('Original source changed')
@@ -187,7 +195,7 @@ def advance(output, execute=True):
     with (root/'.coordinator.lock').open('a') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:return {'status':'running'}
-        p,state,b,cat,w=load(root);pack=None;tokens=0;identities=set()
+        p,state,b,cat,w=load(root);pack=None;tokens=0;identities=set(p.get('excluded_session_ids',[]))
         for role in ('analysis','review'):
             job=root/'jobs'/role;text=prompt(role,state,b,cat,w,pack)
             bindings={'protocol_sha256':base.sha(root/'protocol.json'),'report_sha256':report_digest(state),'role':role}

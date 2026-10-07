@@ -18,7 +18,7 @@ VERSION = 'focused-repair-review-v1'
 
 def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
            candidate_sha256, plan_sha256, seen_sessions, remaining_tokens,
-           max_prompt_chars, verifier):
+           max_prompt_chars, verifier, admission_fn=None):
     """Return pending/status request fields or completed/result; never execute.
 
     ``seen_sessions`` is the replay-wide mutable set, initialized from previous
@@ -61,7 +61,7 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
             # A partial write, launch marker, journal, or request is uncertainty.
             # Never turn a missing output into an automatic duplicate launch.
             uncertain = job.exists() and any(job.iterdir())
-            admission = budget.admission(prompt, remaining_tokens - tokens)
+            admission = (admission_fn or budget.admission)(prompt, remaining_tokens - tokens)
             status = ('launch_uncertain' if uncertain else
                       'prompt_too_large' if len(prompt) > max_prompt_chars else
                       'budget_exhausted' if not admission['admitted'] else 'pending')

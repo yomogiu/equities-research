@@ -16,7 +16,8 @@ from research import earnings_experiment as base
 VERSION = 'focused-repair-context-v1'
 MAX_CONTEXT_CHARACTERS = 330000
 COMPACTION_THRESHOLD = 300000
-STRING_REFERENCE = 'shared_string_id'
+STRING_REFERENCE = '@s'
+LEGACY_STRING_REFERENCE = 'shared_string_id'
 
 
 class ContextTooLarge(ValueError):
@@ -37,22 +38,27 @@ def expand_context(value):
     out = copy.deepcopy(value)
     encoding = out.pop('lossless_encoding')
     if (not isinstance(encoding, dict) or set(encoding) != {'version', 'strings', 'tables', 'notice'}
-            or encoding['version'] != 'shared-strings-v1'):
+            or encoding['version'] not in ('shared-strings-v1', 'shared-strings-v2')):
         raise ValueError('Invalid lossless context encoding')
+    reference = LEGACY_STRING_REFERENCE if encoding['version'] == 'shared-strings-v1' else STRING_REFERENCE
     strings = encoding['strings']
     if not isinstance(strings, dict) or any(not isinstance(v, str) for v in strings.values()):
         raise ValueError('Invalid shared context strings')
     def restore(v):
         if isinstance(v, dict):
-            if set(v) == {STRING_REFERENCE}:
-                key = v[STRING_REFERENCE]
+            if set(v) == {reference}:
+                key = v[reference]
+                if encoding['version'] == 'shared-strings-v2' and type(key) is int:
+                    key = str(key)
                 if not isinstance(key, str) or key not in strings:
                     raise ValueError('Unknown shared context string')
                 return strings[key]
             return {k: restore(child) for k, child in v.items()}
         if isinstance(v, list): return [restore(child) for child in v]
         return v
-    out = restore(out)
+    # The complete rendered report is deliberately excluded from transport
+    # factoring, including dict-shaped report views with reserved-looking keys.
+    out = {key: child if key == 'report' else restore(child) for key, child in out.items()}
     for path in encoding['tables']:
         parent = out
         for key in path[:-1]: parent = parent[key]
@@ -87,29 +93,48 @@ def compact_context(value):
         elif isinstance(v, str): counts[v] += 1
     for key, child in value.items():
         if key != 'report': count(child)
-    shared = {s: 'S' + str(i) for i, s in enumerate(sorted(s for s, n in counts.items() if n > 1 and len(s) >= 64))}
+    # Intern only strings whose repeated serialized bytes exceed the dictionary
+    # entry plus all references. Short repeated IDs matter in nested metadata;
+    # unique source/report prose remains readable and unchanged.
+    shared = {}
+    for text in sorted(counts):
+        if counts[text] < 2:
+            continue
+        key = str(len(shared))
+        if counts[text] * size(text) > size(text) + size(key) + 2 + counts[text] * size({STRING_REFERENCE: int(key)}):
+            shared[text] = key
     def pack(v):
         if isinstance(v, dict): return {k: pack(child) for k, child in v.items()}
         if isinstance(v, list): return [pack(child) for child in v]
-        if isinstance(v, str) and v in shared: return {STRING_REFERENCE: shared[v]}
+        if isinstance(v, str) and v in shared: return {STRING_REFERENCE: int(shared[v])}
         return v
     out = {key: copy.deepcopy(child) if key == 'report' else pack(child) for key, child in value.items()}
     tables = []
-    for path in (['field_changes'], ['occurrence_inventory'],
-                 ['canonical_exchange_index', 'exchanges'], ['canonical_exchange_index', 'turns'],
-                 ['financial_observations', 'observations']):
-        parent = out
-        for key in path[:-1]: parent = parent.get(key, {})
-        rows = parent.get(path[-1])
-        if (not isinstance(rows, list) or not rows or not all(isinstance(row, dict) for row in rows)
-                or any(set(row) != set(rows[0]) for row in rows)):
-            continue
+    def tabulate(v, path):
+        if isinstance(v, dict):
+            return {k: tabulate(child, path + [k]) for k, child in v.items()}
+        if not isinstance(v, list):
+            return v
+        rows = [tabulate(child, path + [i]) for i, child in enumerate(v)]
+        # Missing keys stay distinct from explicit null. References are scalar
+        # string encodings, not records; leave their wrapper objects intact.
+        if (not rows or not all(isinstance(row, dict) for row in rows)
+                or any(set(row) != set(rows[0]) for row in rows)
+                or set(rows[0]) == {STRING_REFERENCE}):
+            return rows
         table = _passage_table(rows)
-        if size(table) < size(rows):
-            parent[path[-1]] = table; tables.append(path)
+        # Account for each original-structure path in the decoding ledger.
+        if size(table) + size(path) + 1 < size(rows):
+            tables.append(path)
+            return table
+        return rows
+    out = {key: child if key == 'report' else tabulate(child, [key]) for key, child in out.items()}
+    # Decode parents before descendants: paths always name original fields and
+    # list indices, never incidental column positions introduced by this codec.
+    tables.sort(key=lambda path: (len(path), json.dumps(path, ensure_ascii=False)))
     out['lossless_encoding'] = {
-        'version': 'shared-strings-v1', 'strings': {key: s for s, key in shared.items()}, 'tables': tables,
-        'notice': 'Lossless encoding: replace every {shared_string_id: ID} object with the exact string in this strings map. At each listed tables path, pair row values with columns to restore record objects. Resolve references before interpreting source text, hashes, offsets or passages. Every original field and character is retained; the complete report is verbatim. This encoding conveys no factual approval.'}
+        'version': 'shared-strings-v2', 'strings': {key: s for s, key in shared.items()}, 'tables': tables,
+        'notice': 'Lossless encoding: replace every {@s: integer ID} object with the exact string at the decimal-string key in this strings map. Then, in listed parent-before-child order, follow each tables path using original object keys/list indices and pair row values with columns to restore record objects. Resolve references before interpreting source text, hashes, offsets or passages. Every original field and character is retained; the complete report is verbatim. This encoding conveys no factual approval.'}
     if expand_context(out) != value:
         raise ValueError('Lossless context round-trip changed content')
     return out if size(out) < size(value) else value
