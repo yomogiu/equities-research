@@ -6,6 +6,8 @@ are retained; larger evidence needs are explicit requests, never silent truncati
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 from collections import Counter
 from html.parser import HTMLParser
@@ -19,6 +21,20 @@ FINANCIAL_CONTEXT_VERSION = 'financial-source-context-v1'
 MAX_FINANCIAL_CONTEXT_CHARACTERS = 16000
 MAX_CONTEXT_CHARACTERS = 330000
 COMPACTION_THRESHOLD = 300000
+_context_limit = ContextVar('review_context_limit', default=None)
+
+
+@contextmanager
+def authorized_limits(policy):
+    from .earnings_review_policy import validate_limits
+    validate_limits(policy)
+    token = _context_limit.set(None if policy is None else policy['context_characters'])
+    try:
+        yield
+    finally:
+        _context_limit.reset(token)
+
+
 STRING_REFERENCE = '@s'
 LEGACY_STRING_REFERENCE = 'shared_string_id'
 
@@ -29,8 +45,9 @@ class ContextTooLarge(ValueError):
 
 def _bounded(value):
     size = len(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':')))
-    if size > MAX_CONTEXT_CHARACTERS:
-        raise ContextTooLarge(f'context-too-large: {size} characters exceeds {MAX_CONTEXT_CHARACTERS}; narrow explicit scope or split the review, never truncate')
+    limit = _context_limit.get() or MAX_CONTEXT_CHARACTERS
+    if size > limit:
+        raise ContextTooLarge(f'context-too-large: {size} characters exceeds {limit}; narrow explicit scope or split the review, never truncate')
     return size
 
 

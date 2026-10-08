@@ -70,3 +70,16 @@ Source location and row membership do not approve the proposed label: the
 reviewer still adjudicates every operation, finding and whole-report criterion.
 Load and replay reconstruct the derivation and reject changed source spans,
 receipts, manifests, targets, budgets or candidate hashes.
+
+## Explicit larger review context
+
+A saved proposal that exceeds the original character bound can use a new
+`--review-context-authorization` edition. The private authorization binds the
+exact seed protocol, original source bytes, model, inherited rounds and usage,
+plus separate explicit authority for uncapped token accounting. It permits
+500,000 context characters and 550,000 prompt characters; nothing is truncated.
+The scoped limit covers prompt construction and requested evidence expansion,
+and is isolated between concurrent workers. Existing protocols retain their
+limits. Complete rendered-report review, source validation and two total
+correction rounds remain mandatory. Record local token estimates before dispatch
+and actual runtime usage afterward; estimates are not exact provider accounting.
