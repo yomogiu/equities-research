@@ -62,6 +62,24 @@ class CurrentnessTest(unittest.TestCase):
         doc.update(scoped_currentness=ref,source_check_status=scope.STATUS,scoped_checked_at=cache['checked_at'])
         return ref,doc
 
+    def test_historical_replay_preserves_recorded_proof_but_not_currentness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve();ref,doc=self.fixture(root)
+            library.save(root/'sources/later/http-cache.json',{URL:{'checked_at':'2026-10-06T12:00:00+00:00','sha256':'a'*64}})
+            with self.assertRaisesRegex(ValueError,'Latest source observation'):
+                scope.replay(root,ref,doc)
+            scope.replay(root,ref,doc,historical=True)
+            (root/'sources/test/objects/new.html').write_bytes(b'changed substantive call')
+            with self.assertRaises(ValueError):
+                scope.replay(root,ref,doc,historical=True)
+
+    def test_historical_replay_still_requires_exact_fetch_proof(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve();ref,doc=self.fixture(root)
+            (root/'sources/test/http-cache.json').write_text('{}')
+            with self.assertRaisesRegex(ValueError,'HTTP observation changed'):
+                scope.replay(root,ref,doc,historical=True)
+
     def test_replay_and_request_bindings(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp).resolve();ref,doc=self.fixture(root)

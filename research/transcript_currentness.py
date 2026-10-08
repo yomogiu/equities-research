@@ -125,7 +125,7 @@ def compare(before, after, url, *, allow_app_counters=True):
             'whole_page_text_equal': old_spans['fulltext_sha256'] == new_spans['fulltext_sha256']}
 
 
-def replay(root, reference, document=None, *, issuer_id=None):
+def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     from . import library
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
@@ -143,8 +143,11 @@ def replay(root, reference, document=None, *, issuer_id=None):
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
     require(observation['sha256'] == new['raw_sha256'] and timestamp(observation['checked_at']) == value['checked_at'], 'Fetch proof mismatch')
-    latest = latest_observation(root,value['source_url'])
-    require(latest is not None and latest[0] >= value['checked_at'] and latest[1] == new['raw_sha256'], 'Latest source observation conflicts with scoped proof')
+    # Historical adoption replays the immutable observation below, not present
+    # currentness. Its successor must independently pass the ordinary replay.
+    if not historical:
+        latest = latest_observation(root,value['source_url'])
+        require(latest is not None and latest[0] >= value['checked_at'] and latest[1] == new['raw_sha256'], 'Latest source observation conflicts with scoped proof')
     require(value['checked_at'] is not None and observation.get('final_url') == value['source_url'] and 'html' in observation.get('content_type',''), 'Actual same-URL HTML fetch required')
     require((cache.parent / observation['body_path']).resolve() == library.resolve(root,new['raw_path']).resolve(), 'Fetch body path mismatch')
     q = library.read_json(library.resolve(root, 'library/qualifications/'+value['qualification_id']+'.json'))

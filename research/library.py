@@ -360,7 +360,12 @@ def make_packet(root, issuer, period, selections, missing=None):
     return packet
 
 
-def materialize(root, packet):
+def materialize(root, packet, *, historical_currentness=False):
+    """Replay packet bytes; historical mode establishes past evidence only.
+
+    Adoption must separately validate a fresh successor and compare its exact
+    source scope. Ordinary workers never enable historical_currentness.
+    """
     require(digest({k: v for k, v in packet.items() if k != 'packet_id'}) == packet['packet_id'], 'Packet hash mismatch')
     require('freshness_policy' not in packet or packet.get('catalog_id'),
             'Freshness policy requires immutable catalog evidence')
@@ -376,7 +381,7 @@ def materialize(root, packet):
                     'Packet source timestamps differ from catalog evidence')
         if d.get('source_check_status') == 'scoped_transcript_verified' or d.get('scoped_currentness'):
             from .transcript_currentness import replay
-            replay(root, d['scoped_currentness'], d, issuer_id=packet['issuer_id'])
+            replay(root, d['scoped_currentness'], d, issuer_id=packet['issuer_id'], historical=historical_currentness)
         text = load_bytes(root, d['text_path'], d['text_sha256']).decode('utf-8')
         load_bytes(root, d['raw_path'], d['raw_sha256'])
         require(d['document_id'] == digest([d['source_url'], text]), 'Inconsistent evidence document ID')
