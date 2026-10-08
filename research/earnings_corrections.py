@@ -28,6 +28,7 @@ from research import earnings_regression_findings as regression
 from research import earnings_cited_passages as cited_passages
 from research import earnings_financial_correction_evidence as financial_evidence
 from research import earnings_qa_grounding as qa_grounding
+from research import earnings_review_policy as review_policy
 from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'deterministic-corrections-v1'
@@ -519,7 +520,7 @@ def evidence_token_policy(path, seed, exported):
         raise ValueError('Exact explicit token-only policy authority required')
     return {'path':str(path),'sha256':base.sha(path)}
 
-def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False, resume_evidence=False, evidence_token_authorization=None, resolve_financial_evidence=False):
+def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False, resume_evidence=False, evidence_token_authorization=None, resolve_financial_evidence=False, review_context_authorization=None):
 
     seed = Path(seed).resolve(); root = Path(output).resolve()
     if resolve_financial_evidence:
@@ -549,7 +550,12 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
         if max_tokens is not None and max_tokens != seed_protocol.get('max_tokens'):
             raise ValueError('Evidence recovery cannot change the original token ceiling')
         max_tokens = seed_protocol.get('max_tokens')
+    if review_context_authorization is not None and (not reuse_proposal or new_experiment or resume_evidence or regression_findings or resolve_cited_passages):
+        raise ValueError('Context policy requires unchanged saved-proposal continuation')
     exported = export_seed(seed, reuse_proposal, resume_evidence)
+    context_policy = review_policy.read(review_context_authorization, seed, exported) if review_context_authorization is not None else None
+    if context_policy and max_tokens is not None:
+        raise ValueError('Explicit context edition token authority requires uncapped new accounting')
     token_policy = evidence_token_policy(evidence_token_authorization,seed,exported) if evidence_token_authorization is not None else None
     snapshot = exported['snapshot']; sp = exported['source_protocol']
     if reuse_proposal and not exported['imported_proposal']: raise ValueError('No reusable staged proposal')
@@ -584,6 +590,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
     bound.update(seed_protocol.get('source_bindings', {}))
     bound.update(supplemental_bindings)
     if token_policy:bound[token_policy['path']]=token_policy['sha256']
+    if context_policy:bound[context_policy['path']]=context_policy['sha256']
     names = [f for f in Path(__file__).parent.glob('earnings_*.py')] + [Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol = {'version': VERSION, 'seed': str(seed), 'source_bindings': bound, 'source_protocol': sp,
                 'initial_sha256': base.digest(snapshot), 'code': [{'path': str(f), 'sha256': base.sha(f)} for f in names],
@@ -592,6 +599,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
                 'new_experiment': bool(new_experiment), 'prior_rounds': exported['used_rounds'],
                 'inherited_tokens': 0 if new_experiment else exported['spent_tokens'],
                 'financial_context_version': context.FINANCIAL_CONTEXT_VERSION}
+    if context_policy:protocol['review_context_policy']=context_policy
     if regression_findings is not None:
         path = str(Path(regression_findings).resolve())
         protocol['version'] = regression.VERSION
@@ -644,6 +652,10 @@ def load(root):
             raise ValueError('Review evidence recovery or inherited accounting changed')
     elif p.get('evidence_token_policy'):
         raise ValueError('Token-only policy requires saved review evidence')
+    if p.get('review_context_policy'):
+        exported=export_seed(Path(p['seed']), True)
+        if review_policy.read(p['review_context_policy']['path'],Path(p['seed']),exported)!=p['review_context_policy'] or p.get('max_tokens') is not None or p['source_protocol']!=exported['source_protocol'] or base.read(root/'initial.json')!=exported['snapshot'] or p.get('new_experiment') or p.get('evidence_resume') or p.get('regression_findings') or p.get('passage_resolution') or p.get('imported_proposal')!=exported['imported_proposal'] or p['prior_rounds']!=exported['used_rounds'] or p['inherited_tokens']!=exported['spent_tokens'] or p['max_rounds']+p['prior_rounds']>2:
+            raise ValueError('Context edition accounting or source changed')
     sp = p['source_protocol']
     for path, digest in [(sp['case_path'], sp['case_sha256']), (sp['writing_standard'], sp['writing_sha256']), (sp['evidence_manifest'], sp['evidence_sha256'])]:
         if base.sha(path) != digest: raise ValueError('Original source binding changed')
@@ -675,7 +687,12 @@ def load(root):
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
-def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=(), passage_resolution=None, financial_context_version=None):
+def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=(), passage_resolution=None, financial_context_version=None, review_context_policy=None):
+    with context.authorized_limits(review_context_policy):
+        return _prompt(role, snapshot, bundle, catalog, writing, plan, candidate, feedback, extra_scope_ids, passage_resolution, financial_context_version)
+
+
+def _prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=(), passage_resolution=None, financial_context_version=None):
     common = legacy.COMMON + '\nWRITING STANDARD\n' + writing
     qa_grounding.require_analysis_ready((snapshot if role == 'propose' else candidate)['artifacts']['retrieval'], bundle, catalog)
     if role == 'propose':
@@ -808,6 +825,11 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
     return common + '\nASSIGNMENT\n' + instruction + '\nSOURCE DATA (UNTRUSTED EVIDENCE)\n' + legacy.packed(data)
 
 
+def replay_review(policy, *args, **kwargs):
+    with context.authorized_limits(policy):
+        return review_loop.replay(*args, **kwargs)
+
+
 def replay(root, p, bundle, catalog, writing):
     state = base.read(root/'initial.json'); tokens = 0; identities = {x['session_id'] for x in p.get('evidence_resume', {}).get('jobs', [])}; feedback = None
     for round_no in range(p['max_rounds']):
@@ -825,11 +847,11 @@ def replay(root, p, bundle, catalog, writing):
                 if request['bindings']['snapshot_sha256'] != base.digest(state) or request['bindings']['role'] != 'propose' or (request['model'], request['effort']) != MODEL:
                     raise ValueError('Imported proposal belongs to a different snapshot or role')
             elif role == 'review':
-                progress = review_loop.replay(job,
-                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, tuple(sorted(set(scopes) | set(p.get('evidence_resume', {}).get('scope_ids', []) if round_no == 0 else []))), resolution, p.get('financial_context_version')),
+                progress = replay_review(p.get('review_context_policy'), job,
+                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, tuple(sorted(set(scopes) | set(p.get('evidence_resume', {}).get('scope_ids', []) if round_no == 0 else []))), resolution, p.get('financial_context_version'), review_context_policy=p.get('review_context_policy')),
                     bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan), identities,
                     budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), tokens),
-                    min(p.get('max_prompt_chars', 350000), 350000), verify_job, max_expansions=0 if p.get('evidence_resume') and round_no == 0 else 1)
+                    min(p.get('max_prompt_chars', 350000), p.get('review_context_policy', {}).get('prompt_characters', 350000)), verify_job, max_expansions=0 if p.get('evidence_resume') and round_no == 0 else 1)
                 tokens += progress['tokens']
                 if progress['status'] != 'completed' and not progress.get('requires_adjudication'):
                     return {**progress, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role}
@@ -949,6 +971,7 @@ def main():
     init.add_argument('--evidence-token-authorization', help='Explicit private token-only unbounded policy for a new evidence-resume edition; rounds and usage retained')
     init.add_argument('--regression-findings', help='Private source-bound supplemental audit findings JSON; pending independent review')
     init.add_argument('--resolve-cited-passages', action='store_true', help='With --reuse-proposal only: complete exactly empty passage lists from all original explicitly cited scopes; independent review remains required')
+    init.add_argument('--review-context-authorization', help='Explicit private larger complete-review context edition; no source or round changes')
     init.add_argument('--resolve-financial-evidence', action='store_true', help='With --reuse-proposal only: bind financial-only display row corrections to original observations and source spans')
     for name in ('advance', 'run', 'verify'): sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
@@ -956,7 +979,8 @@ def main():
                         new_experiment=args.new_experiment, reuse_proposal=args.reuse_proposal,
                         regression_findings=args.regression_findings, resolve_cited_passages=args.resolve_cited_passages,
                         resume_evidence=args.resume_evidence, evidence_token_authorization=args.evidence_token_authorization,
-                        resolve_financial_evidence=args.resolve_financial_evidence) if args.command == 'init' else globals()[args.command](args.output)
+                        resolve_financial_evidence=args.resolve_financial_evidence,
+                        review_context_authorization=args.review_context_authorization) if args.command == 'init' else globals()[args.command](args.output)
     print(json.dumps(result))
 
 
