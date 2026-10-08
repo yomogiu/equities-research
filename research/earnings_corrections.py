@@ -372,8 +372,8 @@ if protocol.get('version') in ('deterministic-corrections-v1', 'deterministic-co
     cp,bundle,catalog,writing=c.load(root)
     progress=c.replay(root,cp,bundle,catalog,writing)
     snapshot=progress['state']; sp=cp['source_protocol']; used_rounds=progress['round']+(0 if cp.get('new_experiment') else cp.get('prior_rounds',0)); spent_tokens=progress['tokens']+cp.get('inherited_tokens',0)
-    if len(sys.argv)>2 and sys.argv[2]=='reuse':
-        if not ((progress['status'] in ('pending','budget_exhausted','prompt_too_large') and progress.get('role')=='review') or progress['status']=='invalid_patch'):
+    if len(sys.argv)>2 and sys.argv[2] in ('reuse','evidence'):
+        if not ((progress['status'] in ('pending','budget_exhausted','prompt_too_large') and progress.get('role')=='review') or progress['status']=='invalid_patch' or (sys.argv[2]=='evidence' and progress['status']=='evidence_insufficient' and progress.get('role')=='review')):
             raise ValueError('Only an authenticated unreviewed proposal may be reused')
         prior=cp.get('imported_proposal') if progress['round']==0 else None
         job=Path(prior['job']) if prior else root/'rounds'/str(progress['round'])/'propose'
@@ -399,13 +399,13 @@ print(json.dumps({'snapshot':snapshot,'source_protocol':sp,'used_rounds':used_ro
 '''
 
 
-def export_seed(seed, reuse_proposal=False):
+def export_seed(seed, reuse_proposal=False, resume_evidence=False):
     """Authenticate and replay a seed using its own frozen verifier checkout."""
     sp = base.read(seed/'protocol.json')
     for record in sp['code']:
         if base.sha(record['path']) != record['sha256']: raise ValueError('Frozen source code changed')
     code = Path(next(c['path'] for c in sp['code'] if c['path'].endswith('/earnings_passage_pipeline.py'))).parent.parent
-    process = subprocess.run([sys.executable, '-c', EXPORT, str(seed), 'reuse' if reuse_proposal else 'fresh'], cwd=code, env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
+    process = subprocess.run([sys.executable, '-c', EXPORT, str(seed), 'evidence' if resume_evidence else 'reuse' if reuse_proposal else 'fresh'], cwd=code, env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
     return json.loads(process.stdout)
 
 
@@ -428,7 +428,30 @@ def resolved_import(snapshot, imported, bundle, catalog):
     return effective, manifest
 
 
-def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False):
+def review_evidence_binding(seed, exported, snapshot, sp):
+    """Bind a stopped evidence request to the unchanged independently reviewed candidate."""
+    # The original verifier already replays each request and authenticates its receipts.
+    old = base.read(seed/'protocol.json')
+    round_no = exported['used_rounds'] - (0 if old.get('new_experiment') else old.get('prior_rounds', 0))
+    folder = seed/'rounds'/str(round_no)
+    candidate = base.read(folder/'candidate.json'); plan = base.read(folder/'plan.json')
+    requests, jobs = [], []
+    for name in ('review', 'review-evidence-1'):
+        job = folder/name; result = verify_job(job); content = result['content']
+        if (set(content) != {'verdict','candidate_sha256','plan_sha256','requests'}
+                or content['verdict'] != 'needs_evidence'
+                or content['candidate_sha256'] != base.digest(candidate)
+                or content['plan_sha256'] != base.digest(plan)):
+            raise ValueError('Only a pending exact-candidate evidence request may resume')
+        requests.extend(content['requests']); jobs.append({'path':str(job),'output_sha256':base.sha(job/'output.json'),'session_id':result['receipt']['session']['id']})
+    bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+    resolved = context.evidence_response(bundle, catalog, requests)
+    return {'version':'saved-review-evidence-v1','jobs':jobs,'requests':requests,
+            'scope_ids':resolved['scope_ids'],'candidate_sha256':base.digest(candidate),
+            'plan_sha256':base.digest(plan),'snapshot_sha256':base.digest(snapshot), 'additional_lookup_rounds':0}
+
+
+def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False, resume_evidence=False):
     seed = Path(seed).resolve(); root = Path(output).resolve()
     if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
         raise ValueError('Use a new private directory outside code and the seed')
@@ -441,7 +464,13 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
     seed_protocol = base.read(seed/'protocol.json')
     if reuse_proposal and seed_protocol.get('version') == cited_passages.VERSION and not resolve_cited_passages:
         raise ValueError('Reusing a resolved proposal requires explicit cited-passage resolution')
-    exported = export_seed(seed, reuse_proposal)
+    if resume_evidence and (not reuse_proposal or new_experiment or regression_findings or resolve_cited_passages):
+        raise ValueError('Evidence recovery requires unchanged saved proposal and original budget')
+    if resume_evidence:
+        if max_tokens is not None and max_tokens != seed_protocol.get('max_tokens'):
+            raise ValueError('Evidence recovery cannot change the original token ceiling')
+        max_tokens = seed_protocol.get('max_tokens')
+    exported = export_seed(seed, reuse_proposal, resume_evidence)
     snapshot = exported['snapshot']; sp = exported['source_protocol']
     if reuse_proposal and not exported['imported_proposal']: raise ValueError('No reusable staged proposal')
     remaining = max_rounds if new_experiment else min(max_rounds, 2-exported['used_rounds'])
@@ -480,7 +509,8 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
                 'model': list(MODEL), 'max_rounds': remaining, 'max_tokens': max_tokens, 'max_prompt_chars': 1500000, 'imported_proposal': exported['imported_proposal'],
                 'source_code': seed_protocol['code'] + seed_protocol.get('source_code', []),
                 'new_experiment': bool(new_experiment), 'prior_rounds': exported['used_rounds'],
-                'inherited_tokens': 0 if new_experiment else exported['spent_tokens']}
+                'inherited_tokens': 0 if new_experiment else exported['spent_tokens'],
+                'financial_context_version': context.FINANCIAL_CONTEXT_VERSION}
     if regression_findings is not None:
         path = str(Path(regression_findings).resolve())
         protocol['version'] = regression.VERSION
@@ -488,6 +518,8 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
     if resolve_cited_passages:
         protocol['version'] = cited_passages.VERSION
         protocol['passage_resolution'] = resolution
+    if resume_evidence:
+        protocol['evidence_resume'] = review_evidence_binding(seed, exported, snapshot, sp)
     repair.write(root/'protocol.json', protocol); repair.write(root/'initial.json', snapshot)
     load(root)
     return {'status': 'pending', 'max_rounds': remaining, 'findings': len(snapshot['findings'])}
@@ -495,6 +527,8 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
 
 def load(root):
     p = base.read(root/'protocol.json')
+    if p.get('financial_context_version') not in (None, context.FINANCIAL_CONTEXT_VERSION):
+        raise ValueError('Financial evidence context version differs')
     if p['version'] not in (VERSION, regression.VERSION, cited_passages.VERSION) or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
     if p['version'] == cited_passages.VERSION:
         if (not isinstance(p.get('passage_resolution'), dict) or not p.get('imported_proposal')
@@ -514,6 +548,14 @@ def load(root):
     for path, digest in p['source_bindings'].items():
         if base.sha(path) != digest: raise ValueError('Original seed changed')
     if base.digest(base.read(root/'initial.json')) != p['initial_sha256']: raise ValueError('Initial snapshot changed')
+    if p.get('evidence_resume'):
+        exported = export_seed(Path(p['seed']), True, True)
+        expected = review_evidence_binding(Path(p['seed']), exported, base.read(root/'initial.json'), p['source_protocol'])
+        if (expected != p['evidence_resume'] or p.get('imported_proposal') != exported['imported_proposal']
+                or p.get('new_experiment') or p['prior_rounds'] != exported['used_rounds']
+                or p['inherited_tokens'] != exported['spent_tokens'] or p['max_rounds'] + p['prior_rounds'] > 2
+                or p.get('max_tokens') != base.read(Path(p['seed'])/'protocol.json').get('max_tokens')):
+            raise ValueError('Review evidence recovery or inherited accounting changed')
     sp = p['source_protocol']
     for path, digest in [(sp['case_path'], sp['case_sha256']), (sp['writing_standard'], sp['writing_sha256']), (sp['evidence_manifest'], sp['evidence_sha256'])]:
         if base.sha(path) != digest: raise ValueError('Original source binding changed')
@@ -542,7 +584,7 @@ def load(root):
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
-def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=(), passage_resolution=None):
+def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=(), passage_resolution=None, financial_context_version=None):
     common = legacy.COMMON + '\nWRITING STANDARD\n' + writing
     qa_grounding.require_analysis_ready((snapshot if role == 'propose' else candidate)['artifacts']['retrieval'], bundle, catalog)
     if role == 'propose':
@@ -632,7 +674,7 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
         view = repair.rendered_review_view(rendered(candidate, bundle, catalog))
         data = context.build(snapshot, candidate, plan, bundle, catalog,
                              view['report_body_html_excerpt'], writing,
-                             extra_scope_ids=extra_scope_ids)
+                             extra_scope_ids=extra_scope_ids, financial_context_version=financial_context_version)
         data.update(candidate_sha256=base.digest(candidate), plan_sha256=base.digest(plan), plan=plan,
                     rendered_links={k:v for k,v in view.items() if k != 'report_body_html_excerpt'})
         if passage_resolution is not None:
@@ -661,7 +703,7 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
 
 
 def replay(root, p, bundle, catalog, writing):
-    state = base.read(root/'initial.json'); tokens = 0; identities = set(); feedback = None
+    state = base.read(root/'initial.json'); tokens = 0; identities = {x['session_id'] for x in p.get('evidence_resume', {}).get('jobs', [])}; feedback = None
     for round_no in range(p['max_rounds']):
         folder = root/'rounds'/str(round_no)
         plan = candidate = review = None
@@ -679,10 +721,10 @@ def replay(root, p, bundle, catalog, writing):
                     raise ValueError('Imported proposal belongs to a different snapshot or role')
             elif role == 'review':
                 progress = review_loop.replay(job,
-                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, scopes, resolution),
+                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, tuple(sorted(set(scopes) | set(p.get('evidence_resume', {}).get('scope_ids', []) if round_no == 0 else []))), resolution, p.get('financial_context_version')),
                     bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan), identities,
                     budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), tokens),
-                    min(p.get('max_prompt_chars', 350000), 350000), verify_job)
+                    min(p.get('max_prompt_chars', 350000), 350000), verify_job, max_expansions=0 if p.get('evidence_resume') and round_no == 0 else 1)
                 tokens += progress['tokens']
                 if progress['status'] != 'completed' and not progress.get('requires_adjudication'):
                     return {**progress, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role}
@@ -718,6 +760,9 @@ def replay(root, p, bundle, catalog, writing):
                 try: candidate = apply(state, plan, bundle, catalog)
                 except (ValueError, KeyError, TypeError) as exc:
                     return {'status': 'invalid_patch', 'state': state, 'tokens': tokens, 'round': round_no, 'error': str(exc)}
+                if round_no == 0 and p.get('evidence_resume'):
+                    if (base.digest(candidate) != p['evidence_resume']['candidate_sha256'] or base.digest(plan) != p['evidence_resume']['plan_sha256']):
+                        raise ValueError('Resumed review candidate or plan changed')
                 repair.write(folder/'plan.json', plan); repair.write(folder/'candidate.json', candidate)
                 legacy.immutable_text(folder/'candidate.html', rendered(candidate, bundle, catalog))
             else:
@@ -786,11 +831,12 @@ def main():
     init.add_argument('--max-rounds', type=int, default=2); init.add_argument('--max-tokens', type=int, default=None, help='Optional correction token cap; default unlimited with usage accounting')
     init.add_argument('--new-experiment', action='store_true', help='Explicit separately authorized test; preserves exhausted prior run')
     init.add_argument('--reuse-proposal', action='store_true', help='Reuse a verified pending proposal from a prior correction experiment; no new author call')
+    init.add_argument('--resume-evidence', action='store_true', help='With --reuse-proposal: deliver authenticated saved review evidence requests without resetting rounds')
     init.add_argument('--regression-findings', help='Private source-bound supplemental audit findings JSON; pending independent review')
     init.add_argument('--resolve-cited-passages', action='store_true', help='With --reuse-proposal only: complete exactly empty passage lists from all original explicitly cited scopes; independent review remains required')
     for name in ('advance', 'run', 'verify'): sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
-    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings, args.resolve_cited_passages) if args.command == 'init' else globals()[args.command](args.output)
+    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings, args.resolve_cited_passages, args.resume_evidence) if args.command == 'init' else globals()[args.command](args.output)
     print(json.dumps(result))
 
 

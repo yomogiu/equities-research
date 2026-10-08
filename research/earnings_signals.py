@@ -172,6 +172,9 @@ def load(root):
     b=evidence.load_bundle(sp['evidence_manifest']);cat=passages.catalog(b['manifest'])
     from research import earnings_qa_grounding as grounding
     grounding.attach(None, sp, b, cat)
+    if sp.get('prepared_recovery'):
+        from research.earnings_prepared_recovery import apply
+        b, _, _, inherited_identities = apply(sp, b, cat)
     grounding.require_analysis_ready(state['artifacts']['retrieval'], b, cat)
     return p,state,b,cat,Path(sp['writing_standard']).read_text()
 
