@@ -11,13 +11,14 @@ from pathlib import Path
 
 from research import earnings_experiment as base
 from research import earnings_repair_context as context
+from research import earnings_budget as budget
 
 VERSION = 'focused-repair-review-v1'
 
 
 def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
            candidate_sha256, plan_sha256, seen_sessions, remaining_tokens,
-           max_prompt_chars, verifier):
+           max_prompt_chars, verifier, admission_fn=None, max_expansions=1):
     """Return pending/status request fields or completed/result; never execute.
 
     ``seen_sessions`` is the replay-wide mutable set, initialized from previous
@@ -27,7 +28,7 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
     """
     if not isinstance(seen_sessions, set):
         raise ValueError('Replay requires a mutable set of prior session IDs')
-    if type(remaining_tokens) is not int or type(max_prompt_chars) is not int or max_prompt_chars <= 0:
+    if (remaining_tokens is not None and type(remaining_tokens) is not int) or type(max_prompt_chars) is not int or max_prompt_chars <= 0:
         raise ValueError('Integer token budget and positive prompt bound required')
     if not isinstance(bindings, dict) or not isinstance(model, (list, tuple)) or len(model) != 2:
         raise ValueError('Exact bindings and model/effort pair required')
@@ -37,10 +38,12 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
         key = label + '_sha256'
         if key in bindings and bindings[key] != value:
             raise ValueError('Conflicting source identity binding')
+    if type(max_expansions) is not int or max_expansions not in (0,1):
+        raise ValueError('Zero or one evidence expansion required')
     first = Path(job_base)
     extra_scopes, requests, prior_output = (), [], None
     tokens = 0
-    for expansion in range(2):
+    for expansion in range(max_expansions+1):
         job = first if expansion == 0 else first.with_name(first.name + '-evidence-1')
         expected = {**copy.deepcopy(bindings), 'review_context_version': VERSION,
                     'candidate_sha256': candidate_sha256, 'plan_sha256': plan_sha256,
@@ -60,9 +63,11 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
             # A partial write, launch marker, journal, or request is uncertainty.
             # Never turn a missing output into an automatic duplicate launch.
             uncertain = job.exists() and any(job.iterdir())
-            status = ('launch_uncertain' if uncertain else 'budget_exhausted' if tokens >= remaining_tokens
-                      else 'prompt_too_large' if len(prompt) > max_prompt_chars else 'pending')
-            return {**response, 'status': status}
+            admission = (admission_fn or budget.admission)(prompt, budget.remaining(remaining_tokens, tokens))
+            status = ('launch_uncertain' if uncertain else
+                      'prompt_too_large' if len(prompt) > max_prompt_chars else
+                      'budget_exhausted' if not admission['admitted'] else 'pending')
+            return {**response, 'status': status, 'budget_admission': admission}
         result = verifier(job)
         request = base.read(job/'request.json')
         saved_output = base.read(job/'output.json')
@@ -82,26 +87,33 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
             raise ValueError('Measured nonnegative integer token usage required')
         seen_sessions.add(sid)
         tokens += used
-        response.update(tokens=tokens, result=result)
-        if tokens > remaining_tokens:
-            return {**response, 'status': 'budget_exhausted'}
-        if len(prompt) > max_prompt_chars:
-            return {**response, 'status': 'prompt_too_large'}
+        compliance = budget.compliance(tokens, remaining_tokens)
+        response.update(tokens=tokens, result=result, budget_compliance=compliance)
         content = result.get('content')
         if (not isinstance(content, dict) or content.get('candidate_sha256') != candidate_sha256
                 or content.get('plan_sha256') != plan_sha256):
             raise ValueError('Review candidate or plan binding mismatch')
         if content.get('verdict') != 'needs_evidence':
             # The caller remains responsible for complete final review schema,
-            # rubric and operation adjudication; completed never means accepted.
-            return {**response, 'status': 'completed'}
+            # rubric and operation adjudication EVEN when measured usage or the
+            # prompt exceeds its limit. A saved verdict is never approval alone.
+            status = ('budget_exhausted' if not compliance['within_budget'] else
+                      'prompt_too_large' if len(prompt) > max_prompt_chars else 'completed')
+            return {**response, 'status': status, 'requires_adjudication': True,
+                    'review_verdict': content.get('verdict')}
         if set(content) != {'verdict', 'candidate_sha256', 'plan_sha256', 'requests'}:
             raise ValueError('Evidence request requires only verdict, candidate, plan, requests')
         try:
             expansion_data = context.evidence_response(bundle, catalog, content['requests'], extra_scopes)
         except context.ContextTooLarge as exc:
             return {**response, 'status': 'prompt_too_large', 'error': str(exc)}
-        if expansion == 1 or not expansion_data['scope_ids']:
+        # Validate even an over-budget evidence request before halting. Never
+        # hide malformed/foreign references behind a budget status.
+        if not compliance['within_budget']:
+            return {**response, 'status': 'budget_exhausted', 'review_verdict': 'needs_evidence'}
+        if len(prompt) > max_prompt_chars:
+            return {**response, 'status': 'prompt_too_large', 'review_verdict': 'needs_evidence'}
+        if expansion == max_expansions or not expansion_data['scope_ids']:
             return {**response, 'status': 'evidence_insufficient',
                     'error': 'One evidence expansion exhausted; no final review verdict was obtained'}
         requests = copy.deepcopy(content['requests'])

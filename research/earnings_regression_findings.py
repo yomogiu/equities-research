@@ -98,7 +98,7 @@ def budget(protocol, exported, seed_protocol):
     ceiling = seed_protocol.get('max_tokens', DEFAULT_TOKEN_CEILING)
     if type(rounds) is not int or not 1 <= rounds <= 2 - exported['used_rounds']:
         raise ValueError('Regression findings correction round budget expanded')
-    if type(tokens) is not int or not 0 < tokens <= ceiling:
+    if tokens is not None and (type(tokens) is not int or tokens <= 0 or (ceiling is not None and tokens > ceiling)):
         raise ValueError('Regression findings token budget expanded')
 
 

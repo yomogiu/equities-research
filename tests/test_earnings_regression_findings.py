@@ -67,7 +67,7 @@ class RegressionFindingsTests(PassageFixture, unittest.TestCase):
         self.assertEqual(p['inherited_tokens'], 123)
         self.assertEqual(p['prior_rounds'], 1)
         self.assertEqual(p['version'], regression.VERSION)
-        self.assertEqual(p['max_tokens'], 600000)
+        self.assertIsNone(p['max_tokens'])
         self.assertFalse(p['new_experiment'])
         self.assertIsNone(p['imported_proposal'])
         for path in (self.audit, self.supplement):

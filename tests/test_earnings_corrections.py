@@ -31,6 +31,13 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
                 'operations': [{'id': o['id'], 'approve': True, **claim} for o in plan['operations']],
                 'resolutions': [{'id': f['id'], 'status': 'closed', **claim} for f in state['findings']], 'findings': []}
 
+    def test_author_receives_reviewer_financial_context(self):
+        state=self.state();feedback={'resolutions':[{'citations':['F002']} ]}
+        with patch.object(c.context,'evidence_response',return_value={'proof':'complete original note'}) as response:
+            text=c.prompt('propose',state,self.bundle,self.catalog,'Concise.',feedback=feedback,financial_context_version=c.context.FINANCIAL_CONTEXT_VERSION)
+        self.assertIn('complete original note',text)
+        self.assertIn('F002',[x['scope_id'] for x in response.call_args.args[2]])
+
     def test_proposal_supplies_executable_layout_contract(self):
         prompt = c.prompt('propose', self.state(), self.bundle, self.catalog, 'Concise.')
         self.assertIn('"layout_contract"', prompt)
@@ -369,12 +376,17 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
         request={'model':c.MODEL[0],'effort':c.MODEL[1],'bindings':{'snapshot_sha256':base.digest(state),'role':'propose'}}
         base.save(old/'request.json',request)
         result={'content':plan,'receipt':{'session':{'id':'old-session','usage':{'totalTokens':75}}}}
-        p={'max_rounds':2,'max_tokens':100,'imported_proposal':{'job':str(old),'output_sha256':base.sha(old/'output.json')}}
-        with patch.object(c,'verify_job',return_value=result):
+        p={'max_rounds':2,'max_tokens':600000,'imported_proposal':{'job':str(old),'output_sha256':base.sha(old/'output.json')}}
+        original_prompt=c.prompt
+        def reviewer_only(role,*args,**kwargs):
+            if role == 'propose':
+                raise c.context.ContextTooLarge('Unused imported author context must not be built')
+            return original_prompt(role,*args,**kwargs)
+        with patch.object(c,'verify_job',return_value=result), patch.object(c,'prompt',side_effect=reviewer_only):
             n=c.replay(root,p,self.bundle,self.catalog,'Fictional')
             self.assertEqual(n['role'],'review');self.assertEqual(n['status'],'pending');self.assertEqual(n['tokens'],0)
             self.assertFalse((root/'rounds/0/propose').exists())
-            p['inherited_tokens']=100
+            p['inherited_tokens']=600000
             self.assertEqual(c.replay(root,p,self.bundle,self.catalog,'Fictional')['status'],'budget_exhausted')
             request['bindings']['snapshot_sha256']='different';(old/'request.json').write_text(json.dumps(request))
             with self.assertRaises(ValueError):c.replay(root,p,self.bundle,self.catalog,'Fictional')

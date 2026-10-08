@@ -89,7 +89,9 @@ class SignalTests(PassageFixture, unittest.TestCase):
         disabled=pipe.freeze(self.casepath,self.root/'disabled-run',w,signals=False)
         self.assertTrue(enabled['report_signals'])
         self.assertFalse(disabled['report_signals'])
-        self.assertFalse(any(x['path'].endswith('earnings_signals.py') for x in disabled['code']))
+        # New grounded freezes pin all transitive earnings helpers even when a
+        # stage is disabled; the execution flag remains authoritative.
+        self.assertTrue(any(x['path'].endswith('earnings_signals.py') for x in disabled['code']))
 
     def test_cli_signals_default_and_opt_out_are_frozen(self):
         from unittest.mock import patch
