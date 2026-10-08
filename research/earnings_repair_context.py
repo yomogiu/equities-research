@@ -198,7 +198,7 @@ def addressable_inventory(snapshot, bundle=None):
                           ('analysis', 'findings'), ('analysis', 'next_tests')):
         citation_paths += [['artifacts', role, section, i, 'citations']
                            for i, row in enumerate(snapshot['artifacts'][role][section]) if 'citations' in row]
-    paths = [['format', key] for key in ('basis', 'layout', 'tables')] + citation_paths
+    paths = [['format', key] for key in ('basis', 'layout', 'tables', 'source_rows')] + citation_paths
     paths += [['format', 'rows', key] for key in keys]
     table_keys = snapshot.get('format', {}).get('tables', {})
     if bundle is not None:
