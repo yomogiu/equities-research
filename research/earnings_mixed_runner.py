@@ -151,6 +151,9 @@ def _runtime_paths():
 def verify_job(job_path):
     """Recheck every persisted binding before treating a completed job as reusable."""
     job = Path(job_path).resolve()
+    if (job / 'import.json').exists():
+        from .earnings_role_import import verify
+        return verify(job)
     names = ('request.json', 'launch.json', 'execution.json', 'output.json', 'prompt.txt',
              'stdout.txt', 'runtime-start.json', 'runtime-finish.json', 'wire.json')
     for name in names:
@@ -176,6 +179,15 @@ def verify_job(job_path):
     if set(execution['artifact_sha256']) != {'runtime-start.json', 'runtime-finish.json', 'wire.json', 'stdout.txt'}:
         raise ValueError('Incomplete runtime bindings')
     session = session_receipt(job, request)
+    if 'token_estimate_sha256' in launch:
+        estimate_path = _inside(job, 'token-estimate.json')
+        estimate = read(estimate_path)
+        if (sha(estimate_path) != launch['token_estimate_sha256']
+                or estimate.get('prompt_sha256') != request['prompt_sha256']
+                or estimate.get('model') != request['model']
+                or estimate.get('enforced') is not False
+                or execution.get('token_accounting') != usage_comparison(estimate, session['usage'])):
+            raise ValueError('Token accounting binding changed')
     if session != execution.get('session'):
         raise ValueError('Session evidence changed')
     start, finish, wire = [read(job / name) for name in ('runtime-start.json', 'runtime-finish.json', 'wire.json')]
@@ -209,6 +221,40 @@ def _request(job, prompt, model, effort, bindings, timeout):
             'helper_sha256': sha(HELPER), 'runner_sha256': sha(__file__)}
 
 
+def prompt_estimate(prompt, model):
+    """Local diagnostic only; never authorize, reject or truncate a request."""
+    result = {'version': 1, 'model': model,
+              'prompt_sha256': hashlib.sha256(prompt.encode()).hexdigest(),
+              'utf8_bytes': len(prompt.encode()), 'enforced': False,
+              'scope': 'Prompt text only; excludes runtime framing and generated reasoning/output'}
+    try:
+        import tiktoken
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+            mapping = 'library_model_mapping'
+        except KeyError:
+            encoding = tiktoken.get_encoding('o200k_base')
+            mapping = 'explicit_o200k_base_assumption'
+        result.update(method='tiktoken', encoding=encoding.name, mapping=mapping,
+                      tokenizer_version=tiktoken.__version__,
+                      estimated_input_tokens=len(encoding.encode_ordinary(prompt)))
+    except Exception:
+        # Missing dependency/cache must not stop a previously authorized role.
+        result.update(method='utf8_bytes_divided_by_four_fallback', encoding=None,
+                      mapping='rough_estimate_only',
+                      estimated_input_tokens=(len(prompt.encode()) + 3)//4)
+    return result
+
+
+def usage_comparison(estimate, usage):
+    actual_input = sum(usage[k] for k in ('input', 'cacheRead', 'cacheWrite'))
+    return {'estimated_prompt_tokens': estimate['estimated_input_tokens'],
+            'recorded_input_including_cache_tokens': actual_input,
+            'recorded_output_tokens': usage['output'], 'recorded_total_tokens': usage['totalTokens'],
+            'input_difference_tokens': actual_input - estimate['estimated_input_tokens'],
+            'notice': 'Measured session usage includes runtime overhead; cache is included once.'}
+
+
 def run_role(job_path, prompt, model, effort, bindings, timeout=900):
     """Run once or verify a completed job; return content, receipt, and output_path."""
     job = Path(job_path).resolve()
@@ -227,7 +273,9 @@ def run_role(job_path, prompt, model, effort, bindings, timeout=900):
     with (job / 'prompt.txt').open('x') as handle:
         os.chmod(job / 'prompt.txt', 0o600)
         handle.write(prompt)
-    launch = {'id': str(uuid.uuid4()), 'request_sha256': digest(request),
+    estimate = prompt_estimate(prompt, model)
+    save(job / 'token-estimate.json', estimate)
+    launch = {'token_estimate_sha256': sha(job / 'token-estimate.json'), 'id': str(uuid.uuid4()), 'request_sha256': digest(request),
               'started_at': datetime.now(timezone.utc).isoformat()}
     save(job / 'launch.json', launch)
     started = time.monotonic()
@@ -255,6 +303,7 @@ def run_role(job_path, prompt, model, effort, bindings, timeout=900):
         raise RuntimeError('Prime role failed or timed out; duplicate launch blocked')
     try:
         execution['session'] = session_receipt(job, request)
+        execution['token_accounting'] = usage_comparison(estimate, execution['session']['usage'])
         execution['artifact_sha256'] = {name: sha(job / name) for name in
             ('runtime-start.json', 'runtime-finish.json', 'wire.json', 'stdout.txt')}
         content = parse_response((job / 'stdout.txt').read_text())

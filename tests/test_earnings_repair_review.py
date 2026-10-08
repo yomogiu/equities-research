@@ -20,7 +20,7 @@ class RepairReviewTests(PassageFixture, unittest.TestCase):
         args = dict(job_base=self.job, prompt_factory=lambda extra: 'Complete fictional report; scopes=' + ','.join(extra),
                     bindings={'protocol_sha256': 'fake'}, model=('gpt-6.1-sol', 'medium'), bundle=self.bundle,
                     catalog=self.catalog, candidate_sha256=self.candidate, plan_sha256=self.plan,
-                    seen_sessions=set(), remaining_tokens=1000, max_prompt_chars=10000,
+                    seen_sessions=set(), remaining_tokens=100000, max_prompt_chars=10000,
                     verifier=lambda job: self.results[str(job)])
         args.update(overrides)
         return review.replay(**args)
@@ -122,4 +122,9 @@ class RepairReviewTests(PassageFixture, unittest.TestCase):
             self.replay()
 
 
-if __name__ == '__main__': unittest.main()
+    def test_evidence_recovery_cannot_open_another_lookup(self):
+        self.complete(self.replay(max_expansions=0), 'needs_evidence', requests=self.requests)
+        result=self.replay(max_expansions=0)
+        self.assertEqual(result['status'],'evidence_insufficient')
+        self.assertEqual(result['tokens'],100)
+        self.assertFalse(self.job.with_name('review-evidence-1').exists())
