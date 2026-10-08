@@ -292,7 +292,7 @@ class CorrectionContractTests(PassageFixture, unittest.TestCase):
         result = {'content': plan, 'receipt': {'session': {
             'id': 'fictional-authenticated-session', 'usage': {'totalTokens': 1}}}}
         with patch.object(corrections, 'load', return_value=(protocol, self.bundle, self.catalog, 'Fictional.')), \
-                patch.object(corrections, 'verify_job', return_value=result), \
+                patch.object(corrections, 'verify_saved_proposal', return_value=result), \
                 patch.object(corrections, 'run_role') as launch, \
                 patch.object(corrections.review_loop, 'replay') as review:
             progress = corrections.advance(root)

@@ -66,10 +66,10 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
         progress={'status':'prompt_too_large','role':'review','round':0,'tokens':0,'state':snapshot}
         def run():
             with patch.object(sys,'argv',['export',str(seed),'reuse']), patch.object(c,'load',return_value=(cp,{}, {},'')), \
-                 patch.object(c,'replay',return_value=progress), patch.object(c,'verify_job') as verify, \
+                 patch.object(c,'replay',return_value=progress), patch.object(c,'verify_saved_proposal') as verify, \
                  contextlib.redirect_stdout(io.StringIO()) as out:
                 exec(c.EXPORT,{})
-                verify.assert_called_once_with(job)
+                verify.assert_called_once_with(cp['imported_proposal'],[])
                 return json.loads(out.getvalue())
         result=run();self.assertEqual(result['imported_proposal'],cp['imported_proposal'])
         self.assertEqual(result['spent_tokens'],123);self.assertEqual(result['used_rounds'],0)
@@ -382,7 +382,7 @@ class CorrectionTests(PassageFixture, unittest.TestCase):
             if role == 'propose':
                 raise c.context.ContextTooLarge('Unused imported author context must not be built')
             return original_prompt(role,*args,**kwargs)
-        with patch.object(c,'verify_job',return_value=result), patch.object(c,'prompt',side_effect=reviewer_only):
+        with patch.object(c,'verify_saved_proposal',return_value=result), patch.object(c,'prompt',side_effect=reviewer_only):
             n=c.replay(root,p,self.bundle,self.catalog,'Fictional')
             self.assertEqual(n['role'],'review');self.assertEqual(n['status'],'pending');self.assertEqual(n['tokens'],0)
             self.assertFalse((root/'rounds/0/propose').exists())

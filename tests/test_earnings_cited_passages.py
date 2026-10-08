@@ -1,3 +1,4 @@
+from pathlib import Path
 """Fictitious saved-proposal resolution; no model or private research calls."""
 import copy
 import io
@@ -54,8 +55,8 @@ class CitedPassagesTests(PassageFixture, unittest.TestCase):
         process = patch.object(c.subprocess, 'run', side_effect=lambda *a, **k:
                                SimpleNamespace(stdout=json.dumps(self.exported)))
         self.process = process.start(); self.addCleanup(process.stop)
-        receipt = patch.object(c, 'verify_job', side_effect=lambda job: {
-            'content': base.read(job/'output.json')['content'],
+        receipt = patch.object(c, 'verify_saved_proposal', side_effect=lambda imported, records: {
+            'content': base.read(Path(imported['job'])/'output.json')['content'],
             'receipt': {'session': {'id': 'fictional-original-author', 'usage': {'totalTokens': 116314}}}})
         self.receipt = receipt.start(); self.addCleanup(receipt.stop)
         self.output = self.root/'resolved-continuation'
