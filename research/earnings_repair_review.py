@@ -18,7 +18,7 @@ VERSION = 'focused-repair-review-v1'
 
 def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
            candidate_sha256, plan_sha256, seen_sessions, remaining_tokens,
-           max_prompt_chars, verifier, admission_fn=None):
+           max_prompt_chars, verifier, admission_fn=None, max_expansions=1):
     """Return pending/status request fields or completed/result; never execute.
 
     ``seen_sessions`` is the replay-wide mutable set, initialized from previous
@@ -38,10 +38,12 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
         key = label + '_sha256'
         if key in bindings and bindings[key] != value:
             raise ValueError('Conflicting source identity binding')
+    if type(max_expansions) is not int or max_expansions not in (0,1):
+        raise ValueError('Zero or one evidence expansion required')
     first = Path(job_base)
     extra_scopes, requests, prior_output = (), [], None
     tokens = 0
-    for expansion in range(2):
+    for expansion in range(max_expansions+1):
         job = first if expansion == 0 else first.with_name(first.name + '-evidence-1')
         expected = {**copy.deepcopy(bindings), 'review_context_version': VERSION,
                     'candidate_sha256': candidate_sha256, 'plan_sha256': plan_sha256,
@@ -111,7 +113,7 @@ def replay(job_base, prompt_factory, bindings, model, bundle, catalog,
             return {**response, 'status': 'budget_exhausted', 'review_verdict': 'needs_evidence'}
         if len(prompt) > max_prompt_chars:
             return {**response, 'status': 'prompt_too_large', 'review_verdict': 'needs_evidence'}
-        if expansion == 1 or not expansion_data['scope_ids']:
+        if expansion == max_expansions or not expansion_data['scope_ids']:
             return {**response, 'status': 'evidence_insufficient',
                     'error': 'One evidence expansion exhausted; no final review verdict was obtained'}
         requests = copy.deepcopy(content['requests'])
