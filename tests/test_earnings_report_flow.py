@@ -8,6 +8,17 @@ from research import earnings_passage_pipeline as pipe
 from research import earnings_report_flow as flow
 
 
+def grounded_coverage(bundle):
+    """Fictitious role output explicitly joins source-bound exchange IDs."""
+    return [dict(exchange_id=e['exchange_id'], question='Fictional question', answer='Fictional response',
+                 consequence='Fictional implication',
+                 question_passage_ids=[pid for t in e['turns'] if t['id'] in e['question_turn_ids'] for pid in t['passage_ids']],
+                 answer_passage_ids=[pid for t in e['turns'] if t['id'] in e['answer_turn_ids'] for pid in t['passage_ids']],
+                 continuation_exchange_ids=[], grounding_status='bound',
+                 grounding_notes='Fictitious indexed membership; source semantics still need review.')
+            for e in bundle['qa_grounding']['exchanges']]
+
+
 class FlowTests(PassageFixture,unittest.TestCase):
     def setUp(self):
         super().setUp()
@@ -156,6 +167,11 @@ class PreparedFlowTests(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve()
         financial_fixture(self.root)  # Real deterministic parser input, entirely fictional.
         raw, text, _ = publisher_fixture()
+        # This end-to-end fixture needs an identified issuer response for every
+        # question. Unknown supplier attribution has separate grounding tests.
+        from research.source_parse import page
+        raw = raw.replace(b'Guest, Fictional Supplier', b'COO, Fictional Widgets')
+        text = page(raw, '').text
         (self.root/'call.html').write_bytes(raw)
         (self.root/'call.txt').write_bytes(text.encode())
         self.writing = self.root/'writing.txt'; self.writing.write_text('Fictional concise writing standard')
@@ -187,6 +203,7 @@ class PreparedFlowTests(unittest.TestCase):
             {'exchange_id':e['id'],'question':'Fictional question','answer':'Fictional answer','consequence':'Fictional consequence'}
             for e in self.bundle['transcript_index']['exchanges']], 'document_findings':[],
             'quotes':[{'passage_id':p} for p in ids]}
+        self.retrieval['exchange_coverage'] = grounded_coverage(self.bundle)
         self.analysis = {'title':'Fictional Widgets Q1 event update','opening':'Fictional evidence.',
                          'opening_citations':[did], 'findings':[
                              {'heading':'Fictional finding','text':'Fictional sourced commentary.',
@@ -305,12 +322,18 @@ class PreparedSidecarTests(unittest.TestCase):
         did=bundle['documents']['chunks'][0]['id']
         quote_ids=[p['passage_id'] for p in catalog['passages'] if p['text'].strip()][:4]
         deps={'financial':{'rows':[{'label':'Fictional revenue','fact_ids':[fid]}],'context':[],'gaps':[]},
-              'retrieval':{'selected_document_ids':[did],'exchange_coverage':[],'document_findings':[],'quotes':[{'passage_id':x} for x in quote_ids]},
+              'retrieval':{'selected_document_ids':[did],'exchange_coverage':grounded_coverage(bundle),'document_findings':[],'quotes':[{'passage_id':x} for x in quote_ids]},
               'analysis':{'title':'Fictional report','opening':'Fictional source-backed overview.',
                           'opening_citations':[did],'findings':[],'next_tests':[],'scope':'Fictional scope'}}
-        for role in ('financial','retrieval','analysis','review'):
+        for role in ('financial','retrieval'):
             prompt=pipe.prompt(role,bundle,self.writing.read_text(),deps,[],catalog)
             self.assertIn('fake-packet',prompt)
+        # The source-reviewed moderator role preserves occupation uncertainty,
+        # but its unassigned turn (including a title line) has no mechanical
+        # courtesy/routing exemption. Identity correctness cannot waive this gap.
+        for role in ('analysis','review'):
+            with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'Substantive unassigned Q&A turns'):
+                pipe.prompt(role,bundle,self.writing.read_text(),deps,[],catalog)
         self.assertEqual(self.packet['documents'][1]['document_id'],'qualified-packet-call-id')
 
     def test_sidecar_requires_explicit_catalog_identity_and_rejects_wrong_identity(self):

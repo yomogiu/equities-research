@@ -23,11 +23,19 @@ from research import earnings_compact_evidence as evidence
 from research import earnings_passages as passages
 from research import earnings_repair_context as context
 from research import earnings_repair_review as review_loop
+from research import earnings_budget as budget
+from research import earnings_regression_findings as regression
+from research import earnings_cited_passages as cited_passages
+from research import earnings_qa_grounding as qa_grounding
 from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'deterministic-corrections-v1'
 MODEL = ('gpt-6.1-sol', 'medium')
 EMPTY_FORMAT = {'rows': {}, 'basis': {'text': '', 'citations': []}}
+MAX_PLAN_BYTES = 262144
+MAX_REPLACEMENT_CHARACTERS = 128000
+MAX_REASON_CHARACTERS = 4000
+EXCHANGE_FIELDS = ('question', 'answer', 'consequence')
 
 
 def fields(value, names, label):
@@ -37,13 +45,18 @@ def fields(value, names, label):
 
 def registry(snapshot, bundle):
     """Opaque IDs identify allowlisted locations; the snapshot prevents index drift."""
-    targets = {}
-    def add(path, kind, value, citations=None):
+    targets = {}; logical = {}
+    def add(path, kind, value, citations=None, logical_path=None):
         key = 'target-' + base.digest(path)[:20]
+        logical_path = logical_path or path
+        logical_id = 'logical-' + base.digest(logical_path)[:20]
         targets[key] = {'path': path, 'kind': kind, 'value': value,
-                        'expected_sha256': base.digest(value), 'citation_path': citations}
+                        'expected_sha256': base.digest(value), 'citation_path': citations,
+                        'logical_target_id': logical_id}
+        logical.setdefault(logical_id, {'path': logical_path, 'target_ids': []})['target_ids'].append(key)
     a = snapshot['artifacts']['analysis']
     add(['artifacts', 'analysis', 'opening'], 'text', a['opening'], ['artifacts', 'analysis', 'opening_citations'])
+    add(['artifacts', 'analysis', 'scope'], 'text', a['scope'])
     for i, item in enumerate(a['findings']):
         for field in ('heading', 'text'):
             add(['artifacts', 'analysis', 'findings', i, field], 'text', item[field], ['artifacts', 'analysis', 'findings', i, 'citations'])
@@ -54,6 +67,8 @@ def registry(snapshot, bundle):
         add(['format', 'rows', key], 'row', snapshot['format']['rows'].get(key))
     add(['format', 'basis'], 'basis', snapshot['format']['basis'])
     add(['format', 'layout'], 'layout', snapshot['format'].get('layout'))
+    for key in repair.table_catalog(snapshot['artifacts']['financial'], bundle):
+        add(['format', 'tables', key], 'table', snapshot['format'].get('tables', {}).get(key))
     # Interpretive metadata may be corrected without regenerating observations
     # or selected quotations. All repeated uses are inventoried for the batch.
     for i, item in enumerate(snapshot['artifacts']['financial']['context']):
@@ -64,8 +79,18 @@ def registry(snapshot, bundle):
     for i, item in enumerate(retrieval['document_findings']):
         add(['artifacts','retrieval','document_findings',i,'text'], 'text', item['text'], ['artifacts','retrieval','document_findings',i,'citations'])
     for i, item in enumerate(retrieval['exchange_coverage']):
-        for field in ('question','answer','consequence'):
-            add(['artifacts','retrieval','exchange_coverage',i,field], 'text', item[field])
+        path = ['artifacts', 'retrieval', 'exchange_coverage', i]
+        add(path, 'exchange', item, logical_path=path)
+        for field in EXCHANGE_FIELDS:
+            add(path + [field], 'text', item[field], logical_path=path)
+    # Exact citation replacement is separate from the evidence supplied to justify
+    # an operation. Text operations retain their legacy additive behavior unless
+    # explicitly told to preserve the report's citation list.
+    add(['artifacts', 'analysis', 'opening_citations'], 'citations', a['opening_citations'])
+    for role, section in (('financial', 'context'), ('retrieval', 'document_findings'),
+                          ('analysis', 'findings'), ('analysis', 'next_tests')):
+        for i, item in enumerate(snapshot['artifacts'][role][section]):
+            add(['artifacts', role, section, i, 'citations'], 'citations', item['citations'])
     sources = {}
     for i, note in enumerate(snapshot['artifacts']['financial']['context']):
         key = 'context-' + base.digest([i, note])[:20]
@@ -81,8 +106,11 @@ def registry(snapshot, bundle):
             sources[key + '-span-' + str(start)] = {
                 'value': selected, 'sha256': base.digest(selected),
                 'parent_sha256': base.digest(note), 'start': start, 'end': end}
-    return {'targets': targets, 'context_sources': sources,
-            'financial_rows': repair.row_catalog(snapshot['artifacts']['financial'], bundle)}
+    return {'targets': targets, 'logical_targets': logical, 'context_sources': sources,
+            'occurrences': {row['occurrence_id']: row for row in context.addressable_inventory(snapshot, bundle)},
+            'financial_rows': repair.row_catalog(snapshot['artifacts']['financial'], bundle),
+            'financial_tables': {key: {'unit': table['unit'], 'periods': table['periods']}
+                                 for key, table in repair.table_catalog(snapshot['artifacts']['financial'], bundle).items()}}
 
 
 def get(value, path):
@@ -100,29 +128,96 @@ def claim(value, bundle, catalog):
     legacy.check_ids(value['passage_ids'], {p['passage_id'] for p in catalog['passages']}, 'original passages')
 
 
+def exchange_fields(original):
+    """Legacy entries keep their schema; grounded entries bind every support field."""
+    return EXCHANGE_FIELDS + qa_grounding.FIELDS if any(key in original for key in qa_grounding.FIELDS) else EXCHANGE_FIELDS
+
+
+def normalize_plan(snapshot, plan, bundle):
+    """Expand logical exchange edits into exact leaf deltas for source review.
+
+    The caller's plan and hash remain unchanged. Independent decisions continue
+    to use each original operation ID; parent_operation_id links every leaf back
+    to its one atomic logical decision.
+    """
+    result = copy.deepcopy(plan); operations = []
+    targets = registry(snapshot, bundle)['targets']
+    for op in result['operations']:
+        if 'path' in op:
+            operations.append(op)
+            continue
+        if op.get('target_id') not in targets:
+            raise ValueError('Unknown correction target ID')
+        target = targets[op['target_id']]
+        if op.get('op') == 'replace_exchange' and target['kind'] == 'exchange':
+            names = exchange_fields(target['value'])
+            fields(op.get('value'), names, 'exchange value')
+            for field in names:
+                path = target['path'] + [field]
+                operations.append({**op, 'id': 'edit-' + base.digest([op['id'], path])[:24],
+                                   'parent_operation_id': op['id'], 'path': path,
+                                   'value': op['value'][field]})
+        else:
+            operations.append({**op, 'path': target['path']})
+    result['operations'] = operations
+    return result
+
+
 def apply(snapshot, plan, bundle, catalog):
     """Pure atomic staging: a failed operation returns no partially changed state."""
     fields(plan, ('snapshot_sha256', 'operations', *(['claim_groups'] if 'claim_groups' in plan else [])), 'plan')
     if plan['snapshot_sha256'] != base.digest(snapshot): raise ValueError('Stale snapshot')
-    if not isinstance(plan['operations'], list) or len(plan['operations']) > 24:
-        raise ValueError('At most 24 operations per round')
+    if not isinstance(plan['operations'], list):
+        raise ValueError('Correction operations must be a list')
+    if len(json.dumps(plan, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode('utf-8')) > MAX_PLAN_BYTES:
+        raise ValueError(f'Correction plan exceeds {MAX_PLAN_BYTES} UTF-8 bytes')
     index = registry(snapshot, bundle); out = copy.deepcopy(snapshot); seen = set(); ids = set()
+    if len(plan['operations']) > len(index['targets']):
+        raise ValueError('Correction operations exceed the finite target registry')
+    written = set(); citation_writers = {}; replacement_characters = 0
+    # Validate navigation before staging any edit or spending a review call.
+    context.resolve_claim_groups(plan.get('claim_groups', []), list(index['occurrences'].values()))
     common = {'id', 'target_id', 'expected_sha256', 'op', 'citations', 'passage_ids', 'reason'}
     for op in plan['operations']:
         if not isinstance(op, dict): raise ValueError('Operation must be an object')
         extra = {'source_id', 'source_sha256', 'old_text'} if op.get('op') == 'copy_context' else {'value'}
         if op.get('op') == 'replace_text' and 'old_text' in op:
             extra = {'value', 'old_text'}
+        if 'citation_mode' in op and op.get('op') in ('replace_text', 'copy_context'):
+            extra = extra | {'citation_mode'}
         fields(op, common | extra, 'operation')
         legacy.check_text(op['id'], 'operation ID')
+        if not isinstance(op['target_id'], str) or not op['target_id']:
+            raise ValueError('Nonempty target_id string required')
         if op['id'] in ids or op['target_id'] in seen: raise ValueError('Duplicate operation or conflicting target')
         ids.add(op['id']); seen.add(op['target_id'])
         if op['target_id'] not in index['targets']: raise ValueError('Target is outside correction allowlist')
         target = index['targets'][op['target_id']]
         if op['expected_sha256'] != target['expected_sha256']: raise ValueError('Stale target')
+        if 'citation_mode' in op and (op['citation_mode'] != 'preserve' or not target['citation_path']):
+            raise ValueError('citation_mode must be preserve on a text target with report citations')
+        direct_paths = ([target['path'] + [field] for field in exchange_fields(target['value'])]
+                        if target['kind'] == 'exchange' else [target['path']])
+        for path in direct_paths:
+            path = tuple(path)
+            if any(path[:len(other)] == other or other[:len(path)] == path for other in written):
+                raise ValueError('Conflicting logical and field correction targets')
+            written.add(path)
+        citation_path = (target['path'] if target['kind'] == 'citations'
+                         else target['citation_path'] if op.get('citation_mode') != 'preserve' else None)
+        if citation_path:
+            key = tuple(citation_path); writer = 'explicit' if target['kind'] == 'citations' else 'implicit'
+            previous = citation_writers.get(key)
+            if previous and (writer == 'explicit' or previous == 'explicit'):
+                raise ValueError('Exact citation replacement conflicts with another citation writer; use citation_mode preserve on prose edits')
+            citation_writers[key] = writer
         claim(op, bundle, catalog)
+        if len(op['reason']) > MAX_REASON_CHARACTERS:
+            raise ValueError(f'Operation reason exceeds {MAX_REASON_CHARACTERS} characters')
         citations = op['citations']; kind = target['kind']; original = target['value']
         if op['op'] == 'copy_context' and kind in ('text', 'basis'):
+            if not isinstance(op['source_id'], str) or not op['source_id']:
+                raise ValueError('Nonempty source_id string required')
             source = index['context_sources'].get(op['source_id'])
             if not source or source['sha256'] != op['source_sha256']: raise ValueError('Stale or unknown context source')
             old = op['old_text']; original_text = original['text'] if kind == 'basis' else original
@@ -156,6 +251,18 @@ def apply(snapshot, plan, bundle, catalog):
                 value = original[:start] + value + original[start + len(old):]
             legacy.check_text(value, 'replacement text')
             if len(value) > 4000: raise ValueError('Replacement result exceeds 4000 characters')
+        elif op['op'] == 'replace_citations' and kind == 'citations':
+            value = op['value']
+            legacy.check_ids(value, legacy.ids_for(bundle), 'exact replacement citations')
+        elif op['op'] == 'replace_exchange' and kind == 'exchange':
+            fields(op['value'], exchange_fields(original), 'exchange value')
+            for field in EXCHANGE_FIELDS:
+                legacy.check_text(op['value'][field], 'exchange ' + field)
+                if len(op['value'][field]) > 4000:
+                    raise ValueError('Exchange field exceeds 4000 characters')
+            # Preserve exchange_id and any original metadata or quote selections;
+            # only the three prose leaves belong to this logical edit.
+            value = {**copy.deepcopy(original), **copy.deepcopy(op['value'])}
         elif op['op'] == 'set_display' and kind in ('row', 'basis'):
             value = op['value']
             fields(value, ('label', 'dimensions') if kind == 'row' else ('text',), 'display value')
@@ -164,6 +271,11 @@ def apply(snapshot, plan, bundle, catalog):
                 if not isinstance(text, str) or len(text) > limits[key]:
                     raise ValueError(f'display.{key}: limit {limits[key]} characters; received {len(text) if isinstance(text, str) else "non-text"}')
             value = {**value, 'citations': citations}
+        elif op['op'] == 'set_table_labels' and kind == 'table':
+            fields(op['value'], ('unit_label', 'period_labels'), 'table label value')
+            value = {**op['value'], 'citations': citations}
+            repair.validate_table_labels({target['path'][-1]: value}, out['artifacts']['financial'], bundle)
+            out['format'].setdefault('tables', {})
         elif op['op'] == 'set_layout' and kind == 'layout':
             value = op['value']
             repair.validate_format({**out['format'], 'layout': value}, out['artifacts']['financial'], bundle)
@@ -175,10 +287,14 @@ def apply(snapshot, plan, bundle, catalog):
             if any(not any(q == item for item in remaining) for q in value): raise ValueError('Quotes must remain an ordered subsequence')
         else:
             raise ValueError('Unsupported operation for target kind')
+        replacement_characters += (len(value) if isinstance(value, str)
+                                   else len(json.dumps(value, ensure_ascii=False, separators=(',', ':'))))
+        if replacement_characters > MAX_REPLACEMENT_CHARACTERS:
+            raise ValueError(f'Correction replacement payload exceeds {MAX_REPLACEMENT_CHARACTERS} characters')
         # Idempotent instructions still require source/hash validation and review.
         # Citation-only repairs may retain the exact prose while fixing its support.
         put(out, target['path'], value)
-        if target['citation_path']:
+        if target['citation_path'] and op.get('citation_mode') != 'preserve':
             before = get(out, target['citation_path'])
             put(out, target['citation_path'], list(dict.fromkeys(before + citations)))
     for role in ('financial', 'retrieval', 'analysis'):
@@ -186,10 +302,8 @@ def apply(snapshot, plan, bundle, catalog):
     repair.validate_format(out['format'], out['artifacts']['financial'], bundle)
     if out['artifacts']['financial']['rows'] != snapshot['artifacts']['financial']['rows']:
         raise ValueError('Verified observations changed')
-    normalized = copy.deepcopy(plan)
-    for op in normalized['operations']:
-        op['path'] = index['targets'][op['target_id']]['path']
-    context.propagation_check(snapshot, out, normalized)
+    normalized = normalize_plan(snapshot, plan, bundle)
+    context.propagation_check(snapshot, out, normalized, bundle)
     return out
 
 
@@ -231,6 +345,8 @@ def adjudicate(before, candidate, plan, review, bundle, catalog):
     accepted = review['verdict'] == 'pass'
     if accepted and (not review['approve_patch'] or unresolved or any(c['status'] != 'pass' for c in review['criteria'].values())):
         raise ValueError('Acceptance requires approved exact patch, resolved findings and passing rubric')
+    if accepted:
+        qa_grounding.require_analysis_ready(candidate['artifacts']['retrieval'], bundle, catalog)
     out = copy.deepcopy(candidate if review['approve_patch'] else before)
     out['findings'] = unresolved
     return out, 'accepted' if accepted else review['verdict']
@@ -251,13 +367,13 @@ from research import earnings_experiment as b
 from research import earnings_report_repair as r
 from research import earnings_passage_pipeline as p
 root=Path(sys.argv[1]); protocol=b.read(root/'protocol.json'); imported=None; spent_tokens=0
-if protocol.get('version') == 'deterministic-corrections-v1':
+if protocol.get('version') in ('deterministic-corrections-v1', 'deterministic-corrections-regression-v1', 'deterministic-corrections-cited-passages-v1'):
     from research import earnings_corrections as c
     cp,bundle,catalog,writing=c.load(root)
     progress=c.replay(root,cp,bundle,catalog,writing)
     snapshot=progress['state']; sp=cp['source_protocol']; used_rounds=progress['round']+(0 if cp.get('new_experiment') else cp.get('prior_rounds',0)); spent_tokens=progress['tokens']+cp.get('inherited_tokens',0)
-    if len(sys.argv)>2 and sys.argv[2]=='reuse':
-        if not ((progress['status'] in ('pending','budget_exhausted','prompt_too_large') and progress.get('role')=='review') or progress['status']=='invalid_patch'):
+    if len(sys.argv)>2 and sys.argv[2] in ('reuse','evidence'):
+        if not ((progress['status'] in ('pending','budget_exhausted','prompt_too_large') and progress.get('role')=='review') or progress['status']=='invalid_patch' or (sys.argv[2]=='evidence' and progress['status']=='evidence_insufficient' and progress.get('role')=='review')):
             raise ValueError('Only an authenticated unreviewed proposal may be reused')
         prior=cp.get('imported_proposal') if progress['round']==0 else None
         job=Path(prior['job']) if prior else root/'rounds'/str(progress['round'])/'propose'
@@ -283,22 +399,100 @@ print(json.dumps({'snapshot':snapshot,'source_protocol':sp,'used_rounds':used_ro
 '''
 
 
-def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=False, reuse_proposal=False):
-    seed = Path(seed).resolve(); root = Path(output).resolve()
-    if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
-        raise ValueError('Use a new private directory outside code and the seed')
-    if type(max_rounds) is not int or not 1 <= max_rounds <= 2 or type(max_tokens) is not int or max_tokens <= 0:
-        raise ValueError('One or two rounds and a positive token budget required')
+def export_seed(seed, reuse_proposal=False, resume_evidence=False):
+    """Authenticate and replay a seed using its own frozen verifier checkout."""
     sp = base.read(seed/'protocol.json')
     for record in sp['code']:
         if base.sha(record['path']) != record['sha256']: raise ValueError('Frozen source code changed')
     code = Path(next(c['path'] for c in sp['code'] if c['path'].endswith('/earnings_passage_pipeline.py'))).parent.parent
-    process = subprocess.run([sys.executable, '-c', EXPORT, str(seed), 'reuse' if reuse_proposal else 'fresh'], cwd=code, env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
-    exported = json.loads(process.stdout); snapshot = exported['snapshot']; sp = exported['source_protocol']
+    process = subprocess.run([sys.executable, '-c', EXPORT, str(seed), 'evidence' if resume_evidence else 'reuse' if reuse_proposal else 'fresh'], cwd=code, env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
+    return json.loads(process.stdout)
+
+
+def resolved_import(snapshot, imported, bundle, catalog):
+    """Authenticate the unchanged author output before completing source locations."""
+    fields(imported, ('job', 'output_sha256'), 'Imported proposal')
+    job = Path(imported['job'])
+    if base.sha(job/'output.json') != imported['output_sha256']:
+        raise ValueError('Imported proposal changed')
+    result = verify_job(job)
+    request = base.read(job/'request.json')
+    if (request['bindings'].get('snapshot_sha256') != base.digest(snapshot)
+            or request['bindings'].get('role') != 'propose'
+            or (request['model'], request['effort']) != MODEL):
+        raise ValueError('Imported proposal belongs to a different snapshot or role')
+    effective, manifest = cited_passages.resolve(result['content'], bundle, catalog, imported['output_sha256'])
+    # The ordinary atomic validator remains authoritative for every operation,
+    # including immutable observations, quotes, hashes and claim propagation.
+    apply(snapshot, effective, bundle, catalog)
+    return effective, manifest
+
+
+def review_evidence_binding(seed, exported, snapshot, sp):
+    """Bind a stopped evidence request to the unchanged independently reviewed candidate."""
+    # The original verifier already replays each request and authenticates its receipts.
+    old = base.read(seed/'protocol.json')
+    round_no = exported['used_rounds'] - (0 if old.get('new_experiment') else old.get('prior_rounds', 0))
+    folder = seed/'rounds'/str(round_no)
+    candidate = base.read(folder/'candidate.json'); plan = base.read(folder/'plan.json')
+    requests, jobs = [], []
+    for name in ('review', 'review-evidence-1'):
+        job = folder/name; result = verify_job(job); content = result['content']
+        if (set(content) != {'verdict','candidate_sha256','plan_sha256','requests'}
+                or content['verdict'] != 'needs_evidence'
+                or content['candidate_sha256'] != base.digest(candidate)
+                or content['plan_sha256'] != base.digest(plan)):
+            raise ValueError('Only a pending exact-candidate evidence request may resume')
+        requests.extend(content['requests']); jobs.append({'path':str(job),'output_sha256':base.sha(job/'output.json'),'session_id':result['receipt']['session']['id']})
+    bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+    resolved = context.evidence_response(bundle, catalog, requests)
+    return {'version':'saved-review-evidence-v1','jobs':jobs,'requests':requests,
+            'scope_ids':resolved['scope_ids'],'candidate_sha256':base.digest(candidate),
+            'plan_sha256':base.digest(plan),'snapshot_sha256':base.digest(snapshot), 'additional_lookup_rounds':0}
+
+
+def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False, resume_evidence=False):
+    seed = Path(seed).resolve(); root = Path(output).resolve()
+    if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
+        raise ValueError('Use a new private directory outside code and the seed')
+    if type(max_rounds) is not int or not 1 <= max_rounds <= 2 or (max_tokens is not None and (type(max_tokens) is not int or max_tokens <= 0)):
+        raise ValueError('One or two rounds and a positive token budget or None required')
+    if regression_findings is not None and (reuse_proposal or new_experiment):
+        raise ValueError('Regression findings cannot reuse a proposal or reset the experiment')
+    if resolve_cited_passages and (not reuse_proposal or new_experiment or regression_findings is not None):
+        raise ValueError('Cited-passage resolution requires proposal reuse without new experiment or regression findings')
+    seed_protocol = base.read(seed/'protocol.json')
+    if reuse_proposal and seed_protocol.get('version') == cited_passages.VERSION and not resolve_cited_passages:
+        raise ValueError('Reusing a resolved proposal requires explicit cited-passage resolution')
+    if resume_evidence and (not reuse_proposal or new_experiment or regression_findings or resolve_cited_passages):
+        raise ValueError('Evidence recovery requires unchanged saved proposal and original budget')
+    if resume_evidence:
+        if max_tokens is not None and max_tokens != seed_protocol.get('max_tokens'):
+            raise ValueError('Evidence recovery cannot change the original token ceiling')
+        max_tokens = seed_protocol.get('max_tokens')
+    exported = export_seed(seed, reuse_proposal, resume_evidence)
+    snapshot = exported['snapshot']; sp = exported['source_protocol']
     if reuse_proposal and not exported['imported_proposal']: raise ValueError('No reusable staged proposal')
     remaining = max_rounds if new_experiment else min(max_rounds, 2-exported['used_rounds'])
     if remaining <= 0: raise ValueError('Prior correction budget exhausted; a separately authorized experiment requires --new-experiment')
     if set(snapshot['artifacts']) != {'financial', 'retrieval', 'analysis'}: raise ValueError('Complete prepared report required')
+    supplemental_bindings = {}
+    resolution = None
+    if resolve_cited_passages:
+        bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+        qa_grounding.attach(None, sp, bundle, catalog)
+        if base.digest(catalog) != base.digest(base.read(Path(sp['evidence_manifest']).parent.parent/'passages.json')):
+            raise ValueError('Original passages changed')
+        _, resolution = resolved_import(snapshot, exported['imported_proposal'], bundle, catalog)
+        regression.budget({'prior_rounds': exported['used_rounds'], 'inherited_tokens': exported['spent_tokens'],
+                           'max_rounds': remaining, 'max_tokens': max_tokens}, exported, seed_protocol)
+    if regression_findings is not None:
+        bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+        qa_grounding.attach(None, sp, bundle, catalog)
+        additions, supplemental_bindings = regression.read(regression_findings, sp, bundle, catalog)
+        snapshot = regression.append(snapshot, additions)
+        regression.budget({'prior_rounds': exported['used_rounds'], 'inherited_tokens': exported['spent_tokens'],
+                           'max_rounds': remaining, 'max_tokens': max_tokens}, exported, base.read(seed/'protocol.json'))
     if not snapshot['findings']: raise ValueError('No unresolved review findings')
     root.mkdir(parents=True, exist_ok=True)
     if any(root.iterdir()): raise ValueError('New correction directory must be empty')
@@ -308,13 +502,24 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
     bound = {str(f): base.sha(f) for d in dirs for f in d.rglob('*') if f.is_file() and not f.name.startswith('.')}
     seed_protocol = base.read(seed/'protocol.json')
     bound.update(seed_protocol.get('source_bindings', {}))
+    bound.update(supplemental_bindings)
     names = [f for f in Path(__file__).parent.glob('earnings_*.py')] + [Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol = {'version': VERSION, 'seed': str(seed), 'source_bindings': bound, 'source_protocol': sp,
                 'initial_sha256': base.digest(snapshot), 'code': [{'path': str(f), 'sha256': base.sha(f)} for f in names],
                 'model': list(MODEL), 'max_rounds': remaining, 'max_tokens': max_tokens, 'max_prompt_chars': 1500000, 'imported_proposal': exported['imported_proposal'],
                 'source_code': seed_protocol['code'] + seed_protocol.get('source_code', []),
                 'new_experiment': bool(new_experiment), 'prior_rounds': exported['used_rounds'],
-                'inherited_tokens': 0 if new_experiment else exported['spent_tokens']}
+                'inherited_tokens': 0 if new_experiment else exported['spent_tokens'],
+                'financial_context_version': context.FINANCIAL_CONTEXT_VERSION}
+    if regression_findings is not None:
+        path = str(Path(regression_findings).resolve())
+        protocol['version'] = regression.VERSION
+        protocol['regression_findings'] = {'path': path, 'sha256': supplemental_bindings[path]}
+    if resolve_cited_passages:
+        protocol['version'] = cited_passages.VERSION
+        protocol['passage_resolution'] = resolution
+    if resume_evidence:
+        protocol['evidence_resume'] = review_evidence_binding(seed, exported, snapshot, sp)
     repair.write(root/'protocol.json', protocol); repair.write(root/'initial.json', snapshot)
     load(root)
     return {'status': 'pending', 'max_rounds': remaining, 'findings': len(snapshot['findings'])}
@@ -322,7 +527,19 @@ def initialize(seed, output, max_rounds=2, max_tokens=600000, new_experiment=Fal
 
 def load(root):
     p = base.read(root/'protocol.json')
-    if p['version'] != VERSION or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
+    if p.get('financial_context_version') not in (None, context.FINANCIAL_CONTEXT_VERSION):
+        raise ValueError('Financial evidence context version differs')
+    if p['version'] not in (VERSION, regression.VERSION, cited_passages.VERSION) or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
+    if p['version'] == cited_passages.VERSION:
+        if (not isinstance(p.get('passage_resolution'), dict) or not p.get('imported_proposal')
+                or p.get('new_experiment') or 'regression_findings' in p):
+            raise ValueError('Cited-passage resolution requires its manifest and original imported proposal')
+    elif 'passage_resolution' in p:
+        raise ValueError('Cited-passage resolution requires its explicit protocol version')
+    if p['version'] == regression.VERSION:
+        regression.fields(p.get('regression_findings'), ('path', 'sha256'), 'Regression findings binding')
+    elif 'regression_findings' in p:
+        raise ValueError('Regression findings require their supplemental protocol version')
     for c in p['code']:
         if base.sha(c['path']) != c['sha256'] or base.sha(Path(__file__).parent/Path(c['path']).name) != c['sha256']:
             raise ValueError('Correction code changed')
@@ -331,30 +548,86 @@ def load(root):
     for path, digest in p['source_bindings'].items():
         if base.sha(path) != digest: raise ValueError('Original seed changed')
     if base.digest(base.read(root/'initial.json')) != p['initial_sha256']: raise ValueError('Initial snapshot changed')
+    if p.get('evidence_resume'):
+        exported = export_seed(Path(p['seed']), True, True)
+        expected = review_evidence_binding(Path(p['seed']), exported, base.read(root/'initial.json'), p['source_protocol'])
+        if (expected != p['evidence_resume'] or p.get('imported_proposal') != exported['imported_proposal']
+                or p.get('new_experiment') or p['prior_rounds'] != exported['used_rounds']
+                or p['inherited_tokens'] != exported['spent_tokens'] or p['max_rounds'] + p['prior_rounds'] > 2
+                or p.get('max_tokens') != base.read(Path(p['seed'])/'protocol.json').get('max_tokens')):
+            raise ValueError('Review evidence recovery or inherited accounting changed')
     sp = p['source_protocol']
     for path, digest in [(sp['case_path'], sp['case_sha256']), (sp['writing_standard'], sp['writing_sha256']), (sp['evidence_manifest'], sp['evidence_sha256'])]:
         if base.sha(path) != digest: raise ValueError('Original source binding changed')
     bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+    qa_grounding.attach(None, sp, bundle, catalog)
     if base.digest(catalog) != base.digest(base.read(Path(sp['evidence_manifest']).parent.parent/'passages.json')):
         raise ValueError('Original passages changed')
+    if p['version'] == regression.VERSION:
+        source = export_seed(Path(p['seed']))
+        if source['source_protocol'] != sp:
+            raise ValueError('Regression findings original source protocol changed')
+        regression.verify(p, base.read(root/'initial.json'), bundle, catalog, source, base.read(Path(p['seed'])/'protocol.json'))
+    if p['version'] == cited_passages.VERSION:
+        source = export_seed(Path(p['seed']), reuse_proposal=True)
+        initial = base.read(root/'initial.json')
+        if (source['source_protocol'] != sp or source['snapshot'] != initial
+                or source['imported_proposal'] != p['imported_proposal']):
+            raise ValueError('Resolved proposal differs from authenticated source handoff')
+        regression.budget(p, source, base.read(Path(p['seed'])/'protocol.json'))
+        imported = p['imported_proposal']
+        if p['source_bindings'].get(str(Path(imported['job'])/'output.json')) != imported['output_sha256']:
+            raise ValueError('Resolved proposal original output binding changed')
+        _, manifest = resolved_import(initial, imported, bundle, catalog)
+        if manifest != p['passage_resolution']:
+            raise ValueError('Cited-passage resolution manifest changed')
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
-def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=()):
+def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, feedback=None, extra_scope_ids=(), passage_resolution=None, financial_context_version=None):
     common = legacy.COMMON + '\nWRITING STANDARD\n' + writing
+    qa_grounding.require_analysis_ready((snapshot if role == 'propose' else candidate)['artifacts']['retrieval'], bundle, catalog)
     if role == 'propose':
-        instruction = '''Propose a bounded correction plan. Patch only allowlisted metadata; never regenerate financial observations or retrieval selections. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...],"claim_groups":[GROUP,...]}. At most 24 operations, one per target. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context targets text or basis and also has source_id, source_sha256 and old_text. A nonempty old_text must be one unique exact existing substring to replace. Empty old_text is allowed only to initialize an exactly empty target (or empty basis.text); code copies the hash-bound context source exactly, never inserts into nonempty text. The entire copied result must fit 4000 characters for text or 240 characters for basis. replace_text targets text only and has exactly one of two payloads: {value} replaces the entire hashed target, or {old_text,value} replaces one unique nonempty exact substring of that same target, preserving its prefix and suffix. With old_text, value may be empty to delete that span, but the resulting target must remain nonempty. The entire resulting target is limited to 4000 characters. The target hash is always checked; old_text is never ignored or treated as documentation. No other payload fields are allowed. set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
+        instruction = '''Propose a bounded correction plan. Patch only allowlisted metadata; never regenerate financial observations or retrieval selections. Prefer copy_context when an existing financial context note or sentence-sized context source supplies the correction: code copies its exact text and citations. For interpretive prose use an exact replace_text patch, preserving unaffected claims. Whole-artifact regeneration is forbidden. A proposal is not approval. Prior findings can be mistaken; inspect original evidence and leave disputed changes out for independent adjudication. Return only {"snapshot_sha256":"provided hash","operations":[OP,...],"claim_groups":[GROUP,...]}. Use the finite supplied target registry and batch_contract size limits, one writer per target. Batch all pending corrections together; there is no 24-field cutoff. Each OP has id (unique), target_id, expected_sha256, op, reason, citations (source IDs), passage_ids (original P IDs). copy_context targets text or basis and also has source_id, source_sha256 and old_text. A nonempty old_text must be one unique exact existing substring to replace. Empty old_text is allowed only to initialize an exactly empty target (or empty basis.text); code copies the hash-bound context source exactly, never inserts into nonempty text. The entire copied result must fit 4000 characters for text or 240 characters for basis. replace_text targets text only and has exactly one of two payloads: {value} replaces the entire hashed target, or {old_text,value} replaces one unique nonempty exact substring of that same target, preserving its prefix and suffix. With old_text, value may be empty to delete that span, but the resulting target must remain nonempty. The entire resulting target is limited to 4000 characters. The target hash is always checked; old_text is never ignored or treated as documentation. No other payload fields are allowed. set_display has value:{label,dimensions} for a row (max160/200 characters) or value:{text} for basis (max240 characters); code attaches citations. retain_quotes has value (ordered subset of original quote selections, possibly empty). No added quotes, source facts, executable text or status changes. Preserve concise useful commentary and documented non-answers; prune invented contrasts and redundant cautions. Empty operations allows a source-backed mistaken finding to be withdrawn by the reviewer.'''
         data = {'snapshot_sha256': base.digest(snapshot), 'pending_findings': snapshot['findings'],
                 'registry': registry(snapshot, bundle), 'prepared_retrieval': snapshot['artifacts']['retrieval'],
                 'previous_review': feedback}
-        data['occurrence_inventory'] = context.occurrence_inventory(snapshot)
+        data['batch_contract'] = {
+            'maximum_operations': len(data['registry']['targets']),
+            'maximum_plan_utf8_bytes': MAX_PLAN_BYTES,
+            'maximum_total_replacement_characters': MAX_REPLACEMENT_CHARACTERS,
+            'maximum_reason_characters': MAX_REASON_CHARACTERS,
+            'maximum_prose_field_characters': 4000,
+            'rules': ['Use only exact registry target IDs and their expected_sha256.',
+                      'Logical exchange and individual field operations may not overlap.',
+                      'One independent decision is required for every original operation ID.',
+                      'A replace_exchange decision approves or rejects all of its leaf edits together.']}
+        data['metadata_operation_contract'] = {
+            'replace_citations': {'target_kind': 'citations', 'value': ['EXACT SOURCE ID'],
+                'rules': ['Replace the exact hashed report citation list with a nonempty unique source-ID list.',
+                          'Operation citations/passage_ids justify the edit; value is the resulting report list.',
+                          'No implicit writer may also change this list. Set citation_mode: preserve on accompanying replace_text/copy_context text operations.']},
+            'replace_exchange': {'target_kind': 'exchange', 'value_fields': list(EXCHANGE_FIELDS),
+                'grounded_value_fields': list(EXCHANGE_FIELDS + qa_grounding.FIELDS),
+                'rules': ['Supply all three question/answer/consequence prose fields, each nonempty and <=4000 characters.',
+                          'For an entry with grounding fields, also supply every grounded support field; exact membership is revalidated.',
+                          'The full original entry hash is checked; code preserves exchange_id, membership, quotes and other metadata.',
+                          'Do not add/remove/reorder exchanges. Original claim-group occurrence IDs address individual fields.']},
+            'set_table_labels': {'target_kind': 'table', 'value_fields': ['unit_label', 'period_labels'],
+                'rules': ['Use the exact original table target and catalog column order.',
+                          'Each label is nonempty and <=160 characters; period label count must match the original table.',
+                          'Code attaches operation citations. Figures, periods, units and table membership stay immutable.']},
+            'row_labels': 'Use existing set_display value:{label,dimensions} for source-backed row labels such as Diluted EPS; never edit observations.'}
+        data['occurrence_inventory'] = list(data['registry'].pop('occurrences').values())
         instruction += (' Batch ALL pending corrections before returning. Correct repeated financial claims and qualifiers in every affected metadata/report field together. '
                         'Numerical observations and quote selections remain immutable. Include claim_groups for factual/qualifier changes: '
-                        '{id,aliases:[case-insensitive exact phrases],required_paths:[changed field paths],unchanged:[{path,reason}]}. '
+                        '{id,aliases:[nonempty case-insensitive exact phrases],required_occurrence_ids:[changed occurrence IDs],unchanged:[{occurrence_id,reason}]}. '
                         'Every matched existing occurrence must be patched or explicitly justified unchanged. Editorial-only changes need no claim group. '
                         'Use set_layout with an explicit supported format.layout object for presentation, retaining every numeric observation in visible or expandable detail. '
                         'Exact unchanged instructions are retained for review, never counted as text repairs. '
-                        'Use only registry or occurrence_inventory paths; explicit unchanged paths may describe paraphrases without matching a literal alias. '
+                        'Copy occurrence_id values from the supplied registry; code resolves exact paths and hashes. Never invent IDs or use aggregate objects/lists. '
+                        'Every unchanged disposition identifies one occurrence and gives a specific reason; empty aliases are invalid. '
+                        'Explicit unchanged occurrences may describe paraphrases without matching a literal alias. '
                         'A complete list of pending findings is provided; do not fix them one at a time.')
         # Supply the executable contract: a vague request for a supported layout
         # previously invited invented fields and wasted the whole atomic repair.
@@ -380,6 +653,19 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
             elif isinstance(value, list):
                 for v in value: collect(v)
         collect(snapshot)
+        collect(feedback)
+        ids.update(extra_scope_ids)
+        if financial_context_version is not None:
+            fact_ids = {row['id'] for row in bundle['financial']['observations']}
+            requested = sorted(ids & fact_ids)
+            if requested:
+                data['financial_original_context'] = context.evidence_response(
+                    bundle, catalog, [{'scope_id':sid,'reason':'Source context for correction findings'} for sid in requested],
+                    financial_context_version=financial_context_version)
+        # The reviewer and proposer must share the exact exchange membership,
+        # including split continuations and provisional boundary annotations.
+        data['canonical_exchange_index'] = context.canonical_exchange_index(bundle)
+        ids.update(turn['id'] for turn in data['canonical_exchange_index']['turns'])
         slices = evidence.source_slices(bundle['manifest'], sorted(ids))
         relevant = repair.passages_for_sources(catalog, ids, slices)
         # Provenance stays in the immutable catalog. Repeating paths and hashes
@@ -389,12 +675,32 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
 
     else:
         instruction = '''You are the independent final acceptance authority. Assess the EXACT staged report and each deterministic patch against original sources. Prior reviewer findings and proposed context notes are fallible claims. Verify periods, issuer, question/answer attribution, accounting basis, figures, citations, material coverage and concise writing. No hidden author reasoning is supplied. Code will apply approved operations unchanged; no author rewrites follow you. Distinguish patch approval from whole-report acceptance. Reject the whole atomic bundle if any operation is unsupported; it will not persist. Return only {candidate_sha256,plan_sha256,approve_patch:bool,verdict:"pass|revise|blocked",criteria:{KEY:{status:"pass|fail|unavailable",evidence:"specific assessment"}},operations:[{id,approve:bool,reason,citations,passage_ids}],resolutions:[{id,status:"closed|withdrawn|open",reason,citations,passage_ids}],findings:[{reason,citations,passage_ids}]}. Assess every operation and pending finding exactly once. All operation decisions/resolutions/new findings require nonempty original passage_ids and source citations. close repaired findings; withdraw source-disproven findings; leave genuine defects open. Findings lists only new defects in the CURRENT candidate. If rejecting a patch, resolutions apply to unchanged report; do not close findings based on rejected changes. Pass requires all operations approved, every rubric criterion pass, and no open/new finding. Report failure alone does not require rejecting sound patches. Required rubric keys: ''' + ', '.join(legacy.CRITERIA)
+        instruction += (' Each replace_exchange is one atomic logical operation: inspect every normalized leaf delta '
+                        'sharing its parent_operation_id before approving it. All three prose fields and any grounding '
+                        'support fields require source verification. replace_citations replaces report support exactly; '
+                        'check removed as well as retained IDs. Table/row labels require the original units, periods and basis. '
+                        'Every original operation ID still needs exactly one explicit decision, including batches larger than 24 fields.')
         view = repair.rendered_review_view(rendered(candidate, bundle, catalog))
         data = context.build(snapshot, candidate, plan, bundle, catalog,
                              view['report_body_html_excerpt'], writing,
-                             extra_scope_ids=extra_scope_ids)
+                             extra_scope_ids=extra_scope_ids, financial_context_version=financial_context_version)
         data.update(candidate_sha256=base.digest(candidate), plan_sha256=base.digest(plan), plan=plan,
                     rendered_links={k:v for k,v in view.items() if k != 'report_body_html_excerpt'})
+        if passage_resolution is not None:
+            if passage_resolution['resolved_plan_sha256'] != base.digest(plan):
+                raise ValueError('Reviewer resolution provenance differs from effective plan')
+            data['proposal_resolution'] = copy.deepcopy(passage_resolution)
+            instruction += (' The saved author proposal contained empty passage lists. An explicitly authorized '
+                            'deterministic derivation filled only those lists with ALL catalog passages in each '
+                            'original explicit cited scope; proposal_resolution records the exact delta and hashes. '
+                            'No prose, citations, quotes, numeric observations or author decisions were altered. '
+                            'This source-location completion is not evidence of factual support or approval. '
+                            'Independently assess every operation, including removal of source-uncertainty notes; '
+                            'retain and consider the original provisional transcript annotations in supplied evidence.')
+        # Include the complete logical plan/provenance in the same lossless
+        # transport dictionary as its leaf deltas and original source context.
+        # Repeated replacement text is supplied once, never dropped or shortened.
+        data = context.compact_context(context.expand_context(data))
         instruction += (' This is a repair review after the initial comprehensive audit. Read the complete revised report for coherence and concise writing; '
                         'verify the complete correction batch and all repeated occurrences against the supplied original evidence. '
                         'Preserve independently verified unchanged observations and quotations. Report every material remaining defect together. '
@@ -406,13 +712,13 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
 
 
 def replay(root, p, bundle, catalog, writing):
-    state = base.read(root/'initial.json'); tokens = 0; identities = set(); feedback = None
+    state = base.read(root/'initial.json'); tokens = 0; identities = {x['session_id'] for x in p.get('evidence_resume', {}).get('jobs', [])}; feedback = None
     for round_no in range(p['max_rounds']):
         folder = root/'rounds'/str(round_no)
         plan = candidate = review = None
+        resolution = p.get('passage_resolution') if round_no == 0 else None
         for role in ('propose', 'review'):
             job = folder/role
-            text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback) if role == 'propose' else None
             bindings = {'protocol_sha256': base.sha(root/'protocol.json'), 'snapshot_sha256': base.digest(state), 'round': round_no, 'role': role}
             imported = p.get('imported_proposal') if round_no == 0 and role == 'propose' else None
             if imported:
@@ -423,20 +729,29 @@ def replay(root, p, bundle, catalog, writing):
                     raise ValueError('Imported proposal belongs to a different snapshot or role')
             elif role == 'review':
                 progress = review_loop.replay(job,
-                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, scopes),
+                    lambda scopes: prompt(role, state, bundle, catalog, writing, plan, candidate, feedback, tuple(sorted(set(scopes) | set(p.get('evidence_resume', {}).get('scope_ids', []) if round_no == 0 else []))), resolution, p.get('financial_context_version')),
                     bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan), identities,
-                    p['max_tokens'] - p.get('inherited_tokens', 0) - tokens,
-                    min(p.get('max_prompt_chars', 350000), 350000), verify_job)
+                    budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), tokens),
+                    min(p.get('max_prompt_chars', 350000), 350000), verify_job, max_expansions=0 if p.get('evidence_resume') and round_no == 0 else 1)
                 tokens += progress['tokens']
-                if progress['status'] != 'completed':
+                if progress['status'] != 'completed' and not progress.get('requires_adjudication'):
                     return {**progress, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role}
                 result = progress['result']; job = progress['job']
             else:
+                try:
+                    text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback,
+                                  extra_scope_ids=p.get('evidence_resume', {}).get('scope_ids', ()),
+                                  financial_context_version=p.get('financial_context_version'))
+                except context.ContextTooLarge as exc:
+                    return {'status':'prompt_too_large','state':state,'tokens':tokens,'round':round_no,'role':role,'error':str(exc)}
                 if not (job/'output.json').exists():
-                    status = ('launch_uncertain' if (job/'request.json').exists() else
-                              'budget_exhausted' if tokens + p.get('inherited_tokens', 0) >= p['max_tokens'] else
-                              'prompt_too_large' if len(text) > p.get('max_prompt_chars', 750000) else 'pending')
-                    return {'status': status, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role, 'prompt': text, 'bindings': bindings, 'job': job}
+                    admission = budget.admission(text, budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), tokens))
+                    uncertain = job.exists() and any(job.iterdir())
+                    status = ('launch_uncertain' if uncertain else
+                              'prompt_too_large' if len(text) > p.get('max_prompt_chars', 750000) else
+                              'budget_exhausted' if not admission['admitted'] else 'pending')
+                    return {'status': status, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role, 'prompt': text, 'bindings': bindings, 'job': job,
+                            'budget_admission': admission}
                 result = verify_job(job); request = base.read(job/'request.json')
                 if request['bindings'] != bindings or (request['model'], request['effort']) != MODEL or (job/'prompt.txt').read_text() != text:
                     raise ValueError('Job differs from exact source-bound correction request')
@@ -444,19 +759,48 @@ def replay(root, p, bundle, catalog, writing):
                 sid = result['receipt']['session']['id']
                 if sid in identities: raise ValueError('Independent fresh sessions required')
                 identities.add(sid)
-                if not imported: tokens += result['receipt']['session']['usage']['totalTokens']
+                measured = result['receipt']['session']['usage']['totalTokens']
+                if type(measured) is not int or measured < 0:
+                    raise ValueError('Measured nonnegative integer token usage required')
+                if not imported: tokens += measured
             if role == 'propose':
                 plan = result['content']
+                if resolution is not None:
+                    if not imported:
+                        raise ValueError('Only an authenticated imported proposal may resolve cited passages')
+                    plan, actual = cited_passages.resolve(plan, bundle, catalog, imported['output_sha256'])
+                    if actual != resolution:
+                        raise ValueError('Cited-passage resolution manifest changed')
                 try: candidate = apply(state, plan, bundle, catalog)
                 except (ValueError, KeyError, TypeError) as exc:
                     return {'status': 'invalid_patch', 'state': state, 'tokens': tokens, 'round': round_no, 'error': str(exc)}
+                if round_no == 0 and p.get('evidence_resume'):
+                    if (base.digest(candidate) != p['evidence_resume']['candidate_sha256'] or base.digest(plan) != p['evidence_resume']['plan_sha256']):
+                        raise ValueError('Resumed review candidate or plan changed')
                 repair.write(folder/'plan.json', plan); repair.write(folder/'candidate.json', candidate)
                 legacy.immutable_text(folder/'candidate.html', rendered(candidate, bundle, catalog))
             else:
                 review = result['content']
+                compliance = budget.compliance(tokens, p['max_tokens'], p.get('inherited_tokens', 0))
+                substantive = {'verdict': review.get('verdict'), 'validation': 'pending',
+                               'output_path': str(job/'output.json'), 'output_sha256': base.sha(job/'output.json'),
+                               'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan)}
                 try: after, status = adjudicate(state, candidate, plan, review, bundle, catalog)
                 except (ValueError, KeyError, TypeError) as exc:
-                    return {'status': 'invalid_review', 'state': state, 'tokens': tokens, 'round': round_no, 'error': str(exc)}
+                    return {'status': 'invalid_review', 'state': state, 'tokens': tokens, 'round': round_no, 'error': str(exc),
+                            'budget_compliance': compliance, 'substantive_review': {**substantive, 'validation': 'invalid'}}
+                substantive.update(validation='valid', outcome=status, approve_patch=review['approve_patch'])
+                if not compliance['within_budget'] or progress['status'] != 'completed':
+                    # Preserve the authenticated substantive verdict but never
+                    # apply an over-budget patch or advertise official acceptance.
+                    stopped = 'budget_exhausted' if not compliance['within_budget'] else progress['status']
+                    repair.write(folder/'decision.json', {'before_sha256': base.digest(state),
+                        'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan),
+                        'review_output_sha256': base.sha(job/'output.json'), 'review_job': str(job.relative_to(root)),
+                        'patch_applied': False, 'after': state, 'status': stopped,
+                        'budget_compliance': compliance, 'substantive_review': substantive})
+                    return {'status': stopped, 'state': state, 'tokens': tokens, 'round': round_no+1,
+                            'budget_compliance': compliance, 'substantive_review': substantive}
                 repair.write(folder/'decision.json', {'before_sha256': base.digest(state), 'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan), 'review_output_sha256': base.sha(job/'output.json'), 'review_job': str(job.relative_to(root)), 'patch_applied': review['approve_patch'], 'after': after})
                 state = after; feedback = review
                 if status in ('accepted', 'blocked'):
@@ -482,6 +826,9 @@ def advance(output):
         except BlockingIOError: return {'status': 'running'}
         p, b, c, w = load(root); next_job = replay(root, p, b, c, w)
         if next_job['status'] != 'pending': return verify(root)
+        admission = budget.admission(next_job['prompt'], budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), next_job['tokens']))
+        if not admission['admitted']:
+            return {'status': 'budget_exhausted', 'tokens': next_job['tokens'], 'budget_admission': admission}
         run_role(next_job['job'], next_job['prompt'], *MODEL, next_job['bindings'], timeout=1200)
         return verify(root)
 
@@ -495,12 +842,15 @@ def run(output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__); sub = parser.add_subparsers(dest='command', required=True)
     init = sub.add_parser('init'); init.add_argument('seed'); init.add_argument('output')
-    init.add_argument('--max-rounds', type=int, default=2); init.add_argument('--max-tokens', type=int, default=600000)
+    init.add_argument('--max-rounds', type=int, default=2); init.add_argument('--max-tokens', type=int, default=None, help='Optional correction token cap; default unlimited with usage accounting')
     init.add_argument('--new-experiment', action='store_true', help='Explicit separately authorized test; preserves exhausted prior run')
     init.add_argument('--reuse-proposal', action='store_true', help='Reuse a verified pending proposal from a prior correction experiment; no new author call')
+    init.add_argument('--resume-evidence', action='store_true', help='With --reuse-proposal: deliver authenticated saved review evidence requests without resetting rounds')
+    init.add_argument('--regression-findings', help='Private source-bound supplemental audit findings JSON; pending independent review')
+    init.add_argument('--resolve-cited-passages', action='store_true', help='With --reuse-proposal only: complete exactly empty passage lists from all original explicitly cited scopes; independent review remains required')
     for name in ('advance', 'run', 'verify'): sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
-    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal) if args.command == 'init' else globals()[args.command](args.output)
+    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings, args.resolve_cited_passages, args.resume_evidence) if args.command == 'init' else globals()[args.command](args.output)
     print(json.dumps(result))
 
 

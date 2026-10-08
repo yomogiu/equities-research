@@ -94,6 +94,26 @@ class RunnerTests(unittest.TestCase):
         runner.save(self.job / 'output.json', {'content': {'ok': True},
             'request_sha256': runner.digest(self.request), 'execution_sha256': runner.sha(self.job / 'execution.json')})
 
+    def test_estimate_and_actual_usage_are_bound_and_tamper_checked(self):
+        self.complete()
+        estimate = runner.prompt_estimate(self.prompt, self.request['model'])
+        runner.save(self.job/'token-estimate.json', estimate)
+        launch = runner.read(self.job/'launch.json')
+        launch['token_estimate_sha256'] = runner.sha(self.job/'token-estimate.json')
+        (self.job/'launch.json').write_text(json.dumps(launch))
+        execution = runner.read(self.job/'execution.json')
+        execution['launch_sha256'] = runner.sha(self.job/'launch.json')
+        execution['token_accounting'] = runner.usage_comparison(estimate, execution['session']['usage'])
+        (self.job/'execution.json').write_text(json.dumps(execution))
+        output = runner.read(self.job/'output.json')
+        output['execution_sha256'] = runner.sha(self.job/'execution.json')
+        (self.job/'output.json').write_text(json.dumps(output))
+        self.assertEqual(runner.verify_job(self.job)['content'], {'ok': True})
+        estimate['estimated_input_tokens'] += 1
+        (self.job/'token-estimate.json').write_text(json.dumps(estimate))
+        with self.assertRaisesRegex(ValueError, 'Token accounting'):
+            runner.verify_job(self.job)
+
     def test_measured_uncached_input_not_double_subtracted(self):
         receipt = runner.session_receipt(self.job)
         self.assertEqual(receipt['usage']['input'], 80)
@@ -213,3 +233,18 @@ class RunnerTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class TokenAccountingTests(unittest.TestCase):
+    def test_missing_tokenizer_does_not_gate_execution(self):
+        with patch.dict('sys.modules', {'tiktoken': None}):
+            estimate = runner.prompt_estimate('Fictional text', 'gpt-6.1-sol')
+        self.assertFalse(estimate['enforced'])
+        self.assertEqual(estimate['method'], 'utf8_bytes_divided_by_four_fallback')
+        self.assertGreater(estimate['estimated_input_tokens'], 0)
+
+    def test_cached_input_counted_once_and_output_kept_separate(self):
+        result = runner.usage_comparison({'estimated_input_tokens': 90},
+                   {'input': 80, 'cacheRead': 20, 'cacheWrite': 0, 'output': 10, 'totalTokens': 110})
+        self.assertEqual(result['recorded_input_including_cache_tokens'], 100)
+        self.assertEqual(result['input_difference_tokens'], 10)
+        self.assertEqual(result['recorded_total_tokens'], 110)

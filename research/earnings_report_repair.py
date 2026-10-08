@@ -542,6 +542,8 @@ def load(root):
         raise ValueError('Case or writing standard changed')
     bundle=evidence.load_bundle(sp['evidence_manifest']);catalog=passages.catalog(bundle['manifest'])
     if catalog!=base.read(seed/'passages.json'):raise ValueError('Source passages changed')
+    from research import earnings_qa_grounding as grounding
+    grounding.attach(seed, sp, bundle, catalog)
     return p,bundle,catalog,Path(sp['writing_standard']).read_text()
 
 

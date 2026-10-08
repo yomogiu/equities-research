@@ -11,6 +11,30 @@ from research import earnings_signals as signals
 
 
 class RemediationTests(PassageFixture, unittest.TestCase):
+    def test_exact_target_plan_uses_atomic_correction_engine(self):
+        state = self.state()
+        registry = m.corrections.registry(state, self.bundle)['targets']
+        tid, target = next((k,v) for k,v in registry.items() if v['path'] == ['artifacts','analysis','opening'])
+        op = {'id':'edit-opening','target_id':tid,'expected_sha256':target['expected_sha256'],
+              'op':'replace_text','value':'Fictional updated opening.',
+              'reason':'Fictional original evidence','citations':['D001'],'passage_ids':[self.ids[0]]}
+        plan = {'snapshot_sha256':base.digest(state),'operations':[op]}
+        candidate = m.apply(state, plan, self.bundle, self.catalog)
+        self.assertEqual(candidate, m.corrections.apply(state, plan, self.bundle, self.catalog))
+        self.assertEqual(candidate['artifacts']['financial']['rows'],state['artifacts']['financial']['rows'])
+        with self.assertRaisesRegex(ValueError, 'mix'):
+            m.apply(state, {**plan,'operations':[op,self.operation(state)]}, self.bundle,self.catalog)
+
+    def test_exact_target_unchanged_candidate_cannot_start_remediation(self):
+        state = self.state()
+        registry = m.corrections.registry(state, self.bundle)['targets']
+        tid,target = next((k,v) for k,v in registry.items() if v['kind']=='exchange')
+        op = {'id':'no-change','target_id':tid,'expected_sha256':target['expected_sha256'],
+              'op':'replace_exchange','value':{k:target['value'][k] for k in m.corrections.exchange_fields(target['value'])},
+              'reason':'Fictional evidence','citations':['D001'],'passage_ids':[self.ids[0]]}
+        with self.assertRaisesRegex(ValueError,'Unchanged'):
+            m.apply(state,{'snapshot_sha256':base.digest(state),'operations':[op]},self.bundle,self.catalog)
+
     def state(self):
         financial = copy.deepcopy(self.financial)
         financial['context'] = [{'text': 'Fictional old comparison.', 'citations': ['D002']}]
@@ -52,7 +76,7 @@ class RemediationTests(PassageFixture, unittest.TestCase):
         state = self.state(); plan = self.plan(state)
         auth = {'kind': 'targeted_remediation', 'enabled': True, 'authorization_id': 'explicit-fake-authority',
                 'source_protocol_sha256': base.sha(self.seed/'protocol.json'), 'first_plan_sha256': base.digest(plan),
-                'max_review_attempts': attempts, 'max_tokens': 10000, 'reason': 'Explicit fictional new edition',
+                'max_review_attempts': attempts, 'max_tokens': 600000, 'reason': 'Explicit fictional new edition',
                 'output_path': str(self.root/'remediation')}
         exported = {'status': 'blocked', 'snapshot': state, 'source_protocol': sp, 'prior_rounds': 2, 'prior_tokens': 54321}
         output = self.root/'remediation'
@@ -73,6 +97,21 @@ class RemediationTests(PassageFixture, unittest.TestCase):
                   'receipt': {'session': {'id': session, 'usage': {'totalTokens': 123}}}}
         m.repair.write(job/'output.json', result)
         return result
+
+    def test_completed_overbudget_review_is_validated_and_visible_without_acceptance(self):
+        output = self.edition(); result = self.complete(output)
+        # Simulated authenticated runtime receipt, never model-supplied usage.
+        result['receipt']['session']['usage']['totalTokens'] = 600001
+        before = base.read(output/'initial.json')
+        with patch.object(m, 'verify_job', return_value=result), patch.object(m, 'run_role') as worker:
+            progress = m.advance(output, execute=True)
+        self.assertEqual(progress['status'], 'budget_exhausted')
+        self.assertEqual(progress['substantive_review']['verdict'], 'pass')
+        self.assertEqual(progress['substantive_review']['validation'], 'valid')
+        self.assertEqual(progress['budget_compliance']['overrun_tokens'], 1)
+        self.assertFalse((output/'result.json').exists())
+        self.assertEqual(base.read(output/'initial.json'), before)
+        worker.assert_not_called()
 
     def test_metadata_patch_preserves_facts_quotes_membership_and_unrelated_fields(self):
         state = self.state(); original = copy.deepcopy(state)
@@ -231,7 +270,7 @@ class RemediationTests(PassageFixture, unittest.TestCase):
             self.assertEqual(result['tokens'], 123)
             with self.assertRaises(ValueError): m.stage_plan(out, self.plan())
         protocol = base.read(out/'protocol.json')
-        self.assertEqual(protocol['version'], 'targeted-remediation-v2')
+        self.assertEqual(protocol['version'], 'targeted-remediation-v3')
         self.assertEqual(protocol['max_prompt_chars'], 350000)
         protocol['max_review_attempts'] = 2
         (out/'protocol.json').write_text(json.dumps(protocol))

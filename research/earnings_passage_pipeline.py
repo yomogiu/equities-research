@@ -13,6 +13,7 @@ from research import earnings_experiment as base
 from research import earnings_compact_evidence as evidence
 from research import earnings_mixed_pipeline as legacy
 from research import earnings_passages as passages
+from research import earnings_qa_grounding as grounding
 from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'luna6-sol-presentation-v4'
@@ -29,13 +30,18 @@ QUOTE_RULE = ('Quotations are selected ONLY as {"passage_id":"exact catalogue ID
 def validate(role, out, bundle, catalog):
     hydrated = passages.hydrate(role, out, catalog)
     legacy.validate_output(role, hydrated, bundle)
+    if role == 'retrieval':
+        grounding.require_analysis_ready(out, bundle, catalog)
     return hydrated
 
 
 def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=None, efficient=False, extra_scope_ids=()):
+    if role in ('analysis', 'review') and 'retrieval' in deps:
+        grounding.require_analysis_ready(deps['retrieval'], bundle, catalog)
+    grounding_prompt = grounding.prompt_contract(role, bundle)
     if efficient and issues is None:
         from research import earnings_efficient_evidence as reuse
-        return reuse.prompt(role, bundle, writing, deps, feedback, catalog, extra_scope_ids)
+        return reuse.prompt(role, bundle, writing, deps, feedback, catalog, extra_scope_ids) + grounding_prompt
     if issues is not None:
         view = passages.repair_view(role, prior, issues, catalog)
         if view['unresolved_paths']:
@@ -64,7 +70,7 @@ def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=No
         case = base.read(bundle['manifest']['case_path'])
         return head + '\n\nFROZEN EVIDENCE / ARTIFACTS\n' + legacy.packed({
             'case_id': case['case_id'], 'scope_notes': case['scope_notes'],
-            'source_catalogue': passages.input_view(bundle['manifest'], catalog)})
+            'source_catalogue': passages.input_view(bundle['manifest'], catalog)}) + grounding_prompt
     text = legacy.prompt_for(role, bundle, writing, hydrated, feedback)
     if role == 'analysis':
         text = text.replace('"quotes":[{"scope_id":"EXACT SOURCE ID","text":"exact substring"}]',
@@ -76,7 +82,7 @@ def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=No
         text += '\n\nRENDERING CONTRACT\nCode materializes selected quotations and inserts displayed citation brackets. '
         text += (' Complete one comprehensive audit before returning: reconcile every repeated claim across financial context, retrieval summaries and analysis; verify guidance ranges, conditions and accounting basis; inspect material coverage and concise writing. Return the complete actionable correction batch, with every affected occurrence and specific required edit. Separate factual defects from optional additions; do not withhold known findings for later rounds. ')
         text += 'Judge quote relevance and context against original sources; do not charge renderer-added brackets as an author-formatting defect.'
-    return text
+    return text + grounding_prompt
 
 
 def bounded_patch(role, prior, patch, catalog):
@@ -117,21 +123,16 @@ def repair_handoff(root, deps, prior, issues, review, catalog, refusals=None):
     return None
 
 
-def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False):
+def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False, qa_grounding=True, qa_grounding_version=None):
     if repair_loop and deterministic_corrections:
         raise ValueError("Choose one correction strategy")
     root = Path(output).resolve(); root.mkdir(parents=True, exist_ok=True)
     manifest = evidence.prepare(case_path, root / 'evidence')
     base.save(root / 'passages.json', passages.catalog(manifest))
-    names = ('earnings_passage_pipeline.py', 'earnings_passages.py', 'earnings_mixed_pipeline.py',
-             'earnings_compact_evidence.py', 'earnings_experiment.py', 'earnings_mixed_runner.py',
-             'earnings_mixed_prime.mjs', 'earnings_financial_display.py')
-    if deterministic_corrections:
-        names += ('earnings_corrections.py', 'earnings_report_repair.py')
-    if signals:
-        names += ('earnings_signals.py', 'earnings_report_repair.py')
-    if efficient:
-        names += ('earnings_efficient_evidence.py', 'earnings_financial_context.py', 'earnings_repair_context.py')
+    # Every new freeze binds imported helpers, including opt-out runs whose
+    # validation still imports the grounding module. Legacy load is unchanged.
+    names = tuple(sorted(p.name for p in Path(__file__).parent.glob('earnings_*')
+                         if p.suffix in ('.py', '.mjs')))
     protocol = {'report_signals': bool(signals), 'version': EFFICIENT_VERSION if efficient else VERSION, 'repair_loop': bool(repair_loop), 'deterministic_corrections': bool(deterministic_corrections), 'case_path': str(Path(case_path).resolve()),
                 'case_sha256': base.sha(case_path), 'evidence_manifest': str(root / 'evidence/manifest.json'),
                 'evidence_sha256': base.sha(root / 'evidence/manifest.json'),
@@ -141,6 +142,12 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
                 'code': [{'path': str(Path(__file__).parent / n), 'sha256': base.sha(Path(__file__).parent / n)} for n in names]}
     if efficient:
         protocol['evidence_reuse'] = copy.deepcopy(EFFICIENT_POLICY)
+    if qa_grounding:
+        version = qa_grounding_version or grounding.HEADER_VERSION
+        qa_index = grounding.build(evidence.load_bundle(manifest), base.read(root / 'passages.json'), version=version)
+        base.save(root / 'qa-grounding.json', qa_index)
+        protocol.update(qa_grounding=version, qa_grounding_path=str(root / 'qa-grounding.json'),
+                        qa_grounding_sha256=base.sha(root / 'qa-grounding.json'))
     base.save(root / 'protocol.json', protocol)
     return protocol
 
@@ -157,10 +164,25 @@ def load(root):
                          *((c['path'], c['sha256']) for c in p['code'])]:
         if base.sha(path) != digest:
             raise ValueError('Frozen input/code changed: ' + str(path))
+    if p.get('response_recovery'):
+        recovery = p['response_recovery']
+        if base.sha(Path(recovery['seed'])/'protocol.json') != recovery['protocol_sha256']:
+            raise ValueError('Recovery source protocol changed')
+        original = base.read(Path(recovery['seed'])/'protocol.json')
+        compared = {k:v for k,v in p.items() if k not in ('code','response_recovery')}
+        if original.get('qa_grounding_path'):
+            compared['qa_grounding_path'] = original['qa_grounding_path']
+        if compared != {k:v for k,v in original.items() if k != 'code'}:
+            raise ValueError('Recovery must preserve original settings and evidence')
     bundle = evidence.load_bundle(p['evidence_manifest'])
     catalog = passages.catalog(p['evidence_manifest'])
     if catalog != base.read(root / 'passages.json'):
         raise ValueError('Passage catalogue differs from original evidence')
+    grounding.attach(root, p, bundle, catalog)
+    if p.get('prepared_recovery'):
+        from .earnings_prepared_recovery import apply
+        bundle, prepared, inherited, identities = apply(p, bundle, catalog)
+        bundle['_prepared_recovery'] = {'artifacts':prepared,'tokens':inherited,'identities':identities}
     return p, bundle, catalog
 
 
@@ -176,13 +198,31 @@ class PendingJobs(Exception):
     """A finite coordinator turn used its new-job allowance."""
 
 
+def measured_wall_seconds(jobs):
+    receipts = list(execution_receipts(jobs))
+    if any(r.get('usage_is_inherited') for r in receipts):
+        return None  # Original process timing is unobserved for recovered responses.
+    return (max(datetime.fromisoformat(r['finished_at']) for r in receipts) -
+            min(datetime.fromisoformat(r['started_at']) for r in receipts)).total_seconds()
+
+
 def efficient_exchange(root, role, number, inputs, bundle, catalog, writing, obtain):
     """Exactly replay a role and at most one source lookup; no budget reset."""
     from research import earnings_efficient_evidence as reuse
     input_path = root / 'inputs' / f'{role}-r{number}.json'
     extra, prior_hash, chain = (), None, []
-    for expansion in range(2):
-        job = root / 'jobs' / (f'{role}-r{number}' + ('-evidence-1' if expansion else ''))
+    recovery = base.read(root/'protocol.json').get('response_recovery', {})
+    extension = recovery.get('extra_evidence')
+    if extension:
+        from .earnings_role_import import authenticate
+        ref = recovery.get('imports', {}).get(extension['job'])
+        if (extension.get('max_additional_expansions') != 1 or ref is None
+                or not extension['job'].startswith('retrieval-r') or not extension['job'].endswith('-evidence-1')
+                or base.digest(authenticate(ref)['content']) != extension['request_sha256']):
+            raise ValueError('Evidence recovery binding differs')
+    permitted = bool(extension and extension['job'] == f'{role}-r{number}-evidence-1')
+    for expansion in range(3 if permitted else 2):
+        job = root / 'jobs' / (f'{role}-r{number}' + (f'-evidence-{expansion}' if expansion else ''))
         text = prompt(role, bundle, writing, inputs['dependencies'], inputs['feedback'], catalog,
                       inputs['prior'], inputs['issues'], efficient=True, extra_scope_ids=extra)
         bindings = {'protocol_sha256': base.sha(root / 'protocol.json'), 'role': role,
@@ -194,14 +234,14 @@ def efficient_exchange(root, role, number, inputs, bundle, catalog, writing, obt
         requested = reuse.requested_scopes(result['content'], bundle, catalog, extra)
         if requested is None:
             return result['content'], chain, extra
-        if inputs['issues'] is not None or expansion:
+        if inputs['issues'] is not None or (expansion and not (permitted and expansion == 1)):
             raise ValueError('Evidence expansion exhausted; no completed role output')
         # Financial expansion has stricter measured bounds; validate before any
         # second call. Other roles use the existing exact scope-response limits.
         if role == 'financial':
             from research import earnings_financial_context as financial
             financial.expand(bundle, list(requested))
-        extra = requested
+        extra = tuple(sorted(set(extra) | set(requested)))
         prior_hash = base.sha(job / 'output.json')
     raise AssertionError('Unreachable evidence exchange')
 
@@ -240,9 +280,17 @@ def run(output, max_new_jobs=None):
     root = Path(output).resolve(); p, bundle, catalog = load(root)
     if (root / 'result.json').exists():
         return verify(root)
+    if p.get('qa_grounding') == grounding.HEADER_VERSION:
+        index = bundle['qa_grounding']
+        blocked = [e['exchange_id'] for e in index['exchanges'] if e['flags'] and e['mechanical_disposition'] != 'courtesy_only']
+        blocked += [t['id'] for t in index['unassigned_qa_turns'] if t['mechanical_disposition'] == 'unresolved']
+        if blocked:
+            raise ValueError('Source attribution preparation required before any model call: ' + ', '.join(blocked))
     writing = Path(p['writing_standard']).read_text()
     deps, prior, selection_issues, feedback, jobs, failures = {}, {}, {}, [], [], []
-    need = {'financial', 'retrieval'}; review = None; handoff = None; refusals = {}
+    prepared = bundle.get('_prepared_recovery')
+    if prepared: deps = copy.deepcopy(prepared['artifacts'])
+    need = {'analysis'} if prepared else {'financial', 'retrieval'}; review = None; handoff = None; refusals = {}
     new_jobs = 0
 
     def call(role, round_number, snapshot):
@@ -269,6 +317,10 @@ def run(output, max_new_jobs=None):
                     if max_new_jobs is not None and new_jobs >= max_new_jobs:
                         raise PendingJobs()
                     new_jobs += 1
+                imported = p.get('response_recovery', {}).get('imports', {}).get(path.name)
+                if imported is not None:
+                    from .earnings_role_import import create
+                    return create(path, text, *MODELS[role], bindings, 1200, imported)
                 return run_role(path, text, *MODELS[role], bindings, timeout=1200)
             raw, chain, extra = efficient_exchange(root, role, round_number, inputs, bundle, catalog, writing, obtain)
             record = {'role': role, 'round': round_number, 'mode': 'selection_patch' if repair else 'full',
@@ -292,6 +344,13 @@ def run(output, max_new_jobs=None):
                    if inputs['issues'] is not None else raw)
             if role == 'financial' and p['version'] == EFFICIENT_VERSION:
                 out = bind_efficient_financial(out, bundle, record['expanded_scope_ids'])
+            if role == 'retrieval' and p.get('qa_grounding') == grounding.HEADER_VERSION:
+                out, normalization = grounding.normalize_courtesy(out, bundle, catalog)
+                record['courtesy_normalization'] = normalization
+            if role == 'retrieval' and p.get('response_recovery'):
+                from .earnings_role_import import complete_courtesy
+                out, additions = complete_courtesy(out, bundle, catalog)
+                record['deterministic_courtesy_additions'] = additions
             prior[role] = out
             selection_issues.pop(role, None)
             validate(role, out, bundle, catalog)
@@ -311,7 +370,7 @@ def run(output, max_new_jobs=None):
                 selection_issues.pop(role, None)
         return None
 
-    for round_number in range(3):
+    for round_number in range(p.get("prepared_recovery", {}).get("prior_rounds", 0), 3):
         handoff = repair_handoff(root, deps, prior, selection_issues, review, catalog, refusals)
         if handoff:
             break
@@ -355,10 +414,9 @@ def run(output, max_new_jobs=None):
               'artifact_digest': base.digest(deps), 'materialized_digest': base.digest(materialized),
               'review_sha256': base.sha(root / 'review.json'),
               'repair_handoff_sha256': base.sha(root / 'repair-handoff.json') if handoff else None,
-              'wall_seconds': (max(datetime.fromisoformat(r['finished_at']) for r in execution_receipts(jobs)) -
-                               min(datetime.fromisoformat(r['started_at']) for r in execution_receipts(jobs))).total_seconds()}
+              'wall_seconds': measured_wall_seconds(jobs)}
     if p['version'] == EFFICIENT_VERSION:
-        result['total_tokens'] = measured_tokens(jobs)
+        result['total_tokens'] = measured_tokens(jobs) + bundle.get('_prepared_recovery', {}).get('tokens', 0)
     if 'analysis' in materialized:
         legacy.immutable_text(root / 'report.txt', legacy.report_text(materialized['analysis'], materialized['financial'], bundle))
         legacy.render(root, materialized['analysis'], materialized['financial'], bundle,
@@ -373,6 +431,9 @@ def verify(output):
     root = Path(output).resolve(); p, bundle, catalog = load(root)
     result = base.read(root / 'result.json'); writing = Path(p['writing_standard']).read_text()
     deps, prior, expected_issues, identities, keys = {}, {}, {}, set(), set()
+    prepared = bundle.get('_prepared_recovery')
+    if prepared:
+        deps = copy.deepcopy(prepared['artifacts']); identities.update(prepared['identities'])
     review = None; review_deps = None; round_snapshots = {}; refusals = {}
     for job in result['jobs']:
         if review and any(f['target'] == 'formatter' for f in review['findings']):
@@ -381,7 +442,7 @@ def verify(output):
             raise ValueError('Source selection refusal must stop model correction loop')
         role, number = job['role'], job['round']
         key = (role, number)
-        if key in keys or role not in MODELS or type(number) is not int or not 0 <= number <= 2:
+        if key in keys or role not in MODELS or type(number) is not int or not p.get('prepared_recovery', {}).get('prior_rounds', 0) <= number <= 2 or (prepared and role in ('financial','retrieval')):
             raise ValueError('Duplicate/invalid job')
         keys.add(key)
         path = root / 'jobs' / f'{role}-r{number}'
@@ -402,6 +463,12 @@ def verify(output):
         if p['version'] == EFFICIENT_VERSION:
             def obtain(check_path, text, bindings):
                 request = base.read(check_path / 'request.json'); item = verify_job(check_path)
+                imported = p.get('response_recovery', {}).get('imports', {}).get(check_path.name)
+                if imported is not None:
+                    if base.read(check_path/'import.json')['source'] != imported:
+                        raise ValueError('Recovery import changed')
+                elif (check_path/'import.json').exists():
+                    raise ValueError('Unreserved role import')
                 if ((request['model'], request['effort']) != MODELS[role] or request['bindings'] != bindings
                         or (check_path / 'prompt.txt').read_text() != text):
                     raise ValueError('Efficient role differs from exact evidence request')
@@ -435,6 +502,15 @@ def verify(output):
             out = bounded_patch(role, inputs['prior'], value['content'], catalog) if mode == 'selection_patch' else value['content']
             if role == 'financial' and p['version'] == EFFICIENT_VERSION:
                 out = bind_efficient_financial(out, bundle, job['expanded_scope_ids'])
+            if role == 'retrieval' and p.get('qa_grounding') == grounding.HEADER_VERSION:
+                out, normalization = grounding.normalize_courtesy(out, bundle, catalog)
+                if job.get('courtesy_normalization') != normalization:
+                    raise ValueError('Courtesy derivation differs')
+            if role == 'retrieval' and p.get('response_recovery'):
+                from .earnings_role_import import complete_courtesy
+                out, additions = complete_courtesy(out, bundle, catalog)
+                if job.get('deterministic_courtesy_additions') != additions:
+                    raise ValueError('Deterministic courtesy completion changed')
             prior[role] = out
             expected_issues.pop(role, None)
             validate(role, out, bundle, catalog)
@@ -452,7 +528,7 @@ def verify(output):
             review, review_deps = out, copy.deepcopy(deps)
         else:
             deps[role] = out
-    if not {('financial', 0), ('retrieval', 0)} <= keys:
+    if not prepared and not {('financial', 0), ('retrieval', 0)} <= keys:
         raise ValueError('Initial preparers missing')
     if result['version'] != p['version'] or result['status'] not in ('accepted', 'blocked') or result['correction_rounds'] != max(n for _, n in keys):
         raise ValueError('Invalid result status or correction count')
@@ -477,11 +553,10 @@ def verify(output):
         if (base.sha(root / 'report.txt') != result['report_sha256'] or base.sha(root / 'report.html') != result['html_sha256'] or
             (root / 'report.txt').read_bytes().decode('utf-8') != legacy.report_text(materialized['analysis'], materialized['financial'], bundle)):
             raise ValueError('Report differs from materialized sources')
-    measured = (max(datetime.fromisoformat(r['finished_at']) for r in execution_receipts(result['jobs'])) -
-                min(datetime.fromisoformat(r['started_at']) for r in execution_receipts(result['jobs']))).total_seconds()
+    measured = measured_wall_seconds(result['jobs'])
     if result['wall_seconds'] != measured:
         raise ValueError('Timing differs from authenticated receipts')
-    if p['version'] == EFFICIENT_VERSION and result.get('total_tokens') != measured_tokens(result['jobs']):
+    if p['version'] == EFFICIENT_VERSION and result.get('total_tokens') != measured_tokens(result['jobs']) + bundle.get('_prepared_recovery', {}).get('tokens', 0):
         raise ValueError('Efficient evidence-session usage differs')
     return result
 
@@ -492,12 +567,14 @@ def main():
     f = sub.add_parser('freeze'); f.add_argument('case'); f.add_argument('output'); f.add_argument('writing'); f.add_argument('--repair-loop', action='store_true'); f.add_argument('--deterministic-corrections', action='store_true')
     f.add_argument('--signals', action=argparse.BooleanOptionalAction, default=True,
                    help='Add independently reviewed signals after acceptance (default: enabled; --no-signals opts out)')
+    f.add_argument('--qa-grounding', action=argparse.BooleanOptionalAction, default=True,
+                   help='Bind retrieval to indexed Q&A membership before analysis (new freezes only)')
     f.add_argument('--efficient', action='store_true', help='Opt into source-bound role evidence reuse; leaves v4 defaults unchanged')
     for name in ('run', 'verify'):
         sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
     if args.command == 'freeze':
-        freeze(args.case, args.output, args.writing, args.repair_loop, args.deterministic_corrections, args.signals, efficient=args.efficient); print('Frozen passage-selection protocol')
+        freeze(args.case, args.output, args.writing, args.repair_loop, args.deterministic_corrections, args.signals, efficient=args.efficient, qa_grounding=args.qa_grounding); print('Frozen passage-selection protocol')
     else:
         result = (run if args.command == 'run' else verify)(args.output)
         summary = {k: result[k] for k in ('status', 'correction_rounds', 'wall_seconds')}
