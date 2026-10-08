@@ -31,6 +31,11 @@ class EvidencePolicyTests(BindingTests):
    with self.subTest(key=key):
     changed=copy.deepcopy(value);changed[key]=new;path.write_text(json.dumps(changed))
     with self.assertRaises(ValueError):c.evidence_token_policy(path,self.root,exported)
+ def test_empty_policy_reference_cannot_bypass_inherited_ceiling(self):
+  for empty in ('','   '):
+   with patch.object(c,'export_seed',side_effect=AssertionError('Must fail before export')):
+    with self.assertRaisesRegex(ValueError,'Nonempty token-policy'):
+     c.initialize(self.root,self.root.parent/'new',resume_evidence=True,reuse_proposal=True,evidence_token_authorization=empty)
  def test_override_requires_evidence_resume_and_unlimited(self):
   for kw in ({'evidence_token_authorization':'fake'},{'resume_evidence':True,'reuse_proposal':True,'evidence_token_authorization':'fake','max_tokens':700000}):
    with self.assertRaisesRegex(ValueError,'Token-only override'):c.initialize(self.root,self.root.parent/'new',**kw)

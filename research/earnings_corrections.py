@@ -516,6 +516,8 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
         raise ValueError('Reusing a resolved proposal requires explicit cited-passage resolution')
     if resume_evidence and (not reuse_proposal or new_experiment or regression_findings or resolve_cited_passages):
         raise ValueError('Evidence recovery requires unchanged saved proposal and original budget')
+    if evidence_token_authorization is not None and not str(evidence_token_authorization).strip():
+        raise ValueError('Nonempty token-policy authorization reference required')
     if evidence_token_authorization is not None and (not resume_evidence or max_tokens is not None):
         raise ValueError('Token-only override requires saved evidence resume and unlimited new ceiling')
     if resume_evidence and evidence_token_authorization is None:
@@ -523,7 +525,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
             raise ValueError('Evidence recovery cannot change the original token ceiling')
         max_tokens = seed_protocol.get('max_tokens')
     exported = export_seed(seed, reuse_proposal, resume_evidence)
-    token_policy = evidence_token_policy(evidence_token_authorization,seed,exported) if evidence_token_authorization else None
+    token_policy = evidence_token_policy(evidence_token_authorization,seed,exported) if evidence_token_authorization is not None else None
     snapshot = exported['snapshot']; sp = exported['source_protocol']
     if reuse_proposal and not exported['imported_proposal']: raise ValueError('No reusable staged proposal')
     remaining = max_rounds if new_experiment else min(max_rounds, 2-exported['used_rounds'])
