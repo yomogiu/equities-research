@@ -377,7 +377,9 @@ if protocol.get('version') in ('deterministic-corrections-v1', 'deterministic-co
             raise ValueError('Only an authenticated unreviewed proposal may be reused')
         prior=cp.get('imported_proposal') if progress['round']==0 else None
         job=Path(prior['job']) if prior else root/'rounds'/str(progress['round'])/'propose'
-        c.verify_job(job)
+        if prior and hasattr(c,'verify_saved_proposal'):
+            c.verify_saved_proposal(prior,cp.get('source_code',[]))
+        else:c.verify_job(job)
         if prior and (b.sha(job/'output.json')!=prior['output_sha256'] or cp['source_bindings'].get(str(job/'output.json'))!=prior['output_sha256']):
             raise ValueError('Transitive proposal source binding changed')
         if b.read(job/'request.json')['bindings'].get('snapshot_sha256')!=b.digest(snapshot):
@@ -409,13 +411,36 @@ def export_seed(seed, reuse_proposal=False, resume_evidence=False):
     return json.loads(process.stdout)
 
 
-def resolved_import(snapshot, imported, bundle, catalog):
+def verify_saved_proposal(imported, records):
+    """Authenticate an inherited job with its bound original runner, not today's."""
+    job=Path(imported['job'])
+    if base.sha(job/'output.json') != imported['output_sha256']:
+        raise ValueError('Imported proposal changed')
+    if not records:
+        raise ValueError('Bound original proposal verifier required')
+    request=base.read(job/'request.json');matches=[]
+    for item in records:
+        path=Path(item['path'])
+        if base.sha(path)!=item['sha256']:raise ValueError('Original proposal verifier changed')
+        if path.name=='earnings_mixed_runner.py' and item['sha256']==request['runner_sha256']:
+            helper=path.with_name('earnings_mixed_prime.mjs')
+            if any(Path(x['path'])==helper and x['sha256']==request['helper_sha256'] for x in records):
+                matches.append(path.parent.parent)
+    if not matches:raise ValueError('No bound original runner matches saved proposal')
+    code=matches[0]
+    script="from pathlib import Path;import json,sys;from research.earnings_mixed_runner import verify_job;print(json.dumps(verify_job(Path(sys.argv[1]))))"
+    result=subprocess.run([sys.executable,'-c',script,str(job)],cwd=code,
+        env={**os.environ,'PYTHONPATH':str(code)},check=True,capture_output=True,text=True)
+    return json.loads(result.stdout)
+
+
+def resolved_import(snapshot, imported, bundle, catalog, records=()):
     """Authenticate the unchanged author output before completing source locations."""
     fields(imported, ('job', 'output_sha256'), 'Imported proposal')
     job = Path(imported['job'])
     if base.sha(job/'output.json') != imported['output_sha256']:
         raise ValueError('Imported proposal changed')
-    result = verify_job(job)
+    result = verify_saved_proposal(imported, records)
     request = base.read(job/'request.json')
     if (request['bindings'].get('snapshot_sha256') != base.digest(snapshot)
             or request['bindings'].get('role') != 'propose'
@@ -483,7 +508,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
         qa_grounding.attach(None, sp, bundle, catalog)
         if base.digest(catalog) != base.digest(base.read(Path(sp['evidence_manifest']).parent.parent/'passages.json')):
             raise ValueError('Original passages changed')
-        _, resolution = resolved_import(snapshot, exported['imported_proposal'], bundle, catalog)
+        _, resolution = resolved_import(snapshot, exported['imported_proposal'], bundle, catalog, seed_protocol['code']+seed_protocol.get('source_code',[]))
         regression.budget({'prior_rounds': exported['used_rounds'], 'inherited_tokens': exported['spent_tokens'],
                            'max_rounds': remaining, 'max_tokens': max_tokens}, exported, seed_protocol)
     if regression_findings is not None:
@@ -724,7 +749,7 @@ def replay(root, p, bundle, catalog, writing):
             if imported:
                 job = Path(imported['job'])
                 if base.sha(job/'output.json') != imported['output_sha256']: raise ValueError('Imported proposal changed')
-                result = verify_job(job); request = base.read(job/'request.json')
+                result = verify_saved_proposal(imported,p.get('source_code',[])); request = base.read(job/'request.json')
                 if request['bindings']['snapshot_sha256'] != base.digest(state) or request['bindings']['role'] != 'propose' or (request['model'], request['effort']) != MODEL:
                     raise ValueError('Imported proposal belongs to a different snapshot or role')
             elif role == 'review':
