@@ -45,11 +45,15 @@ def targets(snapshot, bundle):
         add(['artifacts', 'financial', 'gaps', i], 'text', text)
     for i, row in enumerate(art['retrieval']['exchange_coverage']):
         fields_at(['artifacts', 'retrieval', 'exchange_coverage', i], row, ('question', 'answer', 'consequence'))
+        for name in ('question_passage_ids','answer_passage_ids','continuation_exchange_ids'):
+            if name in row: add(['artifacts','retrieval','exchange_coverage',i,name], 'source_links',row[name])
+        if 'grounding_notes' in row: add(['artifacts','retrieval','exchange_coverage',i,'grounding_notes'],'text',row['grounding_notes'])
     for i, row in enumerate(art['retrieval']['document_findings']):
         fields_at(['artifacts', 'retrieval', 'document_findings', i], row, ('text', 'citations'))
     fields_at(['artifacts', 'analysis'], art['analysis'], ('title', 'opening', 'opening_citations', 'scope'))
     for i, row in enumerate(art['analysis']['findings']):
         fields_at(['artifacts', 'analysis', 'findings', i], row, ('heading', 'text', 'citations'))
+        add(['artifacts','analysis','findings',i,'quotes'],'quote_subset',row['quotes'])
     for i, row in enumerate(art['analysis']['next_tests']):
         fields_at(['artifacts', 'analysis', 'next_tests', i], row, ('text', 'citations'))
     for key in repair.row_catalog(art['financial'], bundle):
@@ -57,6 +61,7 @@ def targets(snapshot, bundle):
     add(['format', 'basis'], 'display_basis', snapshot['format']['basis'])
     add(['format', 'layout'], 'layout', snapshot['format'].get('layout'))
     add(['format', 'tables'], 'display_tables', snapshot['format'].get('tables'))
+    add(['format','source_rows'],'source_rows',snapshot['format'].get('source_rows'))
     return result
 
 
@@ -100,6 +105,14 @@ def apply(snapshot, plan, bundle, catalog):
             if len(value) > 4000: raise ValueError('Remediation text exceeds 4000 characters')
         elif op['kind'] == 'citations':
             legacy.check_ids(value, legacy.ids_for(bundle), 'replacement citations')
+        elif op['kind'] == 'source_rows':
+            repair.supplemental.build(value,bundle)
+        elif op['kind'] == 'quote_subset':
+            if not isinstance(value,list) or any(q not in target['value'] for q in value) or len(value)>len(target['value']):
+                raise ValueError('Only an original quote subset is allowed')
+        elif op['kind'] == 'source_links':
+            allowed = ({x['exchange_id'] for x in bundle['qa_grounding']['exchanges']} if path[-1]=='continuation_exchange_ids' else {x['passage_id'] for x in catalog['passages']})
+            legacy.check_ids(value,allowed,'reviewed source links',nonempty=False)
         elif op['kind'] == 'layout':
             repair.validate_layout(value, repair.row_catalog(out['artifacts']['financial'], bundle), legacy.ids_for(bundle))
         elif op['kind'] == 'display_tables':
@@ -123,7 +136,29 @@ EXPORT = '''
 import json,sys
 from pathlib import Path
 root=Path(sys.argv[1]);p=json.loads((root/'protocol.json').read_text())
-if p['version'].startswith('targeted-remediation-'):
+if p.get('prepared_recovery'):
+ from research import earnings_passage_pipeline as c
+ from research import earnings_report_repair as repair
+ from research import earnings_experiment as base
+ v=c.verify(root)
+ if (v['status']!='blocked' or v['correction_rounds']!=2 or p['max_correction_rounds']!=2
+     or p['prepared_recovery']['prior_rounds']!=2):
+  raise ValueError('Prepared recovery must be stopped after its inherited two-round limit')
+ artifacts=base.read(root/'artifacts.json'); review=base.read(root/'review.json')
+ if set(artifacts)!={'financial','retrieval','analysis'} or not review or review['verdict']=='pass' or not review['findings']:
+  raise ValueError('Completed analysis and unsuccessful independent review required')
+ reviews=[j for j in v['jobs'] if j['role']=='review']
+ if not reviews or reviews[-1]['round']!=2:
+  raise ValueError('Final prepared candidate lacks a completed independent review')
+ inputs=base.read(root/'inputs'/'review-r2.json')
+ if inputs['dependencies']!=c.efficient_dependencies('review',artifacts):
+  raise ValueError('Final independent review did not assess current candidate')
+ snapshot={'artifacts':artifacts,'format':{'rows':{},'basis':{'text':'','citations':[]}},
+           'findings':[{'id':repair.finding_id(f),'finding':f} for f in review['findings']]}
+ print(json.dumps({'status':v['status'],'snapshot':snapshot,'source_protocol':p,
+                  'prior_rounds':v['correction_rounds'],'prior_tokens':v['total_tokens']}))
+ sys.exit(0)
+elif p['version'].startswith('targeted-remediation-'):
  from research import earnings_remediation as c
  p,b,k,w=c.load(root);v=c._replay(root,p,b,k,w)
  rounds=p['history']['prior_rounds']+v['review_attempts']
@@ -140,11 +175,13 @@ print(json.dumps({'status':v['status'],'snapshot':v['state'],'source_protocol':p
 
 def export_seed(seed):
     p = base.read(seed/'protocol.json')
-    if p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION}:
+    prepared = p.get('version') == pipe.EFFICIENT_VERSION and bool(p.get('prepared_recovery'))
+    if not prepared and p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION}:
         raise ValueError('A stopped corrections or remediation seed is required')
     for item in p['code']:
         if base.sha(item['path']) != item['sha256']: raise ValueError('Seed verifier code changed')
-    verifier_name = 'earnings_remediation.py' if p['version'].startswith('targeted-remediation-') else 'earnings_corrections.py'
+    verifier_name = ('earnings_passage_pipeline.py' if prepared else
+                     'earnings_remediation.py' if p['version'].startswith('targeted-remediation-') else 'earnings_corrections.py')
     code = Path(next(x['path'] for x in p['code'] if x['path'].endswith('/' + verifier_name))).parent.parent
     result = subprocess.run([sys.executable, '-c', EXPORT, str(seed)], cwd=code,
                             env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
@@ -179,6 +216,14 @@ def _authorization(value, seed, plan, output):
 
 def seed_bindings(seed, old):
     bindings = dict(old.get('source_bindings', {}))
+    # Prepared editions inherit authenticated preparer jobs outside their own
+    # directory. Preserve their bytes and exclude those sessions from new review.
+    for name, digest in old.get('prepared_recovery', {}).get('bindings', {}).items():
+        if name in bindings and bindings[name] != digest:
+            raise ValueError('Conflicting inherited source binding')
+        if base.sha(name) != digest:
+            raise ValueError('Prepared ancestry source changed')
+        bindings[name] = digest
     for p in seed.rglob('*'):
         if p.is_symlink(): raise ValueError('Seed symlinks are forbidden')
         if p.is_file() and not p.name.startswith('.'): bindings[str(p)] = base.sha(p)
@@ -188,6 +233,18 @@ def seed_bindings(seed, old):
             sid = base.read(name).get('session', {}).get('id')
             if sid: prior_sessions.append(sid)
     return bindings, sorted(set(prior_sessions))
+
+
+
+def _source_bundle(source_protocol):
+    """Replay original reviewed attribution before validating/reporting a derivative."""
+    bundle = evidence.load_bundle(source_protocol['evidence_manifest'])
+    catalog = passages.catalog(bundle['manifest'])
+    corrections.qa_grounding.attach(None, source_protocol, bundle, catalog)
+    if source_protocol.get('prepared_recovery'):
+        from research import earnings_prepared_recovery
+        bundle, _, _, _ = earnings_prepared_recovery.apply(source_protocol, bundle, catalog)
+    return bundle, catalog
 
 
 def initialize(seed, output, plan, authorization):
@@ -215,9 +272,7 @@ def initialize(seed, output, plan, authorization):
     if references:
         protocol.update(budget_reference_jobs=references, budget_calibration=calibration)
     # Validate the plan against original evidence before creating any edition.
-    sp = protocol['source_protocol']; bundle = evidence.load_bundle(sp['evidence_manifest'])
-    catalog = passages.catalog(bundle['manifest'])
-    corrections.qa_grounding.attach(None, sp, bundle, catalog)
+    sp = protocol['source_protocol']; bundle, catalog = _source_bundle(sp)
     candidate = apply(snapshot, plan, bundle, catalog)
     root.mkdir(parents=True, exist_ok=True)
     repair.write(root/'authorization.json', authorization); repair.write(root/'initial.json', snapshot)
@@ -261,8 +316,7 @@ def load(output):
     for name, h in ((sp['case_path'], sp['case_sha256']), (sp['writing_standard'], sp['writing_sha256']),
                     (sp['evidence_manifest'], sp['evidence_sha256'])):
         if base.sha(name) != h: raise ValueError('Original evidence or writing changed')
-    bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
-    corrections.qa_grounding.attach(None, sp, bundle, catalog)
+    bundle, catalog = _source_bundle(sp)
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
@@ -275,7 +329,7 @@ def _stage(root, number, before, plan, candidate, bundle, catalog):
 
 def prompt(before, plan, candidate, bundle, catalog, writing, extra_scope_ids=()):
     return corrections.prompt('review', before, bundle, catalog, writing, plan, candidate,
-                              extra_scope_ids=extra_scope_ids) + (
+                              extra_scope_ids=extra_scope_ids, financial_context_version=context.FINANCIAL_CONTEXT_VERSION) + (
         '\nEXPLICIT USER-DIRECTED REMEDIATION EDITION\n'
         'This separately authorized edition preserves the exhausted historical run and accepted evidence. '
         'No author model will rewrite approved deterministic changes. Review the complete rendered report, '

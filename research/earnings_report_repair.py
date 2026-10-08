@@ -21,6 +21,7 @@ from research import earnings_compact_evidence as evidence
 from research import earnings_passage_pipeline as pipe
 from research import earnings_mixed_pipeline as legacy
 from research import earnings_financial_display as display
+from research import earnings_supplemental_rows as supplemental
 from research import earnings_passages as passages
 from research.earnings_mixed_runner import run_role, verify_job
 
@@ -89,8 +90,9 @@ def validate_table_labels(labels, financial, bundle):
 
 
 def validate_format(spec, financial, bundle):
-    if not isinstance(spec, dict) or not {'rows', 'basis'} <= set(spec) or set(spec) - {'rows', 'basis', 'layout', 'tables'} or not isinstance(spec['rows'], dict):
+    if not isinstance(spec, dict) or not {'rows', 'basis'} <= set(spec) or set(spec) - {'rows', 'basis', 'layout', 'tables', 'source_rows'} or not isinstance(spec['rows'], dict):
         raise ValueError('Formatting requires rows, basis and optional declarative layout')
+    supplemental.build(spec.get('source_rows', []), bundle)
     allowed = legacy.ids_for(bundle); rows = row_catalog(financial, bundle)
     for key, item in spec['rows'].items():
         if key not in rows or not isinstance(item, dict) or set(item) != {'label', 'dimensions', 'citations'}:
@@ -237,7 +239,8 @@ def table(financial, bundle, spec, refs=None):
         lines.append('Financial detail (all original numeric rows)')
         parts.append('<details class="financial-detail"><summary>Financial detail</summary>')
         tables(True); parts.append('</details>')
-    return ''.join(parts) if refs else '\n'.join(lines)
+    extra = supplemental.render(spec.get('source_rows', []), bundle, refs)
+    return (''.join(parts) if refs else '\n'.join(lines)) + extra
 
 
 def report(state, bundle):
