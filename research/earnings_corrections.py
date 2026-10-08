@@ -453,7 +453,7 @@ def resolved_import(snapshot, imported, bundle, catalog, records=()):
     return effective, manifest
 
 
-def review_evidence_binding(seed, exported, snapshot, sp):
+def review_evidence_binding(seed, exported, snapshot, sp, version="saved-review-evidence-v1"):
     """Bind a stopped evidence request to the unchanged independently reviewed candidate."""
     # The original verifier already replays each request and authenticates its receipts.
     old = base.read(seed/'protocol.json')
@@ -462,7 +462,16 @@ def review_evidence_binding(seed, exported, snapshot, sp):
     candidate = base.read(folder/'candidate.json'); plan = base.read(folder/'plan.json')
     requests, jobs = [], []
     for name in ('review', 'review-evidence-1'):
-        job = folder/name; result = verify_job(job); content = result['content']
+        job = folder/name
+        if version == 'saved-review-evidence-v2':
+            if not (job/'output.json').exists():
+                if job.exists() and any(job.iterdir()):raise ValueError('Saved evidence review launch is uncertain')
+                if name == 'review':raise ValueError('No authenticated saved evidence request')
+                break
+            result = verify_saved_proposal({'job':str(job),'output_sha256':base.sha(job/'output.json')},old['code']+old.get('source_code',[]))
+        elif version == 'saved-review-evidence-v1':result = verify_job(job)
+        else:raise ValueError('Unsupported saved evidence binding version')
+        content = result['content']
         if (set(content) != {'verdict','candidate_sha256','plan_sha256','requests'}
                 or content['verdict'] != 'needs_evidence'
                 or content['candidate_sha256'] != base.digest(candidate)
@@ -471,12 +480,28 @@ def review_evidence_binding(seed, exported, snapshot, sp):
         requests.extend(content['requests']); jobs.append({'path':str(job),'output_sha256':base.sha(job/'output.json'),'session_id':result['receipt']['session']['id']})
     bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
     resolved = context.evidence_response(bundle, catalog, requests)
-    return {'version':'saved-review-evidence-v1','jobs':jobs,'requests':requests,
+    if (folder/'review-evidence-2').exists():raise ValueError('Unexpected additional saved evidence review')
+    return {'version':version,'jobs':jobs,'requests':requests,
             'scope_ids':resolved['scope_ids'],'candidate_sha256':base.digest(candidate),
             'plan_sha256':base.digest(plan),'snapshot_sha256':base.digest(snapshot), 'additional_lookup_rounds':0}
 
 
-def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False, resume_evidence=False):
+
+def evidence_token_policy(path, seed, exported):
+    """Explicit token-only new-edition authority, bound to original accounting."""
+    path=Path(path).resolve();value=base.read(path);old=base.read(Path(seed)/'protocol.json')
+    fields(value, ('version','enabled','scope','source_protocol_sha256','prior_max_tokens','max_tokens',
+                   'prior_rounds','inherited_tokens','authorized_by','reason'), 'evidence token policy')
+    if (value['version']!='evidence-token-policy-v1' or value['enabled'] is not True
+            or value['scope']!='token_ceiling_only' or value['source_protocol_sha256']!=base.sha(Path(seed)/'protocol.json')
+            or value['prior_max_tokens']!=old.get('max_tokens') or value['max_tokens'] is not None
+            or value['prior_rounds']!=exported['used_rounds'] or value['inherited_tokens']!=exported['spent_tokens']
+            or not isinstance(value['authorized_by'],str) or not value['authorized_by'].strip()
+            or not isinstance(value['reason'],str) or not value['reason'].strip()):
+        raise ValueError('Exact explicit token-only policy authority required')
+    return {'path':str(path),'sha256':base.sha(path)}
+
+def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False, resume_evidence=False, evidence_token_authorization=None):
     seed = Path(seed).resolve(); root = Path(output).resolve()
     if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
         raise ValueError('Use a new private directory outside code and the seed')
@@ -491,11 +516,14 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
         raise ValueError('Reusing a resolved proposal requires explicit cited-passage resolution')
     if resume_evidence and (not reuse_proposal or new_experiment or regression_findings or resolve_cited_passages):
         raise ValueError('Evidence recovery requires unchanged saved proposal and original budget')
-    if resume_evidence:
+    if evidence_token_authorization is not None and (not resume_evidence or max_tokens is not None):
+        raise ValueError('Token-only override requires saved evidence resume and unlimited new ceiling')
+    if resume_evidence and evidence_token_authorization is None:
         if max_tokens is not None and max_tokens != seed_protocol.get('max_tokens'):
             raise ValueError('Evidence recovery cannot change the original token ceiling')
         max_tokens = seed_protocol.get('max_tokens')
     exported = export_seed(seed, reuse_proposal, resume_evidence)
+    token_policy = evidence_token_policy(evidence_token_authorization,seed,exported) if evidence_token_authorization else None
     snapshot = exported['snapshot']; sp = exported['source_protocol']
     if reuse_proposal and not exported['imported_proposal']: raise ValueError('No reusable staged proposal')
     remaining = max_rounds if new_experiment else min(max_rounds, 2-exported['used_rounds'])
@@ -528,6 +556,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
     seed_protocol = base.read(seed/'protocol.json')
     bound.update(seed_protocol.get('source_bindings', {}))
     bound.update(supplemental_bindings)
+    if token_policy:bound[token_policy['path']]=token_policy['sha256']
     names = [f for f in Path(__file__).parent.glob('earnings_*.py')] + [Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol = {'version': VERSION, 'seed': str(seed), 'source_bindings': bound, 'source_protocol': sp,
                 'initial_sha256': base.digest(snapshot), 'code': [{'path': str(f), 'sha256': base.sha(f)} for f in names],
@@ -544,7 +573,8 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
         protocol['version'] = cited_passages.VERSION
         protocol['passage_resolution'] = resolution
     if resume_evidence:
-        protocol['evidence_resume'] = review_evidence_binding(seed, exported, snapshot, sp)
+        protocol['evidence_resume'] = review_evidence_binding(seed, exported, snapshot, sp, 'saved-review-evidence-v2')
+        if token_policy:protocol['evidence_token_policy']=token_policy
     repair.write(root/'protocol.json', protocol); repair.write(root/'initial.json', snapshot)
     load(root)
     return {'status': 'pending', 'max_rounds': remaining, 'findings': len(snapshot['findings'])}
@@ -575,12 +605,18 @@ def load(root):
     if base.digest(base.read(root/'initial.json')) != p['initial_sha256']: raise ValueError('Initial snapshot changed')
     if p.get('evidence_resume'):
         exported = export_seed(Path(p['seed']), True, True)
-        expected = review_evidence_binding(Path(p['seed']), exported, base.read(root/'initial.json'), p['source_protocol'])
+        expected = review_evidence_binding(Path(p['seed']), exported, base.read(root/'initial.json'), p['source_protocol'],p['evidence_resume']['version'])
+        authorized = p.get('evidence_token_policy')
+        if authorized:
+            if evidence_token_policy(authorized['path'],Path(p['seed']),exported)!=authorized or p.get('max_tokens') is not None:
+                raise ValueError('Token-only policy binding changed')
         if (expected != p['evidence_resume'] or p.get('imported_proposal') != exported['imported_proposal']
                 or p.get('new_experiment') or p['prior_rounds'] != exported['used_rounds']
                 or p['inherited_tokens'] != exported['spent_tokens'] or p['max_rounds'] + p['prior_rounds'] > 2
-                or p.get('max_tokens') != base.read(Path(p['seed'])/'protocol.json').get('max_tokens')):
+                or (not authorized and p.get('max_tokens') != base.read(Path(p['seed'])/'protocol.json').get('max_tokens'))):
             raise ValueError('Review evidence recovery or inherited accounting changed')
+    elif p.get('evidence_token_policy'):
+        raise ValueError('Token-only policy requires saved review evidence')
     sp = p['source_protocol']
     for path, digest in [(sp['case_path'], sp['case_sha256']), (sp['writing_standard'], sp['writing_sha256']), (sp['evidence_manifest'], sp['evidence_sha256'])]:
         if base.sha(path) != digest: raise ValueError('Original source binding changed')
@@ -871,11 +907,12 @@ def main():
     init.add_argument('--new-experiment', action='store_true', help='Explicit separately authorized test; preserves exhausted prior run')
     init.add_argument('--reuse-proposal', action='store_true', help='Reuse a verified pending proposal from a prior correction experiment; no new author call')
     init.add_argument('--resume-evidence', action='store_true', help='With --reuse-proposal: deliver authenticated saved review evidence requests without resetting rounds')
+    init.add_argument('--evidence-token-authorization', help='Explicit private token-only unbounded policy for a new evidence-resume edition; rounds and usage retained')
     init.add_argument('--regression-findings', help='Private source-bound supplemental audit findings JSON; pending independent review')
     init.add_argument('--resolve-cited-passages', action='store_true', help='With --reuse-proposal only: complete exactly empty passage lists from all original explicitly cited scopes; independent review remains required')
     for name in ('advance', 'run', 'verify'): sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
-    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings, args.resolve_cited_passages, args.resume_evidence) if args.command == 'init' else globals()[args.command](args.output)
+    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings, args.resolve_cited_passages, args.resume_evidence, args.evidence_token_authorization) if args.command == 'init' else globals()[args.command](args.output)
     print(json.dumps(result))
 
 
