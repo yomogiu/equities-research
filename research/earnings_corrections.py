@@ -653,6 +653,15 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
             elif isinstance(value, list):
                 for v in value: collect(v)
         collect(snapshot)
+        collect(feedback)
+        ids.update(extra_scope_ids)
+        if financial_context_version is not None:
+            fact_ids = {row['id'] for row in bundle['financial']['observations']}
+            requested = sorted(ids & fact_ids)
+            if requested:
+                data['financial_original_context'] = context.evidence_response(
+                    bundle, catalog, [{'scope_id':sid,'reason':'Source context for correction findings'} for sid in requested],
+                    financial_context_version=financial_context_version)
         # The reviewer and proposer must share the exact exchange membership,
         # including split continuations and provisional boundary annotations.
         data['canonical_exchange_index'] = context.canonical_exchange_index(bundle)
@@ -710,7 +719,6 @@ def replay(root, p, bundle, catalog, writing):
         resolution = p.get('passage_resolution') if round_no == 0 else None
         for role in ('propose', 'review'):
             job = folder/role
-            text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback) if role == 'propose' else None
             bindings = {'protocol_sha256': base.sha(root/'protocol.json'), 'snapshot_sha256': base.digest(state), 'round': round_no, 'role': role}
             imported = p.get('imported_proposal') if round_no == 0 and role == 'propose' else None
             if imported:
@@ -730,6 +738,12 @@ def replay(root, p, bundle, catalog, writing):
                     return {**progress, 'state': state, 'tokens': tokens, 'round': round_no, 'role': role}
                 result = progress['result']; job = progress['job']
             else:
+                try:
+                    text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback,
+                                  extra_scope_ids=p.get('evidence_resume', {}).get('scope_ids', ()),
+                                  financial_context_version=p.get('financial_context_version'))
+                except context.ContextTooLarge as exc:
+                    return {'status':'prompt_too_large','state':state,'tokens':tokens,'round':round_no,'role':role,'error':str(exc)}
                 if not (job/'output.json').exists():
                     admission = budget.admission(text, budget.remaining(p['max_tokens'], p.get('inherited_tokens', 0), tokens))
                     uncertain = job.exists() and any(job.iterdir())
