@@ -21,7 +21,8 @@ PARTICIPANTS = QUESTIONERS | {'issuer_representative', 'external_investor_relati
                              'submitted_question_moderator', 'unresolved'}
 FUNCTIONS = {'submitted_question', 'live_question', 'submitted_question_topic_transition',
              'answer_to_submitted_topic', 'answer_to_submitted_question', 'issuer_answer',
-             'live_analyst_transition', 'moderator', 'greeting', 'closing'}
+             'live_analyst_transition', 'moderator', 'greeting', 'closing',
+             'issuer_response_candidate', 'issuer_handoff'}
 
 
 def _sha(value):
@@ -225,6 +226,9 @@ def apply_reviewed_sidecar(text, raw, source, proposal_bytes, review_bytes, auth
             if function.startswith('answer_') or function == 'issuer_answer':
                 if t['role'] != 'management' and t['participant_function'] != 'issuer_representative':
                     raise ValueError('Answer function requires supported issuer attribution')
+            # A reviewed response function describes the exchange, not the
+            # speaker's occupation. Preserve unknown identity and whole-index
+            # coverage holds; stronger issuer_answer attribution stays gated.
             t['dialogue_function'] = function
 
     qa = proposal['qa_proposal']

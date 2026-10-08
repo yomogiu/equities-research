@@ -110,6 +110,24 @@ class ReviewedTranscriptTests(unittest.TestCase):
         self.assertIn('no_answered_exchange',index['coverage']['mapping_blockers'])
         self.assertEqual(index['turns'][3]['role'],'unknown')
 
+    def test_reviewed_response_candidate_preserves_unknown_occupation(self):
+        f=fixture();f[2]['issuer_names']=[];e=f[3]['evidence'][3]
+        f[3]['dialogue_function_proposals']=[dict(start=e['start'],end=e['end'],source_speaker='Ari Executive',dialogue_function='issuer_response_candidate',evidence_id='e3')]
+        rebind(f);index=apply(f);turn=index['turns'][3]
+        self.assertEqual(turn['role'],'unknown')
+        self.assertEqual(turn['indexed_dialogue_function'],'issuer_response_candidate')
+        self.assertIn(turn['id'],index['exchanges'][0]['answer_turn_ids'])
+        self.assertTrue(index['needs_review'])
+        self.assertEqual(index['reviewed_sidecar']['coverage_review'],'required')
+
+    def test_reviewed_handoff_is_not_an_answer(self):
+        f=fixture();e=f[3]['evidence'][3]
+        f[3]['dialogue_function_proposals']=[dict(start=e['start'],end=e['end'],source_speaker='Ari Executive',dialogue_function='issuer_handoff',evidence_id='e3')]
+        rebind(f);index=apply(f);turn=index['turns'][3]
+        self.assertEqual(turn['role'],'management')
+        self.assertNotIn(turn['id'],index['exchanges'][0]['answer_turn_ids'])
+        self.assertIn('no_answered_exchange',index['coverage']['mapping_blockers'])
+
     def test_explicit_answer_requires_issuer_attribution(self):
         f=fixture();f[2]['issuer_names']=[];e=f[3]['evidence'][3]
         f[3]['dialogue_function_proposals']=[dict(start=e['start'],end=e['end'],source_speaker='Ari Executive',dialogue_function='issuer_answer',evidence_id='e3')]
