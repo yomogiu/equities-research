@@ -109,7 +109,11 @@ def prepare(case_path, output_dir):
     raw_source = _unique_source(sources, source['document_id'], source['raw_sha256'])
     if source.get('text_sha256'):
         _unique_source(sources, source['document_id'], source['text_sha256'])
-    financial.validate_artifact(artifact, {source['document_id']: source})
+    html_inputs = None
+    if 'html_table_review' in artifact or case.get('financial_adapter'):
+        from . import financial_html_tables
+        html_inputs = financial_html_tables.case_inputs(case, Path(raw_source['path']).read_bytes(), source)
+    financial.validate_artifact(artifact, {source['document_id']: source}, html_table_inputs=html_inputs)
     index = base.read(case['transcript_index_path'])
     transcript_text = _text(case['transcript_path'])
     _verify_index(index, transcript_text)
@@ -132,11 +136,11 @@ def prepare(case_path, output_dir):
         support = obs['support']
         if support.get('offset_unit') not in ('unicode_codepoint', 'unicode_character'):
             raise ValueError('Unsupported financial offset unit')
-        support_source = raw_source if obs['method'] == 'inline_xbrl' else _unique_source(
+        support_source = raw_source if obs['method'] in ('inline_xbrl', 'reviewed_html_table') else _unique_source(
             sources, obs['source_document_id'], support['text_sha256'])
         raw = source_text(support_source)
         snippet = _span(raw, support['start'], support['end'])
-        if obs['method'] == 'inline_xbrl' and _sha_text(snippet) != support['raw_span_sha256']:
+        if obs['method'] in ('inline_xbrl', 'reviewed_html_table') and _sha_text(snippet) != support['raw_span_sha256']:
             raise ValueError('Financial support source span hash mismatch')
         if obs['method'] == 'manual_proposal' and snippet != support['quote']:
             raise ValueError('Financial proposed quote differs from source')

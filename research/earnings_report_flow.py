@@ -36,13 +36,16 @@ def validate_packet(root, packet_id):
     return packet
 
 
-def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar=None):
+def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar=None, reviewed_financial=None):
     """Derive records with optional externally authorized source-bound mappings.
 
     reviewed_sidecar is an explicit coordinator-selected authorization dictionary,
     including private-root-relative proposal/review paths and exact expected source
     and artifact hashes. No sidecars are discovered or authorized by this function.
     Whole-index coverage remains provisional and goes to independent report review.
+    reviewed_financial optionally names profile/review paths and an externally
+    reserved authorization for exact HTML cells; it is never discovered or used
+    automatically after inline extraction fails.
     """
     root, output, writing = Path(root).resolve(), Path(output).resolve(), Path(writing).resolve()
     if not authorization.strip():
@@ -56,7 +59,19 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
     filing, call = filings[0], calls[0]
     source = {k: filing[k] for k in ('document_id', 'raw_sha256', 'text_sha256')}
     raw = library.load_bytes(root, filing['raw_path'], filing['raw_sha256'])
-    facts = financial.extract_inline_xbrl(raw.decode('utf-8'), source)
+    financial_artifacts = []
+    if reviewed_financial is None:
+        facts = financial.extract_inline_xbrl(raw.decode('utf-8'), source)
+    else:
+        from . import financial_html_tables
+        financial_html_tables.fields(reviewed_financial, ('profile_path', 'review_path', 'authorization'), 'reviewed financial selection')
+        source['issuer_id'] = packet['issuer_id']
+        selection = reviewed_financial['authorization']
+        profile = library.load_bytes(root, reviewed_financial['profile_path'], selection['profile_sha256'])
+        review = library.load_bytes(root, reviewed_financial['review_path'], selection['review_sha256'])
+        facts = financial_html_tables.extract(raw, source, profile, review, selection)
+        financial_artifacts = [{'path': str(library.resolve(root, reviewed_financial[key+'_path'])),
+                                'sha256': selection[key+'_sha256']} for key in ('profile', 'review')]
     if not facts['observations']:
         raise ValueError('No structured filing observations; financial preparation needs review')
     text = library.load_bytes(root, call['text_path'], call['text_sha256']).decode('utf-8')
@@ -107,6 +122,10 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
                 sources[-1]['packet_document_id'] = doc['document_id']
                 sources[-1]['catalog_document_id'] = call_source['document_id']
     artifacts = [{'path': str(p), 'sha256': base.sha(p)} for p in (output/'financial.json', output/'transcript-index.json', writing)]
+    if reviewed_financial is not None:
+        financial_selection = output/'financial-adapter-authorization.json'
+        base.save(financial_selection, reviewed_financial['authorization'])
+        artifacts += financial_artifacts + [{'path': str(financial_selection), 'sha256': base.sha(financial_selection)}]
     if reviewed_sidecar is not None:
         selection_path = output/'transcript-sidecar-selection.json'
         base.save(selection_path, reviewed_sidecar)
@@ -126,6 +145,10 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
         case['transcript_sidecar'] = index['reviewed_sidecar']
         case['transcript_sidecar_selection_path'] = str(selection_path)
         case['scope_notes'].append('Source-bound speaker/Q&A annotations have independent receipts; generated exchange coverage remains provisional. Unknown occupation does not imply unknown questioner function. Preserve all retained source holds.')
+    if reviewed_financial is not None:
+        case['financial_adapter'] = {'authorization_path': str(financial_selection),
+                                     **{key+'_path': str(library.resolve(root, reviewed_financial[key+'_path'])) for key in ('profile', 'review')}}
+        case['scope_notes'].append('Selected ordinary HTML cells were extracted using an independently reviewed, exact-source profile. Profile review does not establish full financial coverage or report acceptance. Unselected cells remain original evidence.')
     base.validate_case(case); base.save(output/'case.json', case)
     return output/'case.json'
 
