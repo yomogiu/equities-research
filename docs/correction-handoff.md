@@ -26,6 +26,25 @@ retains spent tokens and rounds, and obtains fresh independent acceptance. An
 invalid aggregate disposition is not automatically expanded or approved. No
 production flag, schedule, model, source or correction budget changes here.
 
+## Confirmed provider failure and saved preparation
+
+`earnings_provider_recovery.initialize` creates a separately authorized successor
+for an original presentation pipeline whose two preparers completed and first
+analysis call ended with an observed, zero-output, zero-token provider overload.
+It binds the failed request, journal, process exit and original verifier, imports
+completed preparer responses, and permits exactly the same analysis prompt/model
+in the new attempt. Original settings and two correction rounds remain unchanged.
+Unknown exits, timeouts, partial output, other errors and terminal reviewed work
+are rejected. The original failed directory remains immutable.
+
+`earnings_role_import.initialize` also supports an original presentation pipeline
+with completed preparation responses. Every inherited response is authenticated
+with its original verifier and must match the newly reconstructed prompt exactly.
+No completed preparation is repeated. Shared execution locks and durable private
+reservation remain the caller's responsibility; neither initializer launches jobs.
+
+## Financial-only display evidence
+
 A saved financial-only `set_display` row correction can opt into
 `--reuse-proposal --resolve-financial-evidence`. This creates the explicit
 `deterministic-corrections-financial-evidence-v1` continuation. It inherits the
