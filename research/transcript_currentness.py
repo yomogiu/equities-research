@@ -12,7 +12,8 @@ from .contracts import digest, require
 from .freshness import timestamp
 from . import source_parse, transcript_evidence, financial_evidence
 
-VERSION = 'stockanalysis-market-widget-currentness-v1'
+LEGACY_VERSION = 'stockanalysis-market-widget-currentness-v1'
+VERSION = 'stockanalysis-market-and-app-counter-currentness-v2'
 STATUS = 'scoped_transcript_verified'
 
 
@@ -46,7 +47,38 @@ class Widget(HTMLParser):
         self.depth -= 1
 
 
-def signature(raw, url):
+def app_counters(html):
+    """Mask only numeric download-review counts inside known footer app links."""
+    footers = list(re.finditer(r'<footer\b[^>]*>.*?</footer>', html, re.S))
+    if not footers:
+        return html
+    require(len(footers) == 1, 'Ambiguous publisher footer')
+    footer = footers[0]
+    require('transcript-sentence' not in footer.group(), 'Footer overlaps call evidence')
+    links = (
+        'https://apps.apple.com/us/app/stock-analysis-app/id6751272467',
+        'https://play.google.com/store/apps/details?id=com.stockanalysis.app',
+    )
+    changes = []
+    for url in links:
+        matches = list(re.finditer(r'<a\b[^>]*href="' + re.escape(url) + r'"[^>]*>.*?</a>', footer.group(), re.S))
+        require(len(matches) <= 2, 'Ambiguous app promotion')
+        counted = 0
+        for match in matches:
+            counts = list(re.finditer(r'(<span class="text-gray-400">)([0-9]+(?:\.[0-9]+)?[KM]?)(</span>)', match.group()))
+            if not counts and 'text-gray-400' not in match.group():
+                continue
+            counted += 1
+            require(len(counts) == 1 and counted == 1, 'Unrecognized app counter')
+            count = counts[0]
+            start = footer.start() + match.start() + count.start(2)
+            changes.append((start, start + len(count.group(2))))
+    for start, end in reversed(sorted(changes)):
+        html = html[:start] + 'APP_REVIEW_COUNT' + html[end:]
+    return html
+
+
+def signature(raw, url, *, allow_app_counters=False):
     require(urlsplit(url).hostname == 'stockanalysis.com' and
             re.fullmatch(r'/stocks/[a-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path),
             'Unsupported transcript publisher URL')
@@ -69,7 +101,10 @@ def signature(raw, url):
     widget_text = source_parse.page(html[a:b].encode(), url).text
     require(re.search(r'(?:Market closed|At close:|Pre-market:|After-hours:)', widget_text), 'Unrecognized quote widget')
     require('transcript-sentence' not in html[a:b], 'Widget overlaps call evidence')
-    outside = source_parse.page((html[:a] + '<div>QUOTE_WIDGET</div>' + html[b:]).encode(), url).text
+    outside_html = html[:a] + '<div>QUOTE_WIDGET</div>' + html[b:]
+    if allow_app_counters:
+        outside_html = app_counters(outside_html)
+    outside = source_parse.page(outside_html.encode(), url).text
     facts = financial_evidence.extract_inline_xbrl(html, {'document_id': 'scope', 'raw_sha256': sha(raw), 'text_sha256': sha(page.text.encode())})
     facts = {'observations': [{k:v for k,v in o.items() if k not in ('observation_id','source_raw_sha256','support')} for o in facts['observations']],
              'gaps': [{k:v for k,v in g.items() if k != 'start'} for g in facts['gaps']]}
@@ -80,8 +115,9 @@ def signature(raw, url):
             'widget_html_span': [a,b], 'widget_sha256': sha(html[a:b].encode())}
 
 
-def compare(before, after, url):
-    old, old_spans = signature(before, url); new, new_spans = signature(after, url)
+def compare(before, after, url, *, allow_app_counters=True):
+    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters)
+    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters)
     require(old == new, 'Complete transcript, metadata or non-widget content changed')
     require(old['title'] and old['block_sha256'], 'Transcript metadata missing')
     return {'signature': old, 'archived': old_spans, 'observed': new_spans,
@@ -94,7 +130,7 @@ def replay(root, reference, document=None, *, issuer_id=None):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] == VERSION, 'Unsupported currentness proof')
+    require(value['version'] in (VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -102,7 +138,7 @@ def replay(root, reference, document=None, *, issuer_id=None):
     observed_text = library.load_bytes(root, new['text_path'], new['text_sha256'])
     require(source_parse.page(after,value['source_url']).text.encode() == observed_text, 'Observed extraction mismatch')
     require(source_parse.page(before,value['source_url']).text.encode() == text, 'Archived extraction mismatch')
-    require(compare(before,after,value['source_url']) == value['comparison'], 'Scoped comparison changed')
+    require(compare(before,after,value['source_url'], allow_app_counters=value['version'] == VERSION) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]

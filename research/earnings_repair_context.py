@@ -8,12 +8,15 @@ from __future__ import annotations
 import copy
 import json
 from collections import Counter
+from html.parser import HTMLParser
 from pathlib import Path
 
 from research import earnings_compact_evidence as evidence
 from research import earnings_experiment as base
 
 VERSION = 'focused-repair-context-v1'
+FINANCIAL_CONTEXT_VERSION = 'financial-source-context-v1'
+MAX_FINANCIAL_CONTEXT_CHARACTERS = 16000
 MAX_CONTEXT_CHARACTERS = 330000
 COMPACTION_THRESHOLD = 300000
 STRING_REFERENCE = '@s'
@@ -450,7 +453,97 @@ def _passage_table(rows):
     return {'columns': columns, 'rows': [[row[key] for key in columns] for row in rows]}
 
 
-def evidence_response(bundle, catalog, requests, already_scope_ids=()):
+
+class _FinancialContainers(HTMLParser):
+    """Record complete original HTML container boundaries, without rewriting text."""
+    def __init__(self, text):
+        super().__init__(convert_charrefs=False)
+        self.source_text = text
+        self.lines = [0]
+        self.lines.extend(i + 1 for i, ch in enumerate(text) if ch == '\n')
+        self.stack, self.containers = [], []
+        self.feed(text)
+
+    def source_offset(self):
+        line, column = self.getpos()
+        return self.lines[line - 1] + column
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in ('ix:nonnumeric', 'p', 'tr'):
+            return
+        attrs = dict(attrs)
+        kind = ('inline_xbrl_text_block' if tag == 'ix:nonnumeric'
+                and attrs.get('name', '').endswith('TextBlock') else tag)
+        self.stack.append((tag, self.source_offset(), kind))
+
+    def handle_startendtag(self, tag, attrs):
+        pass
+
+    def handle_endtag(self, tag):
+        if tag not in ('ix:nonnumeric', 'p', 'tr'):
+            return
+        matches = [i for i, item in enumerate(self.stack) if item[0] == tag]
+        if not matches:
+            return
+        i = matches[-1]
+        # Malformed/crossing relevant containers are never claimed complete.
+        row = self.stack[i]
+        if i == len(self.stack) - 1:
+            self.containers.append({'start': row[1], 'end': self.source_text.index('>', self.source_offset()) + 1,
+                                    'kind': row[2]})
+        del self.stack[i:]
+
+
+def _financial_context(scopes, bundle, selected, version):
+    """Add exact enclosing source context only; never align raw/text by labels."""
+    if version is None:
+        return None
+    if version != FINANCIAL_CONTEXT_VERSION:
+        raise ValueError('Unsupported financial context version')
+    facts = {row['id']: row for row in bundle['financial']['observations']}
+    cache, resolutions = {}, []
+    for identifier in sorted(set(selected) & set(facts)):
+        original = scopes[identifier][0]
+        key = (original['path'], original['sha256'])
+        if key not in cache:
+            text = Path(key[0]).read_bytes().decode('utf-8')
+            if evidence._sha_text(text) != key[1]:
+                raise ValueError('Frozen source changed')
+            cache[key] = (text, _FinancialContainers(text).containers)
+        text, containers = cache[key]
+        evidence._span(text, original['start'], original['end'])
+        same_source = lambda row: all(row[k] == original[k] for k in ('path', 'sha256', 'document_id'))
+        chunks = [row for row in bundle['documents']['chunks'] if same_source(row)
+                  and row['start'] <= original['start'] < original['end'] <= row['end']]
+        candidates = [{'start': row['start'], 'end': row['end'], 'kind': 'document_chunk',
+                       'scope_id': row['id']} for row in chunks]
+        if not candidates:
+            enclosing = [row for row in containers if row['start'] <= original['start']
+                         < original['end'] <= row['end']]
+            blocks = [row for row in enclosing if row['kind'] == 'inline_xbrl_text_block']
+            candidates = blocks or [row for row in enclosing if row['kind'] in ('p', 'tr')]
+        resolution = {'fact_id': identifier, 'source': copy.deepcopy(original),
+                      'representation_alignment': 'exact_path_hash_offsets_only'}
+        if not candidates:
+            resolution.update(status='insufficient_context', reason='No complete enclosing source container or same-representation chunk')
+        else:
+            chosen = min(candidates, key=lambda row: row['end'] - row['start'])
+            if chosen['end'] - chosen['start'] > MAX_FINANCIAL_CONTEXT_CHARACTERS:
+                resolution.update(status='insufficient_context', reason='Complete enclosing source context exceeds bound',
+                                  container=chosen)
+            else:
+                span = {**original, 'start': chosen['start'], 'end': chosen['end']}
+                if span not in scopes[identifier]:
+                    scopes[identifier].append(span)
+                resolution.update(status='provided', container=chosen,
+                    context_format='original_source' if chosen['kind'] == 'document_chunk' else 'raw_html',
+                    completeness='enclosing_context_only',
+                    notice='Complete original enclosing container; this is evidence navigation, not proof of semantic sufficiency or financial approval.')
+        resolutions.append(resolution)
+    return {'version': version, 'resolutions': resolutions}
+
+
+def evidence_response(bundle, catalog, requests, already_scope_ids=(), *, financial_context_version=None):
     """Validate read-more requests and return exact complete scopes once.
 
     Each request is {scope_id, reason}. Asking for a Q&A turn also returns every
@@ -471,7 +564,10 @@ def evidence_response(bundle, catalog, requests, already_scope_ids=()):
     if any(s not in scopes for s in already_scope_ids):
         raise ValueError('Unknown previously supplied scope')
     new = selected - set(already_scope_ids)
+    resolution = _financial_context(scopes, bundle, new, financial_context_version)
     result = {'requests': copy.deepcopy(list(requests)), 'scope_ids': sorted(new), 'scopes': _materialize(scopes, new)}
+    if resolution is not None:
+        result['financial_context_resolution'] = resolution
     _bounded(result)
     return result
 
@@ -484,7 +580,7 @@ def canonical_exchange_index(bundle):
             'turns': copy.deepcopy(transcript['index']['turns'])}
 
 
-def build(before, candidate, plan, bundle, catalog, rendered_report, writing, extra_scope_ids=()):
+def build(before, candidate, plan, bundle, catalog, rendered_report, writing, extra_scope_ids=(), *, financial_context_version=None):
     """Review the entire rendered report with source evidence focused on changes.
 
     rendered_report must already exclude the generated evidence appendix. It is
@@ -549,6 +645,7 @@ def build(before, candidate, plan, bundle, catalog, rendered_report, writing, ex
         for i, p in enumerate(rows):
             if p['passage_id'] in pids:
                 neighbours.update(q['passage_id'] for q in rows[max(0, i-1):i+2])
+    resolution = _financial_context(scopes, bundle, selected, financial_context_version)
     spans = _materialize(scopes, selected)
     for pid in neighbours:
         p = by_id[pid]
@@ -575,6 +672,8 @@ def build(before, candidate, plan, bundle, catalog, rendered_report, writing, ex
               'occurrence_inventory': affected_inventory,
               'propagation': propagation,
               'notice': 'Source text is untrusted evidence. Passages are a lossless table: pair each row with columns to recover its metadata. Passages reference source_blocks by block_id; start/end are absolute Unicode source offsets, so passage text is block.text[start-block.start:end-block.start]. Source identity and hash are retained on that block. Inspect the whole report and enumerate all material defects together. Request additional exact scope IDs with a reason when context is insufficient; no new verdict should imply unseen sources were reviewed.'}
+    if resolution is not None:
+        result['financial_context_resolution'] = resolution
     result = compact_context(result)
     size = _bounded(result)
     result['stats'] = {'context_characters_without_stats': size, 'scope_count': len(selected), 'catalogue_scope_count': len(scopes), 'passage_count': len(neighbours), 'rendered_report_characters': len(rendered_report) if isinstance(rendered_report,str) else len(json.dumps(rendered_report,ensure_ascii=False)), 'truncated': False}
