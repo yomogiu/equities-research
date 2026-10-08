@@ -24,7 +24,7 @@ from research import earnings_repair_context as context
 from research import earnings_repair_review as review_loop
 from research.earnings_mixed_runner import run_role, verify_job
 
-VERSION = 'targeted-remediation-v2'
+VERSION = 'targeted-remediation-v3'
 MODEL = ('gpt-6.1-sol', 'medium')
 MAX_PROMPT_CHARS = 350000
 STOPPED = {'blocked', 'budget_exhausted', 'invalid_patch', 'invalid_review', 'prompt_too_large', 'evidence_insufficient'}
@@ -67,6 +67,13 @@ def apply(snapshot, plan, bundle, catalog):
     if plan['snapshot_sha256'] != base.digest(snapshot):
         raise ValueError('Stale remediation snapshot')
     ops = plan['operations']
+    if isinstance(ops, list) and ops and any('target_id' in op for op in ops if isinstance(op, dict)):
+        if any(not isinstance(op, dict) or 'target_id' not in op or 'path' in op for op in ops):
+            raise ValueError('Do not mix exact-target and legacy path plans')
+        candidate = corrections.apply(snapshot, plan, bundle, catalog)
+        if candidate['artifacts'] == snapshot['artifacts'] and candidate['format'] == snapshot['format']:
+            raise ValueError('Unchanged remediation candidate')
+        return candidate
     if not isinstance(ops, list) or not 1 <= len(ops) <= 24:
         raise ValueError('One to 24 explicit operations required')
     registry = targets(snapshot, bundle); out = copy.deepcopy(snapshot); used = set(); ids = set()
@@ -133,7 +140,7 @@ print(json.dumps({'status':v['status'],'snapshot':v['state'],'source_protocol':p
 
 def export_seed(seed):
     p = base.read(seed/'protocol.json')
-    if p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', 'targeted-remediation-v1', VERSION}:
+    if p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION}:
         raise ValueError('A stopped corrections or remediation seed is required')
     for item in p['code']:
         if base.sha(item['path']) != item['sha256']: raise ValueError('Seed verifier code changed')
@@ -148,8 +155,15 @@ def export_seed(seed):
 
 
 def _authorization(value, seed, plan, output):
-    corrections.fields(value, ('kind', 'enabled', 'authorization_id', 'source_protocol_sha256',
-                              'first_plan_sha256', 'max_review_attempts', 'max_tokens', 'reason', 'output_path'), 'authorization')
+    names = ('kind', 'enabled', 'authorization_id', 'source_protocol_sha256',
+             'first_plan_sha256', 'max_review_attempts', 'max_tokens', 'reason', 'output_path')
+    if isinstance(value, dict) and 'budget_reference_jobs' in value:
+        names += ('budget_reference_jobs',)
+        refs = value['budget_reference_jobs']
+        if (not isinstance(refs, list) or not 1 <= len(refs) <= 12 or
+                any(not isinstance(x, str) or not Path(x).is_absolute() for x in refs) or len(set(refs)) != len(refs)):
+            raise ValueError('Distinct absolute source review budget references required')
+    corrections.fields(value, names, 'authorization')
     if value['kind'] != 'targeted_remediation' or value['enabled'] is not True:
         raise ValueError('Explicit targeted remediation authorization required')
     if value['source_protocol_sha256'] != base.sha(seed/'protocol.json') or value['first_plan_sha256'] != base.digest(plan):
@@ -187,6 +201,9 @@ def initialize(seed, output, plan, authorization):
         raise ValueError('Complete stopped candidate and unresolved findings required')
     if root.exists() and any(root.iterdir()): raise ValueError('New remediation directory must be empty')
     bindings, prior_sessions = seed_bindings(seed, old)
+    references = authorization.get('budget_reference_jobs')
+    calibration = (corrections.budget.review_calibration(references, bindings, MODEL, verify_job)
+                   if references else None)
     names = list(Path(__file__).parent.glob('earnings_*.py')) + [Path(__file__).with_name('earnings_mixed_prime.mjs')]
     protocol = {'version': VERSION, 'seed': str(seed), 'source_protocol': exported['source_protocol'],
                 'source_bindings': bindings, 'source_code': old['code'] + old.get('source_code', []),
@@ -195,9 +212,13 @@ def initialize(seed, output, plan, authorization):
                 'history': {k: exported[k] for k in ('status', 'prior_rounds', 'prior_tokens')},
                 'excluded_session_ids': sorted(set(prior_sessions)), 'model': list(MODEL),
                 'max_review_attempts': authorization['max_review_attempts'], 'max_tokens': authorization['max_tokens'], 'max_prompt_chars': MAX_PROMPT_CHARS}
+    if references:
+        protocol.update(budget_reference_jobs=references, budget_calibration=calibration)
     # Validate the plan against original evidence before creating any edition.
     sp = protocol['source_protocol']; bundle = evidence.load_bundle(sp['evidence_manifest'])
-    catalog = passages.catalog(bundle['manifest']); candidate = apply(snapshot, plan, bundle, catalog)
+    catalog = passages.catalog(bundle['manifest'])
+    corrections.qa_grounding.attach(None, sp, bundle, catalog)
+    candidate = apply(snapshot, plan, bundle, catalog)
     root.mkdir(parents=True, exist_ok=True)
     repair.write(root/'authorization.json', authorization); repair.write(root/'initial.json', snapshot)
     repair.write(root/'protocol.json', protocol)
@@ -221,6 +242,13 @@ def load(output):
         if base.sha(c['path']) != c['sha256']: raise ValueError('Original verifier code changed')
     for name, h in p['source_bindings'].items():
         if base.sha(name) != h: raise ValueError('Original seed or source changed')
+    references = auth.get('budget_reference_jobs')
+    if references:
+        expected = corrections.budget.review_calibration(references, p['source_bindings'], MODEL, verify_job)
+        if p.get('budget_reference_jobs') != references or p.get('budget_calibration') != expected:
+            raise ValueError('Authenticated review budget calibration changed')
+    elif 'budget_reference_jobs' in p or 'budget_calibration' in p:
+        raise ValueError('Unapproved review budget calibration')
     old, exported = export_seed(Path(p['seed']))
     expected_bindings, expected_sessions = seed_bindings(Path(p['seed']), old)
     if (p['source_bindings'] != expected_bindings or p['excluded_session_ids'] != expected_sessions
@@ -234,6 +262,7 @@ def load(output):
                     (sp['evidence_manifest'], sp['evidence_sha256'])):
         if base.sha(name) != h: raise ValueError('Original evidence or writing changed')
     bundle = evidence.load_bundle(sp['evidence_manifest']); catalog = passages.catalog(bundle['manifest'])
+    corrections.qa_grounding.attach(None, sp, bundle, catalog)
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
 
 
@@ -275,12 +304,23 @@ def _replay(root, p, bundle, catalog, writing):
         reviewed = review_loop.replay(
             folder/'review', lambda extra: prompt(state, plan, candidate, bundle, catalog, writing, extra),
             bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan),
-            seen_sessions, p['max_tokens'] - tokens, p['max_prompt_chars'], verify_job)
+            seen_sessions, p['max_tokens'] - tokens, p['max_prompt_chars'], verify_job,
+            admission_fn=(lambda text, remaining: corrections.budget.calibrated_admission(
+                text, remaining, p['budget_calibration'])) if p.get('budget_reference_jobs') else None)
         tokens += reviewed['tokens']
-        if reviewed['status'] != 'completed':
+        if reviewed['status'] != 'completed' and not reviewed.get('requires_adjudication'):
             return {**reviewed, 'state': state, 'tokens': tokens, 'review_attempts': number}
         result, job = reviewed['result'], reviewed['job']
-        state, status = corrections.adjudicate(state, candidate, plan, result['content'], bundle, catalog)
+        after, status = corrections.adjudicate(state, candidate, plan, result['content'], bundle, catalog)
+        if reviewed['status'] != 'completed':
+            substantive = {'verdict': result['content']['verdict'], 'validation': 'valid', 'outcome': status,
+                           'approve_patch': result['content']['approve_patch'], 'output_path': str(job/'output.json'),
+                           'output_sha256': base.sha(job/'output.json'), 'candidate_sha256': base.digest(candidate),
+                           'plan_sha256': base.digest(plan)}
+            return {**reviewed, 'state': state, 'tokens': tokens, 'review_attempts': number + 1,
+                    'substantive_review': substantive,
+                    'budget_compliance': corrections.budget.compliance(tokens, p['max_tokens'])}
+        state = after
         decision = {'before_sha256': plan['snapshot_sha256'], 'candidate_sha256': base.digest(candidate),
                     'plan_sha256': base.digest(plan), 'review_output_sha256': base.sha(job/'output.json'),
                     'patch_applied': result['content']['approve_patch'], 'status': status, 'after': state}

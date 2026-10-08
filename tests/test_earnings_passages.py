@@ -31,6 +31,17 @@ class PassageFixture:
             {'exchange_id': e['id'], 'question': 'Fictional question', 'answer': 'Fictional answer',
              'consequence': 'Fictional implication'} for e in self.bundle['transcript_index']['exchanges']],
             'document_findings': [], 'quotes': [{'passage_id': i} for i in self.ids]}
+        # New freezes require explicit source-bound coverage. The same extra
+        # fields remain harmless for explicit legacy protocol replay fixtures.
+        from research import earnings_qa_grounding as grounding
+        index = grounding.build(self.bundle, self.catalog)
+        indexed = {e['exchange_id']: e for e in index['exchanges']}
+        for row in self.retrieval['exchange_coverage']:
+            e = indexed[row['exchange_id']]
+            row.update(question_passage_ids=[p for t in e['turns'] if t['id'] in e['question_turn_ids'] for p in t['passage_ids']],
+                       answer_passage_ids=[p for t in e['turns'] if t['id'] in e['answer_turn_ids'] for p in t['passage_ids']],
+                       continuation_exchange_ids=[], grounding_status='bound',
+                       grounding_notes='Fictitious scope membership; provisional attribution needs review.')
         self.financial = {'rows': [{'label': 'Fictional revenue', 'fact_ids': ['F002']} for _ in range(4)], 'context': [], 'gaps': []}
         self.report = {'title': 'Fictional report', 'opening': 'Fictional evidence', 'opening_citations': ['D001'],
                        'findings': [{'heading': 'Fictional heading', 'text': 'Fictional finding', 'citations': ['D001'],
