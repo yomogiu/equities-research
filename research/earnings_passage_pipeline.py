@@ -133,6 +133,8 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
     # validation still imports the grounding module. Legacy load is unchanged.
     names = tuple(sorted(p.name for p in Path(__file__).parent.glob('earnings_*')
                          if p.suffix in ('.py', '.mjs')))
+    if base.read(case_path).get('financial_adapter'):
+        names += ('financial_html_tables.py', 'financial_evidence.py', 'reviewed_transcript_index.py')
     protocol = {'report_signals': bool(signals), 'version': EFFICIENT_VERSION if efficient else VERSION, 'repair_loop': bool(repair_loop), 'deterministic_corrections': bool(deterministic_corrections), 'case_path': str(Path(case_path).resolve()),
                 'case_sha256': base.sha(case_path), 'evidence_manifest': str(root / 'evidence/manifest.json'),
                 'evidence_sha256': base.sha(root / 'evidence/manifest.json'),

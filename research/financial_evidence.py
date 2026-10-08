@@ -311,7 +311,7 @@ def propose_fact(text, source, *, concept, value, context, unit, quote, start):
     return record
 
 
-def validate_artifact(artifact, trusted_sources):
+def validate_artifact(artifact, trusted_sources, *, html_table_inputs=None):
     """Require caller-owned source bindings, stable record hashes and finite values."""
     if artifact.get('schema_version') != SCHEMA_VERSION:
         raise ValueError('Unsupported financial artifact version')
@@ -321,6 +321,11 @@ def validate_artifact(artifact, trusted_sources):
         raise ValueError('Untrusted or stale source binding')
     if seal(artifact, 'artifact_sha256')['artifact_sha256'] != artifact.get('artifact_sha256'):
         raise ValueError('Financial artifact hash mismatch')
+    if 'html_table_review' in artifact or any(o.get('method') == 'reviewed_html_table' for o in artifact['observations']):
+        from . import financial_html_tables
+        if (source.get('issuer_id') != trusted.get('issuer_id') or html_table_inputs is None
+                or financial_html_tables.extract(*html_table_inputs) != artifact):
+            raise ValueError('Reviewed HTML artifact differs from independently authorized source replay')
     seen = set()
     for observation in artifact['observations']:
         obs_id = observation.get('observation_id')
@@ -347,7 +352,7 @@ def validate_artifact(artifact, trusted_sources):
                 raise ValueError('Manual observations must retain proposed status and text evidence')
             if support['end'] - support['start'] != len(support['quote']):
                 raise ValueError('Manual quote and offsets disagree')
-        elif observation.get('method') == 'inline_xbrl':
+        elif observation.get('method') in ('inline_xbrl', 'reviewed_html_table'):
             if observation['status'] != 'extracted' or not re.fullmatch('[0-9a-f]{64}', str(support.get('raw_span_sha256', ''))):
                 raise ValueError('Invalid inline evidence')
         else:

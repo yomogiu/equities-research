@@ -130,6 +130,8 @@ def source_row_label(obs):
 
 def metric_identity(obs, dims):
     """Prefer qualified source names where taxonomy loses accounting meaning."""
+    if obs.get('method') == 'reviewed_html_table':
+        return obs['support']['source_label'], dimensions_label(dims)
     label = LABELS.get(obs['concept'], humanize(obs['concept']))
     original = source_row_label(obs)
     lower = original.lower()
@@ -151,6 +153,8 @@ def metric_identity(obs, dims):
 
 def accounting_basis(obs, dims, selection):
     """Retain a declared basis locally without allowing author metric overrides."""
+    if obs.get('method') == 'reviewed_html_table':
+        return obs['accounting_basis']
     original = source_row_label(obs)
     # EBITDA naming alone does not establish the accounting basis, particularly
     # for segment measures. Require an explicit source declaration.
@@ -229,7 +233,7 @@ def build(financial, bundle):
                 basis = accounting_basis(obs, dims, selection)
             key = json.dumps([obs['concept'],ctx['entity'],ctx.get('entity_scheme'),dims,unit['numerator'],unit['denominator'],family,label,detail,basis],sort_keys=True)
             if key not in rows:
-                rows[key] = {'metric':label + (' (' + basis + ')' if basis and not strict else ''), 'dimensions':detail, 'unit':unit_label, 'cells':OrderedDict(), 'concept':obs['concept']}
+                rows[key] = {'metric':label + (' (' + basis + ')' if basis and (not strict or obs.get('method') == 'reviewed_html_table') else ''), 'dimensions':detail, 'unit':unit_label, 'cells':OrderedDict(), 'concept':obs['concept']}
                 if strict:
                     rows[key].update(accounting_basis=basis or 'not_stated_in_source_row', label_origin=identity['label_origin'])
             row = rows[key]

@@ -199,7 +199,7 @@ def source_identities(bundle, fact_ids=None):
                     'reason': 'No unambiguous complete inline-XBRL row label; expand this F ID before selecting an alternative.'}
         support = obs.get('support', {})
         row = support.get('table_row')
-        if obs.get('method') == 'inline_xbrl':
+        if obs.get('method') in ('inline_xbrl', 'reviewed_html_table'):
             binding = (obs['source_path'], obs['source_sha256'], obs['source_document_id'])
             if binding not in sources:
                 raise ValueError('Financial source is not bound to the frozen manifest')
@@ -225,6 +225,23 @@ def source_identities(bundle, fact_ids=None):
             row_raw = _span(raw, row['start'], row['end'])
             if _digest(row_raw) != row.get('raw_span_sha256'):
                 raise ValueError('Financial source row changed')
+            if obs.get('method') == 'reviewed_html_table':
+                from . import financial_evidence
+                label_span = support['label']
+                label_raw = _span(raw, label_span['start'], label_span['end'])
+                if (not row['start'] <= label_span['start'] < label_span['end'] <= row['end']
+                        or _digest(label_raw) != label_span['raw_span_sha256']):
+                    raise ValueError('Reviewed financial source label changed')
+                label_parser = financial_evidence._Parser(label_raw)
+                label_parser.feed(label_raw); label_parser.close()
+                label = label_parser.root.text().strip()
+                if label != support['source_label']:
+                    raise ValueError('Reviewed financial source label differs')
+                result[obs['id']] = {'label': ' '.join(label.split()), 'basis': obs['accounting_basis'],
+                    'label_origin': 'exact_source_cells', 'reason': None,
+                    'source': {'document_id': binding[2], 'sha256': binding[1], 'start': row['start'],
+                               'end': row['end'], 'span_sha256': _digest(row_raw), 'offset_unit': 'unicode_character'}}
+                continue
             key = (*binding, row['start'], row['end'])
             if key not in rows:
                 parser = _Row(); parser.feed(row_raw); parser.close()
