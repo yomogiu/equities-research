@@ -10,7 +10,8 @@ def check(value, message):
         raise ValueError(message)
 
 
-def inspect_failure(job, code):
+def inspect_failure(job, code, *, error_code="server_is_overloaded"):
+    check(error_code in ("server_is_overloaded", "server_error"), "Unsupported explicit provider error")
     job, code = Path(job).resolve(), Path(code).resolve()
     check(not any(p.is_symlink() for p in job.rglob('*')), 'Failure symlinks forbidden')
     q, launch, execution, start = [r.read(job/name) for name in
@@ -47,11 +48,11 @@ def inspect_failure(job, code):
     check(all(type(final.get('usage',{}).get(k)) is int and final['usage'][k] == 0
               for k in ('input','output','cacheRead','cacheWrite','totalTokens')), 'Nonzero/unknown usage requires separate assessment')
     errors = [x for x in final.get('diagnostics',[]) if x.get('type') == 'provider_stream_failure']
-    check(len(errors) == 1 and errors[0].get('error',{}).get('code') == 'server_is_overloaded', 'Only confirmed overload supported')
+    check(len(errors) == 1 and errors[0].get('error',{}).get('code') == error_code, 'Confirmed explicit provider error required')
     check(start.get('launch_id') == launch['id'] and start.get('session_id') == heads[0]['id'] and start.get('oauth') is True
           and start.get('model') == q['model'] and start.get('effort') == q['effort'], 'Failure runtime identity differs')
     return {'session_id':heads[0]['id'],'usage':{k:0 for k in ('input','output','cacheRead','cacheWrite','totalTokens')},
-            'elapsed_seconds':execution['elapsed_seconds'],'reason':'server_is_overloaded','attempt':1}
+            'elapsed_seconds':execution['elapsed_seconds'],'reason':error_code,'attempt':1}
 
 
 def validate(reference):
