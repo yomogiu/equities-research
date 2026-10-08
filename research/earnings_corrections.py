@@ -656,6 +656,9 @@ def load(root):
         exported=export_seed(Path(p['seed']), True)
         if review_policy.read(p['review_context_policy']['path'],Path(p['seed']),exported)!=p['review_context_policy'] or p.get('max_tokens') is not None or p['source_protocol']!=exported['source_protocol'] or base.read(root/'initial.json')!=exported['snapshot'] or p.get('new_experiment') or p.get('evidence_resume') or p.get('regression_findings') or p.get('passage_resolution') or p.get('imported_proposal')!=exported['imported_proposal'] or p['prior_rounds']!=exported['used_rounds'] or p['inherited_tokens']!=exported['spent_tokens'] or p['max_rounds']+p['prior_rounds']>2:
             raise ValueError('Context edition accounting or source changed')
+    if p.get('correction_provider_recovery'):
+        from . import earnings_correction_provider_recovery
+        earnings_correction_provider_recovery.validate(p, base.read(root/'initial.json'))
     sp = p['source_protocol']
     for path, digest in [(sp['case_path'], sp['case_sha256']), (sp['writing_standard'], sp['writing_sha256']), (sp['evidence_manifest'], sp['evidence_sha256'])]:
         if base.sha(path) != digest: raise ValueError('Original source binding changed')
@@ -832,6 +835,8 @@ def replay_review(policy, *args, **kwargs):
 
 def replay(root, p, bundle, catalog, writing):
     state = base.read(root/'initial.json'); tokens = 0; identities = {x['session_id'] for x in p.get('evidence_resume', {}).get('jobs', [])}; feedback = None
+    if p.get('correction_provider_recovery'):
+        identities.add(p['correction_provider_recovery']['failed_receipt']['session_id'])
     for round_no in range(p['max_rounds']):
         folder = root/'rounds'/str(round_no)
         plan = candidate = review = None
@@ -858,7 +863,8 @@ def replay(root, p, bundle, catalog, writing):
                 result = progress['result']; job = progress['job']
             else:
                 try:
-                    text = prompt(role, state, bundle, catalog, writing, plan, candidate, feedback,
+                    from . import earnings_correction_provider_recovery as recovery
+                    text = recovery.proposer_prompt(p, round_no) or prompt(role, state, bundle, catalog, writing, plan, candidate, feedback,
                                   extra_scope_ids=p.get('evidence_resume', {}).get('scope_ids', ()),
                                   financial_context_version=p.get('financial_context_version'))
                 except context.ContextTooLarge as exc:
