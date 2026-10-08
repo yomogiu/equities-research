@@ -13,6 +13,8 @@ let session;
 let stage = 'auth';
 try {
   const auth = AuthStorage.create();
+  stage = 'auth_storage';
+  if (auth.drainErrors().length) throw Error('auth_storage_unavailable');
   stage = 'registry';
   const registry = ModelRegistry.inMemory(auth);
   const registeredNames = {'gpt-6.1-sol':'GPT-6.1 Sol', 'gpt-6-luna':'GPT-6 Luna'};

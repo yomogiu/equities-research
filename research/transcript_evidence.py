@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from html.parser import HTMLParser
 import re
 
 VERSION = 'transcript-evidence-v1'
@@ -79,7 +80,7 @@ def _detected_boundaries(text, source):
                              'Transcript completeness and issuer/period qualification are not assessed here.']
 
 
-def index_transcript(text, source, reviewed_boundaries=None):
+def index_transcript(text, source, reviewed_boundaries=None, *, provisional_boundaries=None):
     """Index unchanged text. Reviewed annotations are supplied, not self-certified.
 
     source: document_id, text_sha256; optional speakers [{name,role}].
@@ -92,6 +93,8 @@ def index_transcript(text, source, reviewed_boundaries=None):
     if not source.get('document_id') or source.get('text_sha256') != _hash(text):
         raise ValueError('Missing document identity or source hash mismatch')
     reviewed = reviewed_boundaries is not None
+    if reviewed and provisional_boundaries is not None:
+        raise ValueError('Choose reviewed or provisional boundaries, not both')
     if reviewed:
         if reviewed_boundaries.get('source_sha256', source['text_sha256']) != source['text_sha256']:
             raise ValueError('Reviewed boundaries belong to a different source')
@@ -102,6 +105,12 @@ def index_transcript(text, source, reviewed_boundaries=None):
         uncertainty = ['Transcript completeness and issuer/period qualification are not assessed here.']
         if not sections or not turns:
             raise ValueError('Reviewed sections and turns required')
+    elif provisional_boundaries is not None:
+        if provisional_boundaries.get('source_sha256') != source['text_sha256']:
+            raise ValueError('Provisional boundaries belong to a different source')
+        sections, turns = provisional_boundaries['sections'], provisional_boundaries['turns']
+        uncertainty = ['Publisher layout and speaker roles are provisional; independent review is required.',
+                       'Transcript completeness and issuer/period qualification are not assessed here.']
     else:
         sections, turns, uncertainty = _detected_boundaries(text, source)
     source_key = {k: source[k] for k in ('document_id', 'text_sha256')}
@@ -185,6 +194,153 @@ def index_transcript(text, source, reviewed_boundaries=None):
             'coverage': {'source_characters': len(text), 'assigned_characters': covered,
                          'unassigned_spans': gaps, 'unassigned_qa_turn_ids': unassigned_qa},
             'uncertainty': uncertainty}
+
+
+
+class _TranscriptBlocks(HTMLParser):
+    """Locate rendered timed transcript blocks; never execute embedded scripts."""
+    def __init__(self, raw):
+        super().__init__(convert_charrefs=True)
+        self.raw, self.blocks, self.depth, self.active = raw, [], 0, None
+        self.unbound_sentences = 0
+        self.lines = [0] + [m.end() for m in re.finditer('\n', raw)]
+
+    def absolute_offset(self):
+        line, column = self.getpos()
+        return self.lines[line - 1] + column
+
+    def handle_starttag(self, tag, attrs):
+        if 'transcript-sentence' in dict(attrs).get('class', '').split() and self.active is None:
+            self.unbound_sentences += 1
+        if tag != 'div':
+            return
+        self.depth += 1
+        classes = set(dict(attrs).get('class', '').split())
+        if self.active is None and {'border-t', 'first:border-t-0'} <= classes:
+            self.active = (self.depth, self.absolute_offset())
+
+    def handle_endtag(self, tag):
+        if tag != 'div':
+            return
+        if self.active and self.active[0] == self.depth:
+            block = self.raw[self.active[1]:self.absolute_offset() + len('</div>')]
+            if 'transcript-sentence' in block:
+                self.blocks.append(block)
+            self.active = None
+        self.depth -= 1
+
+
+class _TranscriptRole(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.depth, self.active, self.parts = 0, None, []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'div':
+            self.depth += 1
+            if 'italic' in dict(attrs).get('class', '').split():
+                self.active = self.depth
+
+    def handle_endtag(self, tag):
+        if tag == 'div':
+            if self.active == self.depth:
+                self.active = None
+            self.depth -= 1
+
+    def handle_data(self, text):
+        if self.active is not None:
+            self.parts.append(text)
+
+
+_LEGAL_SUFFIXES = {'inc', 'incorporated', 'corp', 'corporation', 'co', 'company',
+                   'ltd', 'limited', 'plc', 'llc', 'lp', 'llp', 'ag', 'se', 'nv', 'sa'}
+
+
+def _issuer_name_key(name):
+    """Normalize typography and terminal legal forms, never invent brand aliases."""
+    words = re.findall(r'[^\W_]+', name.casefold().replace('&', ' and '))
+    while words and words[-1] in _LEGAL_SUFFIXES:
+        words.pop()
+    return ''.join(words)
+
+
+def _publisher_speaker_role(name, label, issuer_names):
+    if name.casefold() == 'operator':
+        return 'operator'
+    # Explicit professional analyst labels, including senior/research variants.
+    # A reference to analyst relations elsewhere in a title is not this role.
+    title = label.split(',', 1)[0].strip()
+    if re.search(r'\banalyst$', title, re.I):
+        return 'analyst'
+    names = {_issuer_name_key(n) for n in issuer_names if isinstance(n, str)} - {''}
+    # A title alone cannot distinguish issuer management from an external firm's
+    # CEO/chairperson. Require a matching company suffix in the rendered label.
+    for comma in re.finditer(',', label):
+        title, affiliation = label[:comma.start()], label[comma.end():]
+        if _issuer_name_key(affiliation) in names and re.search(
+                r'\b(?:CEO|CFO|COO|CTO|chief|president|chairman|chairwoman|chair|founder|investor relations|treasurer|controller)\b',
+                title, re.I):
+            return 'management'
+    return 'unknown'
+
+
+def index_publisher_transcript(text, source, raw):
+    """Index timed HTML call blocks against unchanged text and original offsets.
+
+    The rendered speaker/role labels are evidence, not independent qualification.
+    source.issuer_names must come from verified catalog identity or separately
+    approved aliases; names discovered in this page are never affiliation proof.
+    Unsupported layouts retain the conservative plain-text parser. Recognized
+    layouts fail closed on a text mismatch rather than dropping unparsed speech.
+    """
+    from .source_parse import page
+    if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != source.get('raw_sha256'):
+        raise ValueError('Publisher HTML source hash mismatch')
+    parser = _TranscriptBlocks(raw.decode('utf-8', errors='replace'))
+    parser.feed(parser.raw)
+    if parser.unbound_sentences:
+        raise ValueError('Timed transcript sentences occur outside recognized speaker blocks')
+    if not parser.blocks:
+        return index_transcript(text, source)
+    issuer_names = source.get('issuer_names', [])
+    if not isinstance(issuer_names, list) or any(not isinstance(n, str) or not n.strip() for n in issuer_names):
+        raise ValueError('Verified issuer names must be a list of nonempty strings')
+    turns, cursor = [], 0
+    for block in parser.blocks:
+        body = page(block.encode('utf-8'), '').text
+        lines = body.splitlines()
+        if len(lines) < 2:
+            raise ValueError('Incomplete publisher transcript block')
+        start = text.find(body, cursor)
+        if start < 0 or (turns and text[cursor:start].strip()):
+            raise ValueError('Publisher transcript blocks do not exactly cover archived call text')
+        name = lines[0].strip()
+        metadata = _TranscriptRole()
+        metadata.feed(block)
+        label = ''.join(metadata.parts).strip()
+        role = _publisher_speaker_role(name, label, issuer_names)
+        cursor = start + len(body)
+        turns.append({'start': start, 'end': cursor, 'speaker': name, 'role': role})
+    first, last = turns[0]['start'], turns[-1]['end']
+    qa = next((t['start'] for t in turns if t['role'] == 'analyst'), None)
+    sections = []
+    if qa is None:
+        sections.append({'start': first, 'end': last, 'kind': 'prepared_remarks'})
+    else:
+        if qa > first:
+            sections.append({'start': first, 'end': qa, 'kind': 'prepared_remarks'})
+        sections.append({'start': qa, 'end': last, 'kind': 'qa'})
+    result = index_transcript(text, source, provisional_boundaries={
+        'source_sha256': source['text_sha256'], 'sections': sections, 'turns': turns})
+    result['layout'] = 'timed-publisher-blocks-v1'
+    result['raw_sha256'] = source['raw_sha256']
+    result['issuer_affiliation'] = {'issuer_id': source.get('issuer_id'),
+                                    'catalog_id': source.get('catalog_id'),
+                                    'names': source.get('issuer_names', [])}
+    result['call_span'] = {'start': first, 'end': last}
+    result['excluded_spans'] = [{'start': a, 'end': b, 'reason': 'outside_rendered_call'}
+                                for a, b in ((0, first), (last, len(text))) if a < b]
+    return result
 
 
 def validate_findings(findings, index, text, fact_ids=()):

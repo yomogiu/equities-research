@@ -1,0 +1,249 @@
+"""Fictional bounded repair contexts; no network, real issuers, or model calls."""
+import copy
+import json
+import unittest
+from unittest.mock import patch
+from test_earnings_passages import PassageFixture
+from research import earnings_repair_context as c
+from research import earnings_experiment as base
+
+
+def passage_rows(ctx):
+    return [dict(zip(ctx['passages']['columns'], row)) for row in ctx['passages']['rows']]
+
+
+class RepairContextTests(PassageFixture, unittest.TestCase):
+    def state(self):
+        return {'artifacts': {'financial': copy.deepcopy(self.financial), 'retrieval': copy.deepcopy(self.retrieval), 'analysis': copy.deepcopy(self.report)},
+                'format': {'rows': {}, 'basis': {'text': '', 'citations': []}}, 'findings': []}
+
+    def edit(self, before):
+        after = copy.deepcopy(before)
+        path = ['artifacts', 'analysis', 'opening']
+        after['artifacts']['analysis']['opening'] = 'Fictional corrected finding.'
+        plan = {'operations': [{'id': 'edit-1', 'path': path, 'reason': 'Fictional correction', 'citations': ['D001'], 'passage_ids': [self.ids[0]]}]}
+        return after, plan
+
+    def test_report_complete_context_selective_source_and_unicode_exact(self):
+        before = self.state(); after, plan = self.edit(before)
+        report = 'FULL FICTIONAL REPORT\nGAAP table: $9.5\u00a0billion\nLast paragraph.'
+        ctx = c.build(before, after, plan, self.bundle, self.catalog, report, 'Fictional writing rules')
+        self.assertEqual(ctx['report'], report)
+        self.assertEqual(ctx['field_changes'][0]['before'], before['artifacts']['analysis']['opening'])
+        self.assertEqual(ctx['field_changes'][0]['after'], after['artifacts']['analysis']['opening'])
+        self.assertFalse(ctx['stats']['truncated'])
+        self.assertNotIn('original_artifacts', ctx)
+        self.assertEqual(ctx['candidate_sha256'], base.digest(after))
+        blocks = {b['block_id']: b for b in ctx['source_blocks']}
+        for p in passage_rows(ctx):
+            block = blocks[p['block_id']]
+            restored = {k: v for k, v in p.items() if k != 'block_id'}
+            restored.update({k: block[k] for k in ('path', 'sha256', 'document_id', 'offset_unit')})
+            restored['text'] = block['text'][p['start']-block['start']:p['end']-block['start']]
+            self.assertEqual(restored, next(x for x in self.catalog['passages'] if x['passage_id'] == p['passage_id']))
+            self.assertFalse({'text', 'path', 'sha256', 'document_id', 'offset_unit'} & set(p))
+        self.assertEqual(ctx['source_index']['span_columns'], ['source_index','start','end'])
+        self.assertTrue(all(len(span) == 3 for _, spans in ctx['source_index']['rows'] for span in spans))
+
+    def test_unchanged_report_direct_citations_supplied_without_second_lookup(self):
+        before=self.state();after,plan=self.edit(before)
+        after['artifacts']['analysis']['opening_citations']=['D002']
+        ctx=c.build(before,after,plan,self.bundle,self.catalog,'Entire report','Rules')
+        self.assertIn('D002',ctx['scope_ids'])
+        self.assertTrue(any(row['id']=='D002' for row in ctx['scopes']))
+
+    def test_passage_neighbors_do_not_cross_scope(self):
+        before = self.state(); after, plan = self.edit(before)
+        rows = [p for p in self.catalog['passages'] if p['scope_id'] == 'D001']
+        selected = rows[1]
+        plan['operations'][0]['passage_ids'] = [selected['passage_id']]
+        ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
+        actual = {p['passage_id'] for p in passage_rows(ctx)}
+        self.assertTrue({p['passage_id'] for p in rows[:3]} <= actual)
+
+    def test_compact_passages_reconstruct_unicode_without_source_duplication(self):
+        text = 'Leading α\u00a0text.\nQuestion 😀?\nAnswer café.\n'
+        block = {'block_id': 'B-fictional', 'path': '/fictional/source.txt', 'sha256': 'f'*64,
+                 'document_id': 'fictional-doc', 'offset_unit': 'unicode_character',
+                 'start': 100, 'end': 100+len(text), 'text': text,
+                 'span_sha256': c.evidence._sha_text(text)}
+        passages = []
+        for i, (start, end) in enumerate(((0, 16), (16, len(text)), (0, len(text)))):
+            passages.append({**{k: block[k] for k in ('path','sha256','document_id','offset_unit')},
+                'passage_id': 'P-fake-'+str(i), 'scope_id': 'T-fake-'+str(i),
+                'start': 100+start, 'end': 100+end, 'text': text[start:end],
+                'span_sha256': c.evidence._sha_text(text[start:end])})
+        original = copy.deepcopy(passages)
+        refs = c._compact_passages(passages, [block])
+        self.assertEqual(passages, original)
+        for ref, passage in zip(refs, passages):
+            restored = {k: v for k, v in ref.items() if k != 'block_id'}
+            restored.update({k: block[k] for k in ('path','sha256','document_id','offset_unit')})
+            restored['text'] = text[ref['start']-100:ref['end']-100]
+            self.assertEqual(restored, passage)
+        self.assertLess(len(json.dumps(refs)), len(json.dumps(passages)))
+
+    def test_passage_table_is_lossless_and_smaller_for_repeated_metadata(self):
+        rows = [{'passage_id': 'P'+str(i), 'scope_id': 'T'+str(i), 'start': i,
+                 'end': i+1, 'span_sha256': 'f'*64, 'block_id': 'B-fake'} for i in range(100)]
+        table = c._passage_table(rows)
+        self.assertEqual([dict(zip(table['columns'], row)) for row in table['rows']], rows)
+        self.assertLess(len(json.dumps(table)), len(json.dumps(rows)))
+        self.assertEqual(c._passage_table([]), {'columns': [], 'rows': []})
+        with self.assertRaises(ValueError):
+            c._passage_table([rows[0], {**rows[1], 'extra': None}])
+
+    def test_compact_passages_refuses_tampering_missing_and_ambiguous_blocks(self):
+        before = self.state(); after, plan = self.edit(before)
+        ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
+        original = next(p for p in self.catalog['passages'] if p['passage_id'] == passage_rows(ctx)[0]['passage_id'])
+        for key, value in [('text', 'Invented'), ('sha256', '0'*64), ('span_sha256', '0'*64),
+                           ('document_id', 'wrong'), ('offset_unit', 'utf8_byte'), ('end', 10**9)]:
+            changed = copy.deepcopy(original); changed[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                c._compact_passages([changed], ctx['source_blocks'])
+        with self.assertRaises(ValueError): c._compact_passages([original], [])
+        block = next(b for b in ctx['source_blocks'] if b['block_id'] == passage_rows(ctx)[0]['block_id'])
+        with self.assertRaisesRegex(ValueError, 'Duplicate'): c._compact_passages([original], [block, block])
+        changed = copy.deepcopy(block); changed['text'] = 'Corrupt'
+        with self.assertRaisesRegex(ValueError, 'changed'): c._compact_passages([original], [changed])
+        duplicate = {**block, 'block_id': 'B-another'}
+        with self.assertRaisesRegex(ValueError, 'one exact'): c._compact_passages([original], [block, duplicate])
+
+    def test_turn_evidence_expands_entire_parent_exchange(self):
+        exchange = self.bundle['transcript_index']['exchanges'][0]
+        turn = exchange['turn_ids'][-1]
+        response = c.evidence_response(self.bundle, self.catalog, [{'scope_id': turn, 'reason': 'Need question and complete response'}])
+        parent = next(e for e in response['scopes'] if e['id'] == exchange['id'])
+        self.assertEqual(len(parent['spans']), len(exchange['turn_ids']))
+        self.assertIn(exchange['id'], response['scope_ids'])
+        request = {'scope_id': exchange['id'], 'reason': 'Same evidence'}
+        again = c.evidence_response(self.bundle, self.catalog, [request, request], response['scope_ids'])
+        self.assertEqual(again['scopes'], [])
+
+    def test_findings_select_original_evidence_and_facts_keep_context(self):
+        before = self.state(); after, plan = self.edit(before)
+        before['findings'] = [{'id': 'finding-fake', 'finding': {'citations': ['D002'], 'passage_ids': [self.ids[-1]]}}]
+        ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
+        self.assertIn('D002', ctx['scope_ids'])
+        fact = next(o for o in ctx['financial_observations']['observations'] if o['id'] == 'F002')
+        self.assertIn(fact['context_id'], ctx['financial_observations']['contexts'])
+        self.assertIn(fact['unit_id'], ctx['financial_observations']['units'])
+
+    def test_unknown_request_empty_reason_and_source_tampering_fail(self):
+        for request in ({'scope_id': 'unknown', 'reason': 'Check'}, {'scope_id': 'D001', 'reason': ''}, {'scope_id': 'D001', 'reason': 'Check', 'text': 'inject'}):
+            with self.subTest(request=request), self.assertRaises(ValueError):
+                c.evidence_response(self.bundle, self.catalog, [request])
+        (self.root/'filing.txt').write_text('Corrupted fictional source')
+        with self.assertRaisesRegex(ValueError, 'Frozen source changed'):
+            c.evidence_response(self.bundle, self.catalog, [{'scope_id': 'D001', 'reason': 'Check'}])
+
+    def test_catalogue_source_offsets_and_hashes_are_verified(self):
+        before = self.state(); after, plan = self.edit(before)
+        catalog = copy.deepcopy(self.catalog)
+        next(p for p in catalog['passages'] if p['passage_id'] == self.ids[0])['text'] = 'Invented'
+        with self.assertRaisesRegex(ValueError, 'Passage differs'):
+            c.build(before, after, plan, self.bundle, catalog, 'Full report', 'Rules')
+
+    def test_context_bound_fails_instead_of_truncating(self):
+        before = self.state(); after, plan = self.edit(before)
+        with patch.object(c, 'MAX_CONTEXT_CHARACTERS', 100):
+            with self.assertRaises(c.ContextTooLarge):
+                c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
+            with self.assertRaises(c.ContextTooLarge):
+                c.evidence_response(self.bundle, self.catalog, [{'scope_id': 'D001', 'reason': 'Read'}])
+
+    def test_duplicate_claim_occurrences_require_all_dispositions(self):
+        before = self.state()
+        before['artifacts']['analysis']['opening'] = 'Forecast assumes LOW INVENTORY.'
+        before['artifacts']['retrieval']['exchange_coverage'][0]['answer'] = 'Forecast assumes low inventory.'
+        after, plan = self.edit(before)
+        first = ['artifacts', 'analysis', 'opening']
+        second = ['artifacts', 'retrieval', 'exchange_coverage', 0, 'answer']
+        plan['claim_groups'] = [{'id': 'inventory', 'aliases': ['low inventory'], 'required_paths': [first], 'unchanged': []}]
+        with self.assertRaisesRegex(ValueError, 'Unadjudicated claim occurrence'):
+            c.propagation_check(before, after, plan)
+        plan['claim_groups'][0]['unchanged'] = [{'path': second, 'reason': 'Original qualifier is correct here.'}]
+        result = c.propagation_check(before, after, plan)
+        self.assertEqual(len(result['groups'][0]['matches']), 2)
+        self.assertEqual(result['groups'][0]['matches'][1]['disposition'], 'unchanged')
+        self.assertEqual(before['artifacts']['retrieval']['exchange_coverage'][0]['answer'], after['artifacts']['retrieval']['exchange_coverage'][0]['answer'])
+        plan['claim_groups'][0]['required_paths'].append(second)
+        with self.assertRaisesRegex(ValueError, 'no operation'):
+            c.propagation_check(before, after, plan)
+
+    def test_explicit_paraphrase_and_display_paths_are_audited_without_alias_match(self):
+        before=self.state();after,plan=self.edit(before)
+        first=['artifacts','analysis','opening'];other=['artifacts','retrieval','exchange_coverage',0,'answer']
+        plan['claim_groups']=[{'id':'explicit','aliases':['unmatched conceptual heading'],
+            'required_paths':[first],'unchanged':[{'path':other,'reason':'Exact related passage is already correct.'},
+                                                {'path':['format','layout'],'reason':'Presentation change deferred.'}]}]
+        result=c.propagation_check(before,after,plan)
+        rows=result['groups'][0]['matches']
+        self.assertEqual(len(rows),3)
+        self.assertTrue(all(not row['literal_alias_match'] for row in rows))
+        self.assertEqual(next(row for row in rows if row['path']==first)['disposition'],'patched')
+        plan['claim_groups'][0]['unchanged'].append({'path':['artifacts','analysis','nonexistent'],'reason':'Invented path'})
+        with self.assertRaisesRegex(ValueError,'Invalid unchanged'):c.propagation_check(before,after,plan)
+
+    def test_conflicting_author_label_cannot_hide_actual_change(self):
+        before=self.state();after,plan=self.edit(before);path=plan['operations'][0]['path']
+        plan['claim_groups']=[{'id':'explicit','aliases':['unmatched'], 'required_paths':[path],
+            'unchanged':[{'path':path,'reason':'Author incorrectly said unchanged'}]}]
+        row=c.propagation_check(before,after,plan)['groups'][0]['matches'][0]
+        self.assertEqual(row['disposition'],'patched');self.assertTrue(row['declared_unchanged'])
+        self.assertFalse(row['idempotent_instruction'])
+
+    def test_overlapping_scope_text_deduplicated_and_report_dict_preserved(self):
+        before = self.state(); after, plan = self.edit(before)
+        exchange = self.bundle['transcript_index']['exchanges'][0]
+        plan['operations'][0]['citations'] = [exchange['id'], *exchange['turn_ids']]
+        report = {'text': 'Entire report table and narrative', 'links': ['#evidence-1']}
+        ctx = c.build(before, after, plan, self.bundle, self.catalog, report, 'Rules')
+        self.assertEqual(ctx['report'], report)
+        blocks = {b['block_id']: b for b in ctx['source_blocks']}
+        for scope in ctx['scopes']:
+            for span in scope['spans']:
+                block = blocks[span['block_id']]
+                text = block['text'][span['start']-block['start']:span['end']-block['start']]
+                self.assertEqual(c.evidence._sha_text(text), span['span_sha256'])
+        observed = [(b['path'],b['start'],b['end']) for b in blocks.values()]
+        self.assertEqual(len(observed), len(set(observed)))
+        self.assertNotIn('F002', ctx['scope_ids'])
+        self.assertIn('F002', [o['id'] for o in ctx['financial_observations']['observations']])
+
+    def test_target_id_operation_context_preserves_original_plan_digest(self):
+        from research import earnings_corrections as corrections
+        before = self.state(); after, plan = self.edit(before)
+        target = next(k for k, v in corrections.registry(before, self.bundle)['targets'].items()
+                      if v['path'] == plan['operations'][0]['path'])
+        plan['operations'][0].pop('path')
+        plan['operations'][0]['target_id'] = target
+        ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
+        self.assertEqual(ctx['plan_sha256'], base.digest(plan))
+        self.assertEqual(ctx['field_changes'][0]['path'], ['artifacts', 'analysis', 'opening'])
+        self.assertNotIn('path', plan['operations'][0])
+
+    def test_changed_exchange_answer_retains_question_without_explicit_citation(self):
+        before = self.state(); after = copy.deepcopy(before)
+        after['artifacts']['retrieval']['exchange_coverage'][0]['answer'] = 'Corrected response'
+        exchange = self.bundle['transcript_index']['exchanges'][0]
+        plan = {'operations': [{'id': 'answer', 'path': ['artifacts','retrieval','exchange_coverage',0,'answer'],
+                               'reason': 'Fix answer', 'citations': [], 'passage_ids': []}]}
+        ctx = c.build(before, after, plan, self.bundle, self.catalog, 'Full report', 'Rules')
+        self.assertIn(exchange['id'], ctx['scope_ids'])
+        parent = next(row for row in ctx['scopes'] if row['id'] == exchange['id'])
+        self.assertEqual(len(parent['spans']), len(exchange['turn_ids']))
+
+    def test_inventory_excludes_quotes_ids_observations_and_keeps_citations(self):
+        before = self.state()
+        inventory = c.occurrence_inventory(before)
+        self.assertTrue(all('quotes' not in r['path'] for r in inventory))
+        self.assertTrue(all('rows' not in r['path'] for r in inventory))
+        opening = next(r for r in inventory if r['path'] == ['artifacts', 'analysis', 'opening'])
+        self.assertEqual(opening['citations'], ['D001'])
+        self.assertEqual(c.propagation_check(before, before, {'operations': []})['declared_groups'], 0)
+
+
+if __name__ == '__main__':
+    unittest.main()

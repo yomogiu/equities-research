@@ -67,13 +67,39 @@ class FollowupValidationTests(unittest.TestCase):
             elif damage=='adjacency':index['exchanges']=[p,o,c]
             else:c['followup_of']=None
             policy['index_sha256']=fv.index_digest(index)
-            with self.subTest(damage=damage),self.assertRaisesRegex(ValueError,'direct adjacent same-analyst'):
+            with self.subTest(damage=damage),self.assertRaisesRegex(ValueError,'direct adjacent same-questioner'):
                 fv.inspect_context_links(findings,index,TEXT,['fake-fact'],**policy)
     def test_source_and_frozen_index_identity_required(self):
         index,findings,policy=fixture()
         with self.assertRaisesRegex(ValueError,'source hash'):fv.inspect_context_links(findings,index,TEXT+'changed',['fake-fact'],**policy)
         index['exchanges'][0]['analyst']='Edited'
         with self.assertRaisesRegex(ValueError,'index hash'):fv.inspect_context_links(findings,index,TEXT,['fake-fact'],**policy)
+    def test_neutral_questioner_with_unknown_occupation_preserves_context_policy(self):
+        index,findings,policy=fixture()
+        for exchange in index['exchanges']:
+            exchange['questioner']=exchange.pop('analyst')
+            exchange['questioner_occupation']='unknown'
+        policy['index_sha256']=fv.index_digest(index)
+        before=copy.deepcopy(index)
+        result=fv.inspect_context_links(findings,index,TEXT,['fake-fact'],**policy)
+        self.assertEqual(len(result['context_links']),1)
+        self.assertEqual(index,before)
+        self.assertEqual(index['exchanges'][0]['questioner_occupation'],'unknown')
+
+    def test_conflicting_questioner_legacy_labels_rejected(self):
+        index,findings,policy=fixture();index['exchanges'][0]['questioner']='Different participant'
+        policy['index_sha256']=fv.index_digest(index)
+        with self.assertRaisesRegex(ValueError,'Conflicting questioner'):
+            fv.inspect_context_links(findings,index,TEXT,['fake-fact'],**policy)
+
+    def test_neutral_questioner_still_requires_full_index_review(self):
+        index,findings,policy=fixture()
+        for e in index['exchanges']:e['questioner']=e.pop('analyst')
+        index['boundary_review']='partially_reviewed';index['needs_review']=True
+        policy['index_sha256']=fv.index_digest(index)
+        with self.assertRaisesRegex(ValueError,'reviewed index'):
+            fv.inspect_context_links(findings,index,TEXT,['fake-fact'],**policy)
+
     def test_unreviewed_index_rejected(self):
         index,findings,policy=fixture();index['needs_review']=True;policy['index_sha256']=fv.index_digest(index)
         with self.assertRaisesRegex(ValueError,'reviewed index'):fv.inspect_context_links(findings,index,TEXT,['fake-fact'],**policy)

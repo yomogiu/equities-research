@@ -4,7 +4,7 @@ The frozen schema demands a quote for every referenced indexed exchange. A singl
 question interrupted by a correction can span a parent and follow-up exchange,
 with its exact answer quotes in the child. This adapter permits the unquoted
 parent as context only when a private, independently inspected policy binds the
-source, full reviewed index and exact direct adjacent same-analyst pair.
+source, full reviewed index and exact direct adjacent same-questioner pair.
 
 No output or prompt is rewritten. The original validator checks a temporary copy
 with those context-only references removed; all quote, identity, span, field and
@@ -24,6 +24,14 @@ _ORIGINAL = transcript.validate_findings
 
 def index_digest(index):
     return hashlib.sha256(json.dumps(index,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+
+
+def _questioner(exchange):
+    # Legacy indexes name this field analyst. New indexes keep occupation separate.
+    value = exchange.get('questioner', exchange.get('analyst'))
+    if 'questioner' in exchange and 'analyst' in exchange and exchange['questioner'] != exchange['analyst']:
+        raise ValueError('Conflicting questioner identities')
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _policy(index, text, source_sha256, index_sha256, allowed_links):
@@ -47,9 +55,9 @@ def _policy(index, text, source_sha256, index_sha256, allowed_links):
             raise ValueError('Context policy references unknown exchange')
         parent,child=by_id[parent_id],by_id[child_id]
         if (child.get('followup_of')!=parent_id or positions[child_id]!=positions[parent_id]+1
-                or not parent.get('analyst') or parent['analyst']!=child.get('analyst')
+                or not _questioner(parent) or _questioner(parent)!=_questioner(child)
                 or parent.get('boundary_review')!='reviewed' or child.get('boundary_review')!='reviewed'):
-            raise ValueError('Context policy requires direct adjacent same-analyst reviewed follow-up')
+            raise ValueError('Context policy requires direct adjacent same-questioner reviewed follow-up')
         if (parent_id,child_id) in permitted:raise ValueError('Duplicate context policy link')
         permitted.add((parent_id,child_id))
     return permitted

@@ -66,9 +66,31 @@ def row_catalog(financial, bundle):
     return result
 
 
+def table_catalog(financial, bundle):
+    """Stable source-derived groups; display labels never change their identity."""
+    return {'table-' + base.digest([g['unit'], g['periods']])[:20]: g
+            for g in display.build(financial, bundle)['groups']}
+
+
+def validate_table_labels(labels, financial, bundle):
+    groups = table_catalog(financial, bundle)
+    if not isinstance(labels, dict) or len(labels) > len(groups):
+        raise ValueError('Bounded financial table labels required')
+    for key, item in labels.items():
+        if key not in groups or not isinstance(item, dict) or set(item) != {'unit_label', 'period_labels', 'citations'}:
+            raise ValueError('Unknown table or executable table label field')
+        texts = item['period_labels']
+        if not isinstance(texts, list) or len(texts) != len(groups[key]['periods']):
+            raise ValueError('Table labels must preserve original column count and order')
+        for text in [item['unit_label'], *texts]:
+            if not isinstance(text, str) or not text.strip() or len(text) > 160:
+                raise ValueError('Bounded nonempty table labels required')
+        legacy.check_ids(item['citations'], legacy.ids_for(bundle), 'table label sources')
+
+
 def validate_format(spec, financial, bundle):
-    if not isinstance(spec, dict) or set(spec) != {'rows', 'basis'} or not isinstance(spec['rows'], dict):
-        raise ValueError('Formatting requires rows and basis only')
+    if not isinstance(spec, dict) or not {'rows', 'basis'} <= set(spec) or set(spec) - {'rows', 'basis', 'layout', 'tables'} or not isinstance(spec['rows'], dict):
+        raise ValueError('Formatting requires rows, basis and optional declarative layout')
     allowed = legacy.ids_for(bundle); rows = row_catalog(financial, bundle)
     for key, item in spec['rows'].items():
         if key not in rows or not isinstance(item, dict) or set(item) != {'label', 'dimensions', 'citations'}:
@@ -83,28 +105,138 @@ def validate_format(spec, financial, bundle):
     legacy.check_ids(b['citations'], allowed, 'basis sources', nonempty=bool(b['text']))
 
 
+    if 'layout' in spec:
+        validate_layout(spec['layout'], rows, allowed)
+    if 'tables' in spec:
+        validate_table_labels(spec['tables'], financial, bundle)
+
+
+def validate_layout(layout, rows, allowed):
+    """Validate presentation-only routing; original facts are never replaced."""
+    keys = {'version', 'fold', 'detail_rows', 'summaries', 'basis_position'}
+    if not isinstance(layout, dict) or set(layout) != keys or layout['version'] != 'compact-financial-v1':
+        raise ValueError('Unknown compact financial layout schema')
+    if layout['basis_position'] not in ('before_tables', 'after_tables'):
+        raise ValueError('Unknown accounting basis position')
+    legacy.check_ids(layout['detail_rows'], set(rows), 'financial detail rows', nonempty=False)
+    if not isinstance(layout['fold'], list) or len(layout['fold']) > len(rows):
+        raise ValueError('Bounded financial fold list required')
+    sources, targets = set(), set()
+    for fold in layout['fold']:
+        if not isinstance(fold, dict) or set(fold) != {'row_id', 'into_row_id', 'label'}:
+            raise ValueError('Unknown financial fold field')
+        source, target = fold['row_id'], fold['into_row_id']
+        if not isinstance(source, str) or not isinstance(target, str) or source not in rows or target not in rows:
+            raise ValueError('Unknown financial fold row')
+        if source == target or source in sources:
+            raise ValueError('Duplicate or cyclic financial fold')
+        legacy.check_text(fold['label'], 'fold label')
+        if len(fold['label']) > 160:
+            raise ValueError('Bounded fold label required')
+        left, right = rows[source], rows[target]
+        if left['periods'] != right['periods']:
+            raise ValueError('Folded financial periods differ')
+        if left['unit'] != 'ratio' or not re.fullmatch(r'[A-Z]{3} millions', right['unit']):
+            raise ValueError('Financial folds require a ratio and monetary target')
+        if left['row']['dimensions'] != right['row']['dimensions']:
+            raise ValueError('Folded financial dimensions differ')
+        sources.add(source); targets.add(target)
+    if sources & targets:
+        raise ValueError('Financial fold chains or cycles are not supported')
+    if (sources | targets) & set(layout['detail_rows']):
+        raise ValueError('Folded rows cannot also be moved to financial detail')
+    summaries = layout['summaries']
+    if not isinstance(summaries, list) or len(summaries) > 24:
+        raise ValueError('Bounded financial summaries required')
+    described = set()
+    for summary in summaries:
+        if not isinstance(summary, dict) or set(summary) != {'text', 'citations', 'row_ids'}:
+            raise ValueError('Unknown financial summary field')
+        legacy.check_text(summary['text'], 'financial summary')
+        if len(summary['text']) > 800:
+            raise ValueError('Bounded financial summary required')
+        legacy.check_ids(summary['citations'], allowed, 'financial summary sources')
+        legacy.check_ids(summary['row_ids'], set(layout['detail_rows']), 'summarized detail rows')
+        if described & set(summary['row_ids']):
+            raise ValueError('Duplicate financial summary row')
+        described.update(summary['row_ids'])
+
+
 def table(financial, bundle, spec, refs=None):
     validate_format(spec, financial, bundle)
-    lines = ['Financial context', spec['basis']['text']]
-    parts = ['<h2>Financial context</h2>']
-    e = html.escape
-    if spec['basis']['text']:
-        parts.append('<p>' + e(spec['basis']['text']) + ' ' + refs(spec['basis']['citations']) + '</p>' if refs else '')
-    for group in display.build(financial, bundle)['groups']:
-        lines += [group['unit'], 'Metric | ' + ' | '.join(p['label'] for p in group['periods'])]
-        parts.append('<table><caption>' + e(group['unit']) + '</caption><tr><th>Metric</th>' + ''.join('<th>' + e(p['label']) + '</th>' for p in group['periods']) + '</tr>')
-        for row in group['rows']:
-            key = 'row-' + base.digest([row['concept'], row['dimensions'], group['unit'], group['periods']])[:20]
-            override = spec['rows'].get(key, {})
-            label = override.get('label', row['metric'])
-            dims = override.get('dimensions', row['dimensions'])
-            full = label + (' · ' + dims if dims else '')
-            lines.append(full + ' | ' + ' | '.join(c['value'] + ' [' + ', '.join(c['fact_ids']) + ']' for c in row['cells']))
-            parts.append('<tr><th>' + e(full) + ((' ' + refs(override['citations'])) if refs and override else '') + '</th>')
-            for c in row['cells']:
-                parts.append('<td>' + e(c['value']) + (' ' + refs(c['fact_ids']) if refs else '') + '</td>')
-            parts.append('</tr>')
-        parts.append('</table>')
+    layout = spec.get('layout', {'fold': [], 'detail_rows': [], 'summaries': [], 'basis_position': 'before_tables'})
+    folds = {}
+    for fold in layout['fold']:
+        folds.setdefault(fold['into_row_id'], []).append(fold)
+    folded = {f['row_id'] for f in layout['fold']}
+    detail = set(layout['detail_rows'])
+    catalog = row_catalog(financial, bundle)
+    lines = ['Financial context']; parts = ['<h2>Financial context</h2>']; e = html.escape
+
+    def paragraph(text, citations, css=''):
+        if text:
+            lines.append(text + (' [' + ', '.join(citations) + ']' if citations else ''))
+            parts.append('<p' + (' class="' + css + '"' if css else '') + '>' + e(text) + (' ' + refs(citations) if refs else '') + '</p>')
+
+    def basis():
+        paragraph(spec['basis']['text'], spec['basis']['citations'], 'financial-basis')
+
+    def full_label(key):
+        row = catalog[key]['row']; override = spec['rows'].get(key, {})
+        label = override.get('label', row['metric']); dims = override.get('dimensions', row['dimensions'])
+        return label + (' · ' + dims if dims else '')
+
+    def tables(in_detail):
+        for group in display.build(financial, bundle)['groups']:
+            visible = []
+            for row in group['rows']:
+                key = 'row-' + base.digest([row['concept'], row['dimensions'], group['unit'], group['periods']])[:20]
+                if key not in folded and (key in detail) == in_detail:
+                    visible.append((key, row))
+            if not visible:
+                continue
+            table_key = 'table-' + base.digest([group['unit'], group['periods']])[:20]
+            labels = spec.get('tables', {}).get(table_key, {})
+            unit = labels.get('unit_label', group['unit'])
+            periods = labels.get('period_labels', [p['label'] for p in group['periods']])
+            # Source periods, units, divisors, values and group membership are inert.
+            # Semantic label changes carry original evidence and require review.
+            citations = labels.get('citations', [])
+            lines.extend([unit + (' [' + ', '.join(citations) + ']' if citations else ''), 'Metric | ' + ' | '.join(periods)])
+            parts.append('<table><caption>' + e(unit) + ((' ' + refs(citations)) if refs and citations else '') + '</caption><tr><th>Metric</th>' + ''.join('<th>' + e(label) + '</th>' for label in periods) + '</tr>')
+            for key, row in visible:
+                override = spec['rows'].get(key, {})
+                cells = []; label = full_label(key)
+                parts.append('<tr data-financial-row="' + e(key) + '"><th>' + e(label) + ((' ' + refs(override['citations'])) if refs and override else '') + '</th>')
+                for number, cell in enumerate(row['cells']):
+                    text = cell['value'] + ' [' + ', '.join(cell['fact_ids']) + ']'
+                    value = e(cell['value']) + (' ' + refs(cell['fact_ids']) if refs else '')
+                    for fold in folds.get(key, []):
+                        source_key = fold['row_id']; source = catalog[source_key]
+                        source_cell = source['row']['cells'][number]
+                        # Keep source metric/dimensions and explicit raw ratio unit;
+                        # never infer percentages or recompute a numeric value.
+                        caption = fold['label'] + ' · ' + full_label(source_key) + ' (' + source['unit'] + ')'
+                        text += '; ' + caption + ': ' + source_cell['value'] + ' [' + ', '.join(source_cell['fact_ids']) + ']'
+                        source_citations = spec['rows'].get(source_key, {}).get('citations', [])
+                        value += '<small data-financial-row="' + e(source_key) + '"><br>' + e(caption) + ': ' + e(source_cell['value'])
+                        if refs:
+                            value += ' ' + refs(source_cell['fact_ids'] + source_citations)
+                        value += '</small>'
+                    cells.append(text); parts.append('<td>' + value + '</td>')
+                lines.append(label + ' | ' + ' | '.join(cells)); parts.append('</tr>')
+            parts.append('</table>')
+
+    if layout['basis_position'] == 'before_tables': basis()
+    tables(False)
+    for summary in layout['summaries']:
+        # Exact numeric rows remain below; prose is a separately reviewed claim.
+        paragraph(summary['text'], summary['citations'], 'financial-summary')
+    if layout['basis_position'] == 'after_tables': basis()
+    if detail:
+        lines.append('Financial detail (all original numeric rows)')
+        parts.append('<details class="financial-detail"><summary>Financial detail</summary>')
+        tables(True); parts.append('</details>')
     return ''.join(parts) if refs else '\n'.join(lines)
 
 
@@ -410,6 +542,8 @@ def load(root):
         raise ValueError('Case or writing standard changed')
     bundle=evidence.load_bundle(sp['evidence_manifest']);catalog=passages.catalog(bundle['manifest'])
     if catalog!=base.read(seed/'passages.json'):raise ValueError('Source passages changed')
+    from research import earnings_qa_grounding as grounding
+    grounding.attach(seed, sp, bundle, catalog)
     return p,bundle,catalog,Path(sp['writing_standard']).read_text()
 
 

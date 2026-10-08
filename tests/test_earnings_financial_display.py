@@ -79,3 +79,86 @@ class FinancialDisplayTests(unittest.TestCase):
         self.assertNotIn('us-gaap:',html)
         self.assertNotIn('Wrong label',html)
         self.assertEqual(html.count('<table>'),html.count('</table>'))
+
+    def test_issuer_attribution_and_local_basis_survive_rendering(self):
+        sheet,bundle=fixture()
+        sheet['rows']=[{'label':'GAAP net income, quarter','fact_ids':['F3','F4']}]
+        for obs in bundle['financial']['observations'][2:]:
+            obs['support']={'table_row':{'text':'Net income (loss) attributable to Example Holdings$22.5$(5.5)', 'truncated':False}}
+        sheet['context']=[{'text':'Quarter comparisons are unaudited U.S. GAAP.', 'citations':['F3','F4']}]
+        result=display.build(sheet,bundle)
+        row=result['groups'][0]['rows'][0]
+        self.assertEqual(row['metric'],'Net income (loss) attributable to Example Holdings (GAAP)')
+        text=display.text_table(sheet,bundle)
+        self.assertIn('unaudited U.S. GAAP',text)
+        self.assertIn('22.5 [F3] | -5.5 [F4]',text)
+        rendered=display.html_table(sheet,bundle,lambda ids:' '.join(ids))
+        self.assertIn('financial-basis',rendered)
+        self.assertIn('Example Holdings (GAAP)',rendered)
+
+    def test_qualified_segment_measure_stays_distinct_from_plain_measure(self):
+        sheet,bundle=fixture(); facts=bundle['financial']
+        sheet['rows']=[{'label':'Invented label','fact_ids':['F1','F2','F3','F4']}]
+        for obs in facts['observations']:
+            obs['concept']='fake:EarningsBeforeInterestTaxesDepreciationAndAmortization'
+            source_label='Total segment EBITDA As Defined' if obs['id'] in ('F1','F2') else 'EBITDA'
+            obs['support']={'table_row':{'text':source_label+'120 100','truncated':False}}
+        rows=display.build(sheet,bundle)['groups'][0]['rows']
+        self.assertEqual([r['metric'] for r in rows],['Total segment EBITDA As Defined','EBITDA'])
+        self.assertEqual(rows[0]['cells'][0]['fact_ids'],['F1'])
+        self.assertEqual(rows[1]['cells'][0]['fact_ids'],['F3'])
+
+    def test_source_channel_label_preserves_broader_category(self):
+        sheet,bundle=fixture(); facts=bundle['financial']
+        sheet['rows']=[{'label':'Commercial aftermarket','fact_ids':['F1','F2']}]
+        for ctx in facts['contexts'].values():
+            ctx['dimensions']=[{'dimension':'fake:SalesMarketTypeAxis','member':'fake:CommercialAftermarketMember'}]
+        for obs in facts['observations'][:2]:
+            obs['support']={'table_row':{'text':'Commercial and non-aerospace aftermarket48 42 90','truncated':False}}
+        row=display.build(sheet,bundle)['groups'][0]['rows'][0]
+        self.assertEqual(row['metric'],'Revenue')
+        self.assertEqual(row['dimensions'],'Commercial and non-aerospace aftermarket')
+
+    def test_comparable_nine_month_periods_align_but_stub_period_does_not(self):
+        sheet,bundle=fixture(); facts=bundle['financial']
+        sheet['rows']=[{'label':'YTD','fact_ids':['F1','F2']}]
+        facts['contexts']['a'].update(start_date='2039-10-01',end_date='2040-06-28')
+        facts['contexts']['b'].update(start_date='2038-10-01',end_date='2039-06-27')
+        table=display.build(sheet,bundle)
+        self.assertEqual(len(table['groups']),1)
+        self.assertEqual(len(table['groups'][0]['periods']),2)
+        self.assertEqual([c['fact_ids'] for c in table['groups'][0]['rows'][0]['cells']],[['F1'],['F2']])
+        facts['contexts']['b']['start_date']='2039-02-01'
+        self.assertEqual(len(display.build(sheet,bundle)['groups']),2)
+
+    def test_incomplete_source_label_cannot_override_identity_or_make_gaap_segment(self):
+        sheet,bundle=fixture(); facts=bundle['financial']
+        sheet['rows']=[{'label':'GAAP issuer earnings','fact_ids':['F3']}]
+        facts['contexts']['a']['dimensions']=[{'dimension':'fake:AdjustmentAxis','member':'fake:AdjustedMember'}]
+        facts['observations'][2]['support']={'table_row':{'text':'Net income attributable to Example', 'truncated':True}}
+        metric=display.build(sheet,bundle)['groups'][0]['rows'][0]['metric']
+        self.assertEqual(metric,'Net income (loss)')
+
+    def test_digits_inside_source_name_are_not_truncated_attribution(self):
+        obs={'support':{'table_row':{'text':'Net income attributable to Example 3M$20', 'truncated':False}}}
+        self.assertEqual(display.source_row_label(obs),'')
+
+    def test_source_channel_label_preserves_other_material_dimensions(self):
+        obs={'concept':'us-gaap:Revenues','support':{'table_row':{
+            'text':'Commercial and industrial aftermarket48 42','truncated':False}}}
+        dims=[{'dimension':'fake:SalesMarketTypeAxis','member':'fake:CommercialAftermarketMember'},
+              {'dimension':'us-gaap:StatementBusinessSegmentsAxis','member':'fake:AviationMember'},
+              {'dimension':'fake:GeographicalAxis','member':'fake:EuropeMember'}]
+        label,detail=display.metric_identity(obs,dims)
+        self.assertEqual(label,'Revenue')
+        self.assertEqual(detail,'Commercial and industrial aftermarket; Aviation segment; Geographical: Europe')
+
+    def test_ebitda_name_requires_explicit_source_accounting_basis(self):
+        dims=[{'dimension':'us-gaap:StatementBusinessSegmentsAxis','member':'fake:ExampleMember'}]
+        obs={'concept':'fake:EarningsBeforeInterestTaxesDepreciationAndAmortization',
+             'support':{'table_row':{'text':'Segment EBITDA100 90','truncated':False}}}
+        self.assertEqual(display.accounting_basis(obs,dims,{'label':'Non-GAAP segment earnings'}),'')
+        obs['support']['table_row']['text']='Non-GAAP segment EBITDA100 90'
+        self.assertEqual(display.accounting_basis(obs,dims,{'label':'Segment earnings'}),'non-GAAP')
+        obs['support']['table_row']['truncated']=True
+        self.assertEqual(display.accounting_basis(obs,dims,{'label':'Non-GAAP segment earnings'}),'')
