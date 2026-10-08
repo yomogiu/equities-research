@@ -157,7 +157,7 @@ def advance(output, execute=True):
     """Replay completed stages and execute at most one new worker; fail closed."""
     root = Path(output).resolve()
     kind = base.read(root/'protocol.json').get('version')
-    if kind in (corrections.VERSION, corrections.regression.VERSION, corrections.cited_passages.VERSION):
+    if kind in (corrections.VERSION, corrections.regression.VERSION, corrections.cited_passages.VERSION, corrections.financial_evidence.VERSION):
         continuation, _, _, _ = corrections.load(root)
         protocol = continuation['source_protocol']
         if continuation.get('new_experiment') or continuation['prior_rounds'] + continuation['max_rounds'] > 2:
