@@ -151,6 +151,9 @@ def _runtime_paths():
 def verify_job(job_path):
     """Recheck every persisted binding before treating a completed job as reusable."""
     job = Path(job_path).resolve()
+    if (job / 'import.json').exists():
+        from .earnings_role_import import verify
+        return verify(job)
     names = ('request.json', 'launch.json', 'execution.json', 'output.json', 'prompt.txt',
              'stdout.txt', 'runtime-start.json', 'runtime-finish.json', 'wire.json')
     for name in names:

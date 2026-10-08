@@ -163,6 +163,16 @@ def load(root):
                          *((c['path'], c['sha256']) for c in p['code'])]:
         if base.sha(path) != digest:
             raise ValueError('Frozen input/code changed: ' + str(path))
+    if p.get('response_recovery'):
+        recovery = p['response_recovery']
+        if base.sha(Path(recovery['seed'])/'protocol.json') != recovery['protocol_sha256']:
+            raise ValueError('Recovery source protocol changed')
+        original = base.read(Path(recovery['seed'])/'protocol.json')
+        compared = {k:v for k,v in p.items() if k not in ('code','response_recovery')}
+        if original.get('qa_grounding_path'):
+            compared['qa_grounding_path'] = original['qa_grounding_path']
+        if compared != {k:v for k,v in original.items() if k != 'code'}:
+            raise ValueError('Recovery must preserve original settings and evidence')
     bundle = evidence.load_bundle(p['evidence_manifest'])
     catalog = passages.catalog(p['evidence_manifest'])
     if catalog != base.read(root / 'passages.json'):
@@ -276,6 +286,10 @@ def run(output, max_new_jobs=None):
                     if max_new_jobs is not None and new_jobs >= max_new_jobs:
                         raise PendingJobs()
                     new_jobs += 1
+                imported = p.get('response_recovery', {}).get('imports', {}).get(path.name)
+                if imported is not None:
+                    from .earnings_role_import import create
+                    return create(path, text, *MODELS[role], bindings, 1200, imported)
                 return run_role(path, text, *MODELS[role], bindings, timeout=1200)
             raw, chain, extra = efficient_exchange(root, role, round_number, inputs, bundle, catalog, writing, obtain)
             record = {'role': role, 'round': round_number, 'mode': 'selection_patch' if repair else 'full',
@@ -299,6 +313,10 @@ def run(output, max_new_jobs=None):
                    if inputs['issues'] is not None else raw)
             if role == 'financial' and p['version'] == EFFICIENT_VERSION:
                 out = bind_efficient_financial(out, bundle, record['expanded_scope_ids'])
+            if role == 'retrieval' and p.get('response_recovery'):
+                from .earnings_role_import import complete_courtesy
+                out, additions = complete_courtesy(out, bundle, catalog)
+                record['deterministic_courtesy_additions'] = additions
             prior[role] = out
             selection_issues.pop(role, None)
             validate(role, out, bundle, catalog)
@@ -409,6 +427,12 @@ def verify(output):
         if p['version'] == EFFICIENT_VERSION:
             def obtain(check_path, text, bindings):
                 request = base.read(check_path / 'request.json'); item = verify_job(check_path)
+                imported = p.get('response_recovery', {}).get('imports', {}).get(check_path.name)
+                if imported is not None:
+                    if base.read(check_path/'import.json')['source'] != imported:
+                        raise ValueError('Recovery import changed')
+                elif (check_path/'import.json').exists():
+                    raise ValueError('Unreserved role import')
                 if ((request['model'], request['effort']) != MODELS[role] or request['bindings'] != bindings
                         or (check_path / 'prompt.txt').read_text() != text):
                     raise ValueError('Efficient role differs from exact evidence request')
@@ -442,6 +466,11 @@ def verify(output):
             out = bounded_patch(role, inputs['prior'], value['content'], catalog) if mode == 'selection_patch' else value['content']
             if role == 'financial' and p['version'] == EFFICIENT_VERSION:
                 out = bind_efficient_financial(out, bundle, job['expanded_scope_ids'])
+            if role == 'retrieval' and p.get('response_recovery'):
+                from .earnings_role_import import complete_courtesy
+                out, additions = complete_courtesy(out, bundle, catalog)
+                if job.get('deterministic_courtesy_additions') != additions:
+                    raise ValueError('Deterministic courtesy completion changed')
             prior[role] = out
             expected_issues.pop(role, None)
             validate(role, out, bundle, catalog)
