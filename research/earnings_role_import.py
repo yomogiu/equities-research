@@ -108,7 +108,7 @@ def verify(job):
     return {'content':source['content'],'receipt':execution,'output_path':str(job/'output.json')}
 
 
-def initialize(seed, output, authorization):
+def initialize(seed, output, authorization, evidence_job=None):
     from . import earnings_passage_pipeline as pipe
     seed,output=Path(seed).resolve(),Path(output).resolve()
     require(authorization.strip() and output!=seed and not output.exists(), 'New authorized recovery directory required')
@@ -122,6 +122,11 @@ def initialize(seed, output, authorization):
     protocol=copy.deepcopy(old)
     protocol['code']=[{'path':str(p),'sha256':r.sha(p)} for p in sorted(Path(__file__).parent.glob('earnings_*')) if p.suffix in ('.py','.mjs')]
     protocol['response_recovery']={'authorization':authorization,'seed':str(seed),'protocol_sha256':r.sha(seed/'protocol.json'),'imports':imports}
+    if evidence_job:
+        require(evidence_job in imports and evidence_job.startswith('retrieval-r') and evidence_job.endswith('-evidence-1'), 'Only an existing retrieval evidence request can be resumed')
+        saved=authenticate(imports[evidence_job])['content']
+        require(isinstance(saved,dict) and set(saved)=={'needs_evidence'} and saved['needs_evidence'], 'Saved response must request original evidence')
+        protocol['response_recovery']['extra_evidence']={'job':evidence_job,'request_sha256':r.digest(saved),'max_additional_expansions':1}
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
     if old.get('qa_grounding_path'):
