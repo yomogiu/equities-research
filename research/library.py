@@ -93,15 +93,26 @@ def normalize_kind(doc):
     return kind if kind in KINDS else 'unclassified'
 
 
-def build_catalog(root, audit_path, language_path=None):
+def build_catalog(root, audit_path, language_path=None, issuer_ids=None):
     root = private_root(root)
     audit = read_json(resolve(root, audit_path))
     language = read_json(resolve(root, language_path)) if language_path else {'documents': []}
     languages = {d['text_sha256']: d for d in language['documents']}
     issuers = {issuer_id(r['issuer_id']): {k: r.get(k) for k in
                ('issuer', 'symbol', 'exchange', 'identity_status', 'monitoring_eligible')} for r in audit['results']}
-    records = {}
-    imported = 0
+    selected = None if issuer_ids is None else set(issuer_ids)
+    previous = read_json(root / 'library/catalog.json') if selected is not None else None
+    if previous is not None:
+        require(digest({k: v for k, v in previous.items() if k != 'catalog_id'}) == previous['catalog_id'],
+                'Baseline catalog hash mismatch')
+        require(selected <= set(issuers) and set(issuers) == set(previous['issuers']),
+                'Issuer membership changed; explicit full catalog rebuild required')
+        # Retain out-of-batch metadata exactly, including source observation dates.
+        issuers = {iid: owner if iid in selected else previous['issuers'][iid]
+                   for iid, owner in issuers.items()}
+    records = ({did: row for did, row in previous['documents'].items()
+                if row['issuer_id'] not in selected} if previous is not None else {})
+    imported = sum(len(row['sources']) for row in records.values())
     # Use per-URL observations, never audit generation dates or file mtimes.
     observations = {}
     cache_paths = [root / 'collection/http-cache.json', *sorted((root / 'sources').rglob('http-cache.json'))]
@@ -172,6 +183,8 @@ def build_catalog(root, audit_path, language_path=None):
         imported += 1
 
     for company in audit['results']:
+        if selected is not None and issuer_id(company['issuer_id']) not in selected:
+            continue
         for document in company['documents']:
             add(company['issuer_id'], document, '', audit_path, True)
     index_path = root / 'collection/document-index.json'
@@ -189,6 +202,8 @@ def build_catalog(root, audit_path, language_path=None):
             manifest = read_json(resolve(root, 'collection/' + brief['manifest_path']))
             iid = mapping.get(manifest['issuer_id'], issuer_id(manifest['issuer_id']))
             require(iid in issuers, 'Collector issuer missing from audited universe')
+            if selected is not None and iid not in selected:
+                continue
             add(iid, manifest, 'collection', 'collection/' + brief['manifest_path'], False)
     for row in records.values():
         row['sources'].sort(key=lambda x: (x['source_url'], x['text_path'], x['provenance']))

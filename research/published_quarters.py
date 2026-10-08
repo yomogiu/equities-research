@@ -280,7 +280,7 @@ def _latest(candidates):
     return period, [c for c in usable if c['period'] == period]
 
 
-def run(root, as_of=None, issuer_ids=None):
+def run(root, as_of=None, issuer_ids=None, require_incremental=False):
     """Prepare latest-observed periods and packets in private storage.
 
     Writes published/latest.json, published/review-queue.json and a small receipt.
@@ -303,15 +303,28 @@ def run(root, as_of=None, issuer_ids=None):
         try:
             baseline = library.read_json(root / 'published/latest.json')
             queue = library.read_json(root / 'published/review-queue.json')
+            same_catalog = baseline['catalog_id'] == cat['catalog_id']
+            compatible = same_catalog
+            if not compatible and require_incremental:
+                require(re.fullmatch(r'[a-f0-9]{64}', baseline['catalog_id']) is not None, 'Invalid baseline catalog ID')
+                old = library.read_json(root / 'library/snapshots' / (baseline['catalog_id'] + '.json'))
+                require(digest({k: v for k, v in old.items() if k != 'catalog_id'}) == baseline['catalog_id'],
+                        'Published baseline snapshot hash mismatch')
+                def untouched(c):
+                    return ({iid: row for iid, row in c['issuers'].items() if iid not in requested},
+                            {did: row for did, row in c['documents'].items() if row['issuer_id'] not in requested})
+                compatible = untouched(old) == untouched(cat)
             if (baseline['schema_version'] == VERSION
-                    and baseline['catalog_id'] == cat['catalog_id']
+                    and compatible
                     and baseline.get('build_policy') == build_policy
                     and set(baseline['issuers']) == set(cat['issuers'])
                     and isinstance(queue, list)
-                    and all(item.get('catalog_id') == cat['catalog_id'] for item in queue)):
+                    and all(item.get('catalog_id') == baseline['catalog_id'] for item in queue)):
                 baseline_result, previous_review, rebuild_issuers = baseline, queue, requested
         except (OSError, ValueError, KeyError, TypeError):
             pass
+    require(not require_incremental or baseline_result is not None,
+            'Compatible publication baseline required; explicit full reconciliation needed')
     qualifications, review = _qualifications(root, cat, rebuild_issuers)
     by_issuer = {iid: [] for iid in cat['issuers']}
     document_counts = Counter()
@@ -407,10 +420,10 @@ def run(root, as_of=None, issuer_ids=None):
         if previous:
             previous['qualification_ids'] = sorted(set(previous['qualification_ids'] + item['qualification_ids']))
         else:
-            normalized_review[item['review_id']] = item
+            normalized_review[item['review_id']] = dict(item, catalog_id=cat['catalog_id'])
     for item in previous_review:
         if item.get('issuer_id') is not None and item['issuer_id'] not in rebuild_issuers:
-            normalized_review[item['review_id']] = item
+            normalized_review[item['review_id']] = dict(item, catalog_id=cat['catalog_id'])
     review = sorted(normalized_review.values(), key=lambda item: item['review_id'])
     issuer_as_of = {iid: (cutoff.isoformat() if iid in rebuild_issuers else
                          baseline_result.get('issuer_as_of', {}).get(iid, baseline_result['as_of']))
