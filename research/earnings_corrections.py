@@ -26,6 +26,7 @@ from research import earnings_repair_review as review_loop
 from research import earnings_budget as budget
 from research import earnings_regression_findings as regression
 from research import earnings_cited_passages as cited_passages
+from research import earnings_financial_correction_evidence as financial_evidence
 from research import earnings_qa_grounding as qa_grounding
 from research.earnings_mixed_runner import run_role, verify_job
 
@@ -125,7 +126,10 @@ def put(value, path, replacement):
 def claim(value, bundle, catalog):
     legacy.check_text(value['reason'], 'specific source-backed reason')
     legacy.check_ids(value['citations'], legacy.ids_for(bundle), 'evidence citations')
-    legacy.check_ids(value['passage_ids'], {p['passage_id'] for p in catalog['passages']}, 'original passages')
+    if 'financial_evidence_ids' in value:
+        financial_evidence.validate(value, bundle, catalog)
+    else:
+        legacy.check_ids(value['passage_ids'], {p['passage_id'] for p in catalog['passages']}, 'original passages')
 
 
 def exchange_fields(original):
@@ -185,6 +189,9 @@ def apply(snapshot, plan, bundle, catalog):
             extra = {'value', 'old_text'}
         if 'citation_mode' in op and op.get('op') in ('replace_text', 'copy_context'):
             extra = extra | {'citation_mode'}
+        if 'financial_evidence_ids' in op:
+            extra = extra | {'financial_evidence_ids'}
+            financial_evidence.target(snapshot, op, bundle, catalog)
         fields(op, common | extra, 'operation')
         legacy.check_text(op['id'], 'operation ID')
         if not isinstance(op['target_id'], str) or not op['target_id']:
@@ -323,23 +330,30 @@ def adjudicate(before, candidate, plan, review, bundle, catalog):
     if not isinstance(decisions, list) or len(decisions) != len(plan['operations']) or {d.get('id') for d in decisions} != {o['id'] for o in plan['operations']}:
         raise ValueError('Reviewer must assess each operation once')
     for d in decisions:
-        fields(d, ('id', 'approve', 'reason', 'citations', 'passage_ids'), 'operation decision')
+        fields(d, ('id', 'approve', 'reason', 'citations', 'passage_ids') + (('financial_evidence_ids',) if 'financial_evidence_ids' in d else ()), 'operation decision')
         if type(d['approve']) is not bool: raise ValueError('Explicit operation decision required')
+        original_op = next(o for o in plan['operations'] if o['id'] == d['id'])
+        if 'financial_evidence_ids' in original_op and 'financial_evidence_ids' not in d:
+            raise ValueError('Financial row decision requires typed source evidence')
         claim(d, bundle, catalog)
+        if 'financial_evidence_ids' in d:
+            op = next(o for o in plan['operations'] if o['id'] == d['id'])
+            financial_evidence.target(before, {**op, 'citations': d['citations'], 'passage_ids': d['passage_ids'],
+                                               'financial_evidence_ids': d['financial_evidence_ids']}, bundle, catalog)
     if review['approve_patch'] and not all(d['approve'] for d in decisions): raise ValueError('Atomic patch has rejected operation')
     pending = before['findings']; resolutions = review['resolutions']
     if not isinstance(resolutions, list) or len(resolutions) != len(pending) or {r.get('id') for r in resolutions} != {f['id'] for f in pending}:
         raise ValueError('Reviewer must adjudicate every pending finding once')
     unresolved = []
     for r in resolutions:
-        fields(r, ('id', 'status', 'reason', 'citations', 'passage_ids'), 'resolution')
+        fields(r, ('id', 'status', 'reason', 'citations', 'passage_ids') + (('financial_evidence_ids',) if 'financial_evidence_ids' in r else ()), 'resolution')
         claim(r, bundle, catalog)
         if r['status'] not in ('closed', 'withdrawn', 'open'): raise ValueError('Unknown resolution')
         if r['status'] == 'closed' and not review['approve_patch']: raise ValueError('Rejected edits cannot close findings')
         if r['status'] == 'open': unresolved.append(next(f for f in pending if f['id'] == r['id']))
     if not isinstance(review['findings'], list): raise ValueError('Findings must be a list')
     for f in review['findings']:
-        fields(f, ('reason', 'citations', 'passage_ids'), 'new finding'); claim(f, bundle, catalog)
+        fields(f, ('reason', 'citations', 'passage_ids') + (('financial_evidence_ids',) if 'financial_evidence_ids' in f else ()), 'new finding'); claim(f, bundle, catalog)
         item = {'id': repair.finding_id(f), 'finding': f}
         if item['id'] not in {x['id'] for x in unresolved}: unresolved.append(item)
     accepted = review['verdict'] == 'pass'
@@ -367,7 +381,7 @@ from research import earnings_experiment as b
 from research import earnings_report_repair as r
 from research import earnings_passage_pipeline as p
 root=Path(sys.argv[1]); protocol=b.read(root/'protocol.json'); imported=None; spent_tokens=0
-if protocol.get('version') in ('deterministic-corrections-v1', 'deterministic-corrections-regression-v1', 'deterministic-corrections-cited-passages-v1'):
+if protocol.get('version') in ('deterministic-corrections-v1', 'deterministic-corrections-regression-v1', 'deterministic-corrections-cited-passages-v1', 'deterministic-corrections-financial-evidence-v1'):
     from research import earnings_corrections as c
     cp,bundle,catalog,writing=c.load(root)
     progress=c.replay(root,cp,bundle,catalog,writing)
@@ -434,7 +448,7 @@ def verify_saved_proposal(imported, records):
     return json.loads(result.stdout)
 
 
-def resolved_import(snapshot, imported, bundle, catalog, records=()):
+def resolved_import(snapshot, imported, bundle, catalog, records=(), financial_only=False):
     """Authenticate the unchanged author output before completing source locations."""
     fields(imported, ('job', 'output_sha256'), 'Imported proposal')
     job = Path(imported['job'])
@@ -446,7 +460,10 @@ def resolved_import(snapshot, imported, bundle, catalog, records=()):
             or request['bindings'].get('role') != 'propose'
             or (request['model'], request['effort']) != MODEL):
         raise ValueError('Imported proposal belongs to a different snapshot or role')
-    effective, manifest = cited_passages.resolve(result['content'], bundle, catalog, imported['output_sha256'])
+    if financial_only:
+        effective, manifest = financial_evidence.resolve(result['content'], snapshot, bundle, catalog, imported['output_sha256'])
+    else:
+        effective, manifest = cited_passages.resolve(result['content'], bundle, catalog, imported['output_sha256'])
     # The ordinary atomic validator remains authoritative for every operation,
     # including immutable observations, quotes, hashes and claim propagation.
     apply(snapshot, effective, bundle, catalog)
@@ -487,6 +504,7 @@ def review_evidence_binding(seed, exported, snapshot, sp, version="saved-review-
 
 
 
+
 def evidence_token_policy(path, seed, exported):
     """Explicit token-only new-edition authority, bound to original accounting."""
     path=Path(path).resolve();value=base.read(path);old=base.read(Path(seed)/'protocol.json')
@@ -501,8 +519,13 @@ def evidence_token_policy(path, seed, exported):
         raise ValueError('Exact explicit token-only policy authority required')
     return {'path':str(path),'sha256':base.sha(path)}
 
-def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False, resume_evidence=False, evidence_token_authorization=None):
+def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False, reuse_proposal=False, regression_findings=None, resolve_cited_passages=False, resume_evidence=False, evidence_token_authorization=None, resolve_financial_evidence=False):
+
     seed = Path(seed).resolve(); root = Path(output).resolve()
+    if resolve_financial_evidence:
+        if not reuse_proposal or new_experiment or regression_findings is not None or resume_evidence or resolve_cited_passages:
+            raise ValueError('Financial evidence resolution requires only unchanged proposal reuse')
+        resolve_cited_passages = True
     if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
         raise ValueError('Use a new private directory outside code and the seed')
     if type(max_rounds) is not int or not 1 <= max_rounds <= 2 or (max_tokens is not None and (type(max_tokens) is not int or max_tokens <= 0)):
@@ -512,15 +535,17 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
     if resolve_cited_passages and (not reuse_proposal or new_experiment or regression_findings is not None):
         raise ValueError('Cited-passage resolution requires proposal reuse without new experiment or regression findings')
     seed_protocol = base.read(seed/'protocol.json')
-    if reuse_proposal and seed_protocol.get('version') == cited_passages.VERSION and not resolve_cited_passages:
+    if reuse_proposal and seed_protocol.get('version') in (cited_passages.VERSION, financial_evidence.VERSION) and not resolve_cited_passages:
         raise ValueError('Reusing a resolved proposal requires explicit cited-passage resolution')
     if resume_evidence and (not reuse_proposal or new_experiment or regression_findings or resolve_cited_passages):
         raise ValueError('Evidence recovery requires unchanged saved proposal and original budget')
+
     if evidence_token_authorization is not None and not str(evidence_token_authorization).strip():
         raise ValueError('Nonempty token-policy authorization reference required')
     if evidence_token_authorization is not None and (not resume_evidence or max_tokens is not None):
         raise ValueError('Token-only override requires saved evidence resume and unlimited new ceiling')
-    if resume_evidence and evidence_token_authorization is None:
+    if (resume_evidence and evidence_token_authorization is None) or resolve_financial_evidence:
+
         if max_tokens is not None and max_tokens != seed_protocol.get('max_tokens'):
             raise ValueError('Evidence recovery cannot change the original token ceiling')
         max_tokens = seed_protocol.get('max_tokens')
@@ -538,7 +563,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
         qa_grounding.attach(None, sp, bundle, catalog)
         if base.digest(catalog) != base.digest(base.read(Path(sp['evidence_manifest']).parent.parent/'passages.json')):
             raise ValueError('Original passages changed')
-        _, resolution = resolved_import(snapshot, exported['imported_proposal'], bundle, catalog, seed_protocol['code']+seed_protocol.get('source_code',[]))
+        _, resolution = resolved_import(snapshot, exported['imported_proposal'], bundle, catalog, seed_protocol['code']+seed_protocol.get('source_code',[]), financial_only=resolve_financial_evidence)
         regression.budget({'prior_rounds': exported['used_rounds'], 'inherited_tokens': exported['spent_tokens'],
                            'max_rounds': remaining, 'max_tokens': max_tokens}, exported, seed_protocol)
     if regression_findings is not None:
@@ -572,7 +597,7 @@ def initialize(seed, output, max_rounds=2, max_tokens=None, new_experiment=False
         protocol['version'] = regression.VERSION
         protocol['regression_findings'] = {'path': path, 'sha256': supplemental_bindings[path]}
     if resolve_cited_passages:
-        protocol['version'] = cited_passages.VERSION
+        protocol['version'] = financial_evidence.VERSION if resolve_financial_evidence else cited_passages.VERSION
         protocol['passage_resolution'] = resolution
     if resume_evidence:
         protocol['evidence_resume'] = review_evidence_binding(seed, exported, snapshot, sp, 'saved-review-evidence-v2')
@@ -586,8 +611,8 @@ def load(root):
     p = base.read(root/'protocol.json')
     if p.get('financial_context_version') not in (None, context.FINANCIAL_CONTEXT_VERSION):
         raise ValueError('Financial evidence context version differs')
-    if p['version'] not in (VERSION, regression.VERSION, cited_passages.VERSION) or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
-    if p['version'] == cited_passages.VERSION:
+    if p['version'] not in (VERSION, regression.VERSION, cited_passages.VERSION, financial_evidence.VERSION) or p['model'] != list(MODEL): raise ValueError('Correction protocol changed')
+    if p['version'] in (cited_passages.VERSION, financial_evidence.VERSION):
         if (not isinstance(p.get('passage_resolution'), dict) or not p.get('imported_proposal')
                 or p.get('new_experiment') or 'regression_findings' in p):
             raise ValueError('Cited-passage resolution requires its manifest and original imported proposal')
@@ -631,7 +656,7 @@ def load(root):
         if source['source_protocol'] != sp:
             raise ValueError('Regression findings original source protocol changed')
         regression.verify(p, base.read(root/'initial.json'), bundle, catalog, source, base.read(Path(p['seed'])/'protocol.json'))
-    if p['version'] == cited_passages.VERSION:
+    if p['version'] in (cited_passages.VERSION, financial_evidence.VERSION):
         source = export_seed(Path(p['seed']), reuse_proposal=True)
         initial = base.read(root/'initial.json')
         if (source['source_protocol'] != sp or source['snapshot'] != initial
@@ -641,7 +666,10 @@ def load(root):
         imported = p['imported_proposal']
         if p['source_bindings'].get(str(Path(imported['job'])/'output.json')) != imported['output_sha256']:
             raise ValueError('Resolved proposal original output binding changed')
-        _, manifest = resolved_import(initial, imported, bundle, catalog)
+        if p['version'] == financial_evidence.VERSION and p.get('max_tokens') != base.read(Path(p['seed'])/'protocol.json').get('max_tokens'):
+            raise ValueError('Financial recovery cannot change the original token ceiling')
+        _, manifest = resolved_import(initial, imported, bundle, catalog, p.get('source_code', []),
+                                      financial_only=p['version'] == financial_evidence.VERSION)
         if manifest != p['passage_resolution']:
             raise ValueError('Cited-passage resolution manifest changed')
     return p, bundle, catalog, Path(sp['writing_standard']).read_text()
@@ -753,13 +781,19 @@ def prompt(role, snapshot, bundle, catalog, writing, plan=None, candidate=None, 
             if passage_resolution['resolved_plan_sha256'] != base.digest(plan):
                 raise ValueError('Reviewer resolution provenance differs from effective plan')
             data['proposal_resolution'] = copy.deepcopy(passage_resolution)
-            instruction += (' The saved author proposal contained empty passage lists. An explicitly authorized '
-                            'deterministic derivation filled only those lists with ALL catalog passages in each '
-                            'original explicit cited scope; proposal_resolution records the exact delta and hashes. '
-                            'No prose, citations, quotes, numeric observations or author decisions were altered. '
-                            'This source-location completion is not evidence of factual support or approval. '
-                            'Independently assess every operation, including removal of source-uncertainty notes; '
-                            'retain and consider the original provisional transcript annotations in supplied evidence.')
+            if passage_resolution.get('version') == financial_evidence.VERSION:
+                instruction += (' An explicitly requested deterministic derivation attached typed financial source evidence only to exactly empty financial-only set_display row operations. The manifest binds the unchanged original author output, exact source slices and target-row observation correspondence. Ordinary empty D/T passage lists were completed using their original cited scopes. No edits, citations or observations changed; this is navigation, not approval.')
+            else:
+                instruction += (' The saved author proposal contained empty passage lists. An explicitly authorized '
+                                'deterministic derivation filled only those lists with ALL catalog passages in each '
+                                'original explicit cited scope; proposal_resolution records the exact delta and hashes. '
+                                'No prose, citations, quotes, numeric observations or author decisions were altered. '
+                                'This source-location completion is not evidence of factual support or approval. '
+                                'Independently assess every operation, including removal of source-uncertainty notes; '
+                                'retain and consider the original provisional transcript annotations in supplied evidence.')
+        if catalog.get(financial_evidence.KEY):
+            data['typed_financial_evidence'] = copy.deepcopy(catalog[financial_evidence.KEY])
+            instruction += (' Financial source evidence is separate from original passages. For financial-only decisions, resolutions or findings, supply financial_evidence_ids from typed_financial_evidence, exact matching F citations, and passage_ids:[]. These IDs bind original observations, periods, units, raw source spans and hashes. Operation decisions using this form are restricted to the corresponding set_display financial row and its member observations. Other claims still require nonempty original passage_ids. The source correspondence and derivation manifest do not approve the label or factual interpretation; assess those independently.')
         # Include the complete logical plan/provenance in the same lossless
         # transport dictionary as its leaf deltas and original source context.
         # Repeated replacement text is supplied once, never dropped or shortened.
@@ -831,7 +865,10 @@ def replay(root, p, bundle, catalog, writing):
                 if resolution is not None:
                     if not imported:
                         raise ValueError('Only an authenticated imported proposal may resolve cited passages')
-                    plan, actual = cited_passages.resolve(plan, bundle, catalog, imported['output_sha256'])
+                    if p['version'] == financial_evidence.VERSION:
+                        plan, actual = financial_evidence.resolve(plan, state, bundle, catalog, imported['output_sha256'])
+                    else:
+                        plan, actual = cited_passages.resolve(plan, bundle, catalog, imported['output_sha256'])
                     if actual != resolution:
                         raise ValueError('Cited-passage resolution manifest changed')
                 try: candidate = apply(state, plan, bundle, catalog)
@@ -912,9 +949,14 @@ def main():
     init.add_argument('--evidence-token-authorization', help='Explicit private token-only unbounded policy for a new evidence-resume edition; rounds and usage retained')
     init.add_argument('--regression-findings', help='Private source-bound supplemental audit findings JSON; pending independent review')
     init.add_argument('--resolve-cited-passages', action='store_true', help='With --reuse-proposal only: complete exactly empty passage lists from all original explicitly cited scopes; independent review remains required')
+    init.add_argument('--resolve-financial-evidence', action='store_true', help='With --reuse-proposal only: bind financial-only display row corrections to original observations and source spans')
     for name in ('advance', 'run', 'verify'): sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
-    result = initialize(args.seed, args.output, args.max_rounds, args.max_tokens, args.new_experiment, args.reuse_proposal, args.regression_findings, args.resolve_cited_passages, args.resume_evidence, args.evidence_token_authorization) if args.command == 'init' else globals()[args.command](args.output)
+    result = initialize(args.seed, args.output, max_rounds=args.max_rounds, max_tokens=args.max_tokens,
+                        new_experiment=args.new_experiment, reuse_proposal=args.reuse_proposal,
+                        regression_findings=args.regression_findings, resolve_cited_passages=args.resolve_cited_passages,
+                        resume_evidence=args.resume_evidence, evidence_token_authorization=args.evidence_token_authorization,
+                        resolve_financial_evidence=args.resolve_financial_evidence) if args.command == 'init' else globals()[args.command](args.output)
     print(json.dumps(result))
 
 
