@@ -191,6 +191,21 @@ def export_seed(seed):
     return p, exported
 
 
+def context_policy(value):
+    policy = value.get('review_context_policy')
+    if policy is None:
+        return None
+    from . import earnings_review_policy as rp
+    expected = {'version': rp.VERSION, **rp.LIMITS}
+    if (not isinstance(policy, dict) or set(policy) != set(expected) | {'authorization', 'token_authorization'}
+            or any(policy.get(k) != v for k, v in expected.items())
+            or any(not isinstance(policy.get(k), str) or not policy[k].strip()
+                   for k in ('authorization', 'token_authorization'))
+            or value.get('max_tokens') is not None):
+        raise ValueError('Explicit complete-source context and uncapped-token authority required')
+    return policy
+
+
 def _authorization(value, seed, plan, output):
     names = ('kind', 'enabled', 'authorization_id', 'source_protocol_sha256',
              'first_plan_sha256', 'max_review_attempts', 'max_tokens', 'reason', 'output_path')
@@ -200,7 +215,10 @@ def _authorization(value, seed, plan, output):
         if (not isinstance(refs, list) or not 1 <= len(refs) <= 12 or
                 any(not isinstance(x, str) or not Path(x).is_absolute() for x in refs) or len(set(refs)) != len(refs)):
             raise ValueError('Distinct absolute source review budget references required')
+    if isinstance(value, dict) and 'review_context_policy' in value:
+        names += ('review_context_policy',)
     corrections.fields(value, names, 'authorization')
+    policy = context_policy(value)
     if value['kind'] != 'targeted_remediation' or value['enabled'] is not True:
         raise ValueError('Explicit targeted remediation authorization required')
     if value['source_protocol_sha256'] != base.sha(seed/'protocol.json') or value['first_plan_sha256'] != base.digest(plan):
@@ -209,7 +227,7 @@ def _authorization(value, seed, plan, output):
         raise ValueError('Authorization binds a different edition path')
     if type(value['max_review_attempts']) is not int or value['max_review_attempts'] not in (1, 2):
         raise ValueError('One or two explicitly authorized review attempts required')
-    if type(value['max_tokens']) is not int or value['max_tokens'] <= 0:
+    if policy is None and (type(value['max_tokens']) is not int or value['max_tokens'] <= 0):
         raise ValueError('Positive explicit remediation token budget required')
     for key in ('authorization_id', 'reason'): legacy.check_text(value[key], key)
 
@@ -269,6 +287,9 @@ def initialize(seed, output, plan, authorization):
                 'history': {k: exported[k] for k in ('status', 'prior_rounds', 'prior_tokens')},
                 'excluded_session_ids': sorted(set(prior_sessions)), 'model': list(MODEL),
                 'max_review_attempts': authorization['max_review_attempts'], 'max_tokens': authorization['max_tokens'], 'max_prompt_chars': MAX_PROMPT_CHARS}
+    policy = context_policy(authorization)
+    if policy is not None:
+        protocol.update(review_context_policy=policy, max_prompt_chars=policy['prompt_characters'])
     if references:
         protocol.update(budget_reference_jobs=references, budget_calibration=calibration)
     # Validate the plan against original evidence before creating any edition.
@@ -283,11 +304,13 @@ def initialize(seed, output, plan, authorization):
 
 def load(output):
     root = Path(output).resolve(); p = base.read(root/'protocol.json'); auth = base.read(root/'authorization.json')
-    if p['version'] != VERSION or p['model'] != list(MODEL) or p['max_review_attempts'] not in (1, 2) or p['max_prompt_chars'] != MAX_PROMPT_CHARS:
+    if p['version'] != VERSION or p['model'] != list(MODEL) or p['max_review_attempts'] not in (1, 2) or p['max_prompt_chars'] != (context_policy(auth) or {}).get('prompt_characters', MAX_PROMPT_CHARS):
         raise ValueError('Remediation policy changed')
     if base.digest(auth) != p['authorization_sha256'] or base.digest(base.read(root/'initial.json')) != p['initial_sha256']:
         raise ValueError('Remediation authorization or initial snapshot changed')
     _authorization(auth, Path(p['seed']), base.read(root/'attempts/0/plan.json'), root)
+    if p.get('review_context_policy') != context_policy(auth):
+        raise ValueError('Remediation review context authority changed')
     if p['max_tokens'] != auth['max_tokens'] or p['max_review_attempts'] != auth['max_review_attempts']:
         raise ValueError('Remediation budget changed')
     for c in p['code']:
@@ -327,9 +350,10 @@ def _stage(root, number, before, plan, candidate, bundle, catalog):
     legacy.immutable_text(folder/'candidate.html', corrections.rendered(candidate, bundle, catalog))
 
 
-def prompt(before, plan, candidate, bundle, catalog, writing, extra_scope_ids=()):
+def prompt(before, plan, candidate, bundle, catalog, writing, extra_scope_ids=(), review_context_policy=None):
     return corrections.prompt('review', before, bundle, catalog, writing, plan, candidate,
-                              extra_scope_ids=extra_scope_ids, financial_context_version=context.FINANCIAL_CONTEXT_VERSION) + (
+                              extra_scope_ids=extra_scope_ids, financial_context_version=context.FINANCIAL_CONTEXT_VERSION,
+                              review_context_policy=review_context_policy) + (
         '\nEXPLICIT USER-DIRECTED REMEDIATION EDITION\n'
         'This separately authorized edition preserves the exhausted historical run and accepted evidence. '
         'No author model will rewrite approved deterministic changes. Review the complete rendered report, '
@@ -355,10 +379,10 @@ def _replay(root, p, bundle, catalog, writing):
         bindings = {'protocol_sha256': base.sha(root/'protocol.json'), 'authorization_sha256': p['authorization_sha256'],
                     'attempt': number, 'role': 'review', 'before_sha256': base.digest(state),
                     'candidate_sha256': base.digest(candidate), 'plan_sha256': base.digest(plan)}
-        reviewed = review_loop.replay(
-            folder/'review', lambda extra: prompt(state, plan, candidate, bundle, catalog, writing, extra),
+        reviewed = corrections.replay_review(p.get('review_context_policy'),
+            folder/'review', lambda extra: prompt(state, plan, candidate, bundle, catalog, writing, extra, p.get('review_context_policy')),
             bindings, MODEL, bundle, catalog, base.digest(candidate), base.digest(plan),
-            seen_sessions, p['max_tokens'] - tokens, p['max_prompt_chars'], verify_job,
+            seen_sessions, corrections.budget.remaining(p['max_tokens'], tokens), p['max_prompt_chars'], verify_job,
             admission_fn=(lambda text, remaining: corrections.budget.calibrated_admission(
                 text, remaining, p['budget_calibration'])) if p.get('budget_reference_jobs') else None)
         tokens += reviewed['tokens']

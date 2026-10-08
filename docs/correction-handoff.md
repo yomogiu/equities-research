@@ -83,3 +83,18 @@ and is isolated between concurrent workers. Existing protocols retain their
 limits. Complete rendered-report review, source validation and two total
 correction rounds remain mandatory. Record local token estimates before dispatch
 and actual runtime usage afterward; estimates are not exact provider accounting.
+
+### Complete-source remediation review
+
+A new targeted-remediation authorization may include `review_context_policy` with
+version `complete-review-context-500k-v1`, `context_characters: 500000`,
+`prompt_characters: 550000`, and nonempty `authorization` and
+`token_authorization` strings. This explicit policy requires `max_tokens: null`.
+The existing authorization still binds the original protocol, exact first plan,
+new output directory and one or two independent review attempts. Original usage,
+rounds, facts and source bytes remain unchanged; old editions retain their limits.
+
+The policy applies to the complete review loop, including evidence expansion,
+and restores the default limits afterward. Independent substantive acceptance is
+still required. Recorded usage remains part of the outcome; no token estimate
+establishes acceptance or provider capacity.
