@@ -122,4 +122,9 @@ class RepairReviewTests(PassageFixture, unittest.TestCase):
             self.replay()
 
 
-if __name__ == '__main__': unittest.main()
+    def test_evidence_recovery_cannot_open_another_lookup(self):
+        self.complete(self.replay(max_expansions=0), 'needs_evidence', requests=self.requests)
+        result=self.replay(max_expansions=0)
+        self.assertEqual(result['status'],'evidence_insufficient')
+        self.assertEqual(result['tokens'],100)
+        self.assertFalse(self.job.with_name('review-evidence-1').exists())

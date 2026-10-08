@@ -15,6 +15,24 @@ content. Authenticated runtime receipt counters remain the only measured usage;
 reserved amounts never replace or add to those counters. Actual output can still
 exceed its allowance, so completed receipts require a separate compliance check.
 
+Targeted remediation may explicitly authorize `budget_reference_jobs`, a list of
+one to twelve original reviewer directories already bound into its stopped seed.
+Initialization and every replay authenticate their complete saved receipts and
+require the same provider, model, effort, and review role. Every reference file
+must match the original source bindings. Model-written token counts are never used.
+The authorization binds these references, and the protocol binds the derived
+calibration; changing either invalidates replay.
+
+For this optional remediation policy, count uncached input, cache reads, and cache
+writes in full. Take the largest observed input-token/UTF-8-byte ratio, multiply
+by 1.25, and apply a floor of 0.5 input tokens per byte. Round the new prompt's
+estimated input upward, add 4,096 framing tokens, and reserve the larger of 32,768
+output tokens or 1.25 times the largest reference output, rounded upward. This
+remains an estimate, not an exact tokenizer or provider cap. The authorized actual
+token ceiling and completed-receipt compliance rules are unchanged. With no
+references, remediation retains the one-token-per-byte fallback. Other callers
+do not use this optional calibration.
+
 A completed review is validated even if measured usage exceeds the budget. Its
 authenticated verdict, candidate/plan bindings, and validation result remain
 inspectable as substantive-review metadata. Official acceptance remains blocked,
