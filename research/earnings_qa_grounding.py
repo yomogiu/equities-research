@@ -12,6 +12,8 @@ import re
 from research import earnings_experiment as base
 
 VERSION = 'source-bound-qa-membership-v1'
+HEADER_VERSION = 'source-bound-qa-membership-v2'
+SUPPORTED_VERSIONS = {VERSION, HEADER_VERSION}
 NOTICE = ('Membership validation checks source offsets and indexed speaker roles, not '
           'whether a question was understood, answered, relevant or summarized correctly. '
           'All provisional annotations and unresolved boundaries require substantive review.')
@@ -25,17 +27,48 @@ GREETING = re.compile(r'(?:(?:hi|hello|hey|thanks|thank you|good (?:morning|afte
                       r'[\s,.!?;:]*)+', re.I)
 
 
+def _header_body(turn, rows):
+    """Strip an exact speaker header and known-role title, never infer a role."""
+    raw = ''.join(p['text'] for p in rows).strip()
+    body = re.sub(r'^' + re.escape(turn['speaker']) + r'\s*[:\n]\s*', '', raw).strip()
+    lines = body.splitlines()
+    patterns = {'analyst': r'Analyst, [^\n]+',
+                'management': r'(?:President and CEO|EVP and CFO|VP of Investor Relations|SVP of Global Sales), [^\n]+'}
+    pattern = patterns.get(turn['role'])
+    if (raw.splitlines()[0] == turn['speaker'] and len(lines) >= 2
+            and pattern and re.fullmatch(pattern, lines[0])):
+        body = '\n'.join(lines[1:]).strip()
+    return body
+
+
 def _body(turn, rows):
     body = ''.join(p['text'] for p in rows).strip()
     return re.sub(r'^' + re.escape(turn['speaker']) + r'\s*[:\n]\s*', '', body).strip()
 
 
-def _greeting(turn, rows):
-    body = _body(turn, rows)
+def _greeting(turn, rows, version=VERSION):
+    body = _header_body(turn, rows) if version == HEADER_VERSION else _body(turn, rows)
     # This deliberately recognizes only complete, simple courtesy turns. Other
     # short statements remain evidence; a greeting followed by a question is not
     # discarded. The source text itself is never removed or rewritten.
-    return bool(body and GREETING.fullmatch(body))
+    return bool(body and (GREETING.fullmatch(body) or version == HEADER_VERSION and re.fullmatch(
+        r'(?:Great|Okay|Got it|I appreciate that)\. (?:Thank you\.|That[’\']s helpful\. Thank you\.)', body)))
+
+
+def _routing(turn, rows, targets):
+    if _function(turn) != 'moderator' or turn['role'] != 'operator':
+        return False
+    body = _header_body(turn, rows)
+    normalize = lambda text: re.sub(r'\s+', '', text)
+    for name, firm in targets:
+        for prefix in ('', 'Thank you for your question. '):
+            for ordinal in ('next', 'final'):
+                for opened in ('open', 'now open'):
+                    exact = (f'{prefix}Your {ordinal} question comes from the line of '
+                             f'{name} from {firm}. Your line is {opened}. Please go ahead.')
+                    if normalize(body) == normalize(exact):
+                        return True
+    return False
 
 
 def _function(turn):
@@ -43,7 +76,9 @@ def _function(turn):
         'management': 'issuer_response_candidate', 'operator': 'moderator'}.get(turn['role'], 'unresolved')
 
 
-def build(bundle, catalog):
+def build(bundle, catalog, version=VERSION):
+    if version not in SUPPORTED_VERSIONS:
+        raise ValueError("Unsupported Q&A grounding version")
     index = bundle['transcript_index']
     source = index['source']
     turns = {t['id']: t for t in index['turns']}
@@ -61,6 +96,12 @@ def build(bundle, catalog):
         by_turn[p['scope_id']].append(p)
     for rows in by_turn.values():
         rows.sort(key=lambda p: (p['start'], p['end'], p['passage_id']))
+    targets = []
+    if version == HEADER_VERSION:
+        for tid, turn in turns.items():
+            raw = ''.join(p['text'] for p in by_turn[tid]).strip().splitlines()
+            if turn['role'] == 'analyst' and len(raw) >= 2 and raw[0] == turn['speaker'] and raw[1].startswith('Analyst, '):
+                targets.append((turn['speaker'], raw[1][len('Analyst, '):]))
     membership = {tid: [] for tid in turns}
     for eid, exchange in exchanges.items():
         if not exchange.get('turn_ids') or len(set(exchange['turn_ids'])) != len(exchange['turn_ids']):
@@ -79,7 +120,7 @@ def build(bundle, catalog):
     unassigned = []
     for tid in sorted(unassigned_ids, key=lambda t: (turns[t]['start'], t)):
         turn, rows = turns[tid], by_turn[tid]
-        courtesy = _greeting(turn, rows)
+        courtesy = _greeting(turn, rows, version)
         # Only exact full-turn routing phrases by indexed moderators qualify.
         # This does not discard an unidentified substantive question/response.
         routing = _function(turn) == 'moderator' and bool(re.fullmatch(
@@ -97,12 +138,14 @@ def build(bundle, catalog):
         records, flags = [], []
         for tid in tids:
             turn, rows = turns[tid], by_turn[tid]
-            greeting = _greeting(turn, rows)
+            greeting = _greeting(turn, rows, version)
             record = {k: turn.get(k) for k in ('id', 'start', 'end', 'speaker', 'role', 'section_id', 'section_kind',
                          'role_review', 'participant_function', 'dialogue_function', 'indexed_dialogue_function')}
             record.update(passage_ids=[p['passage_id'] for p in rows if p['text'].strip()],
                           passage_offsets=[{k: p[k] for k in ('passage_id', 'start', 'end', 'span_sha256')} for p in rows if p['text'].strip()],
                           courtesy_only=greeting)
+            if version == HEADER_VERSION:
+                record['routing_only'] = _routing(turn, rows, targets)
             records.append(record)
             if len(membership[tid]) != 1:
                 flags.append('shared_turn_membership')
@@ -136,12 +179,12 @@ def build(bundle, catalog):
                        'answer_turn_ids': sorted(exchange.get('answer_turn_ids', [])),
                        'followup_of': followup, 'boundary_review': exchange.get('boundary_review', index.get('boundary_review', 'provisional')),
                        'flags': sorted(set(flags)),
-                       'mechanical_disposition': 'courtesy_only' if all(r['courtesy_only'] for r in records) else None})
+                       'mechanical_disposition': 'courtesy_only' if all(r['courtesy_only'] or version == HEADER_VERSION and r.get('routing_only') for r in records) else None})
     result.sort(key=lambda e: (e['turns'][0]['start'], e['exchange_id']))
     for e in result:
         e['allowed_continuation_exchange_ids'] = sorted(x['exchange_id'] for x in result
             if x['followup_of'] == e['exchange_id'] and 'invalid_followup_link' not in x['flags'])
-    return {'version': VERSION, 'source': copy.deepcopy(source), 'offset_unit': 'unicode_character',
+    return {'version': version, 'source': copy.deepcopy(source), 'offset_unit': 'unicode_character',
             'annotation_status': index.get('boundary_review', 'provisional'),
             'uncertainty': copy.deepcopy(index.get('uncertainty', [])),
             'unassigned_qa_turn_ids': [t['id'] for t in unassigned],
@@ -153,7 +196,7 @@ def validate_retrieval(out, bundle, catalog):
     grounding = bundle.get('qa_grounding')
     if grounding is None:
         return
-    if grounding.get('version') != VERSION:
+    if grounding.get('version') not in SUPPORTED_VERSIONS:
         raise ValueError('Unsupported Q&A grounding version')
     exchanges = {e['exchange_id']: e for e in grounding['exchanges']}
     rows = out.get('exchange_coverage')
@@ -229,14 +272,14 @@ def attach(root, protocol, bundle, catalog):
     """Verify opt-in immutable sidecar and recompute it from original source scopes."""
     if 'qa_grounding' not in protocol:
         return
-    if protocol['qa_grounding'] != VERSION:
+    if protocol['qa_grounding'] not in SUPPORTED_VERSIONS:
         raise ValueError('Q&A grounding policy differs')
     path = Path(protocol['qa_grounding_path'])
     if root is not None and path.resolve() != (Path(root) / 'qa-grounding.json').resolve():
         raise ValueError('Q&A grounding sidecar path differs')
     if base.sha(path) != protocol['qa_grounding_sha256']:
         raise ValueError('Q&A grounding sidecar changed')
-    computed = build(bundle, catalog)
+    computed = build(bundle, catalog, version=protocol['qa_grounding'])
     if computed != base.read(path):
         raise ValueError('Q&A grounding differs from original indexed sources')
     bundle['qa_grounding'] = computed
@@ -256,3 +299,41 @@ def require_analysis_ready(out, bundle, catalog):
         if unresolved:
             raise ValueError('Q&A grounding unresolved; repair source attribution before analysis: '
                              + ', '.join(unresolved))
+
+
+def normalize_courtesy(out, bundle, catalog):
+    """New-edition derivative only: exact v2 courtesy scopes, no source mutation.
+
+    The full original response remains a separate artifact. This receipt binds
+    each replaced row and source offsets; substantive and uncertain rows survive.
+    """
+    grounding = bundle.get('qa_grounding', {})
+    if grounding.get('version') != HEADER_VERSION:
+        raise ValueError('Courtesy normalization requires explicit v2 grounding')
+    if grounding != build(bundle, catalog, version=HEADER_VERSION):
+        raise ValueError('Courtesy normalization requires replayable grounding')
+    derived = copy.deepcopy(out)
+    exchanges = {e['exchange_id']: e for e in grounding['exchanges']}
+    rows = derived.get('exchange_coverage')
+    if not isinstance(rows, list) or len({r.get('exchange_id') for r in rows}) != len(rows):
+        raise ValueError('Courtesy normalization requires unique coverage rows')
+    receipt = []
+    for row in rows:
+        e = exchanges.get(row.get('exchange_id'))
+        if e is None:
+            raise ValueError('Unknown exchange in courtesy normalization')
+        if e['mechanical_disposition'] != 'courtesy_only':
+            continue
+        before = copy.deepcopy(row)
+        row.update(question_passage_ids=[], answer_passage_ids=[], continuation_exchange_ids=[],
+                   grounding_status='courtesy_only',
+                   grounding_notes='Exact source turns contain courtesy only after mechanical speaker/title header removal; no analytical support.')
+        # Coverage prose varies by pipeline generation. Only existing paraphrase
+        # fields are replaced; unrelated fields and schemas remain intact.
+        for key in ('question', 'answer', 'question_summary', 'answer_summary', 'consequence'):
+            if key in row:
+                row[key] = 'Courtesy only.'
+        receipt.append({'exchange_id': e['exchange_id'], 'before_sha256': base.digest(before),
+                        'after_sha256': base.digest(row), 'source': copy.deepcopy(grounding['source']),
+                        'turns': copy.deepcopy(e['turns']), 'reason': 'exact_header_aware_courtesy_only'})
+    return derived, receipt

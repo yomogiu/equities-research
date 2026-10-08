@@ -171,11 +171,23 @@ class GroundingTests(PassageFixture, unittest.TestCase):
             with self.subTest(declared=declared), self.assertRaisesRegex(ValueError, 'Q&A unassigned coverage'):
                 grounding.build(bundle, self.catalog)
 
+    def test_source_attribution_preflight_spends_no_model_calls(self):
+        bundle=copy.deepcopy(self.bundle)
+        bundle['qa_grounding']['version']=grounding.HEADER_VERSION
+        bundle['qa_grounding']['exchanges'][0]['flags']=['unknown_speaker_role']
+        bundle['qa_grounding']['exchanges'][0]['mechanical_disposition']=None
+        with patch.object(pipe,'load',return_value=({'qa_grounding':grounding.HEADER_VERSION},bundle,self.catalog)), patch.object(pipe,'run_role',side_effect=AssertionError('must not launch')):
+            with self.assertRaisesRegex(ValueError,'before any model call'):
+                pipe.run(self.root/'preflight')
+
     def test_new_freeze_binds_sidecar_legacy_optout_leaves_plain_catalog(self):
         writing = self.root / 'writing.txt'; writing.write_text('Fictitious standard')
         root = self.root / 'grounded'
         protocol = pipe.freeze(self.casepath, root, writing)
-        self.assertEqual(protocol['qa_grounding'], grounding.VERSION)
+        self.assertEqual(protocol['qa_grounding'], grounding.HEADER_VERSION)
+        v1 = self.root/'explicit-v1'
+        pipe.freeze(self.casepath, v1, writing, qa_grounding_version=grounding.VERSION)
+        self.assertEqual(pipe.load(v1)[1]['qa_grounding']['version'], grounding.VERSION)
         _, bundle, catalog = pipe.load(root)
         self.assertIn('qa_grounding', bundle)
         self.assertNotIn('qa_grounding', catalog)
