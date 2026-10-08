@@ -112,7 +112,7 @@ def initialize(seed, output, authorization, evidence_job=None):
     from . import earnings_passage_pipeline as pipe
     seed,output=Path(seed).resolve(),Path(output).resolve()
     require(authorization.strip() and output!=seed and not output.exists(), 'New authorized recovery directory required')
-    old=r.read(seed/'protocol.json');require(old['version']==pipe.EFFICIENT_VERSION and not old.get('response_recovery'), 'Only original efficient pipeline can be recovered')
+    old=r.read(seed/'protocol.json');require(old['version'] in (pipe.VERSION,pipe.EFFICIENT_VERSION) and not old.get('response_recovery'), 'Only original passage pipeline can be recovered')
     for rec in old['code']:require(r.sha(rec['path'])==rec['sha256'],'Frozen code changed')
     code=Path(next(x['path'] for x in old['code'] if x['path'].endswith('/earnings_mixed_runner.py'))).parent.parent
     imports={p.parent.name:reference(p.parent,code) for p in sorted((seed/'jobs').glob('*/request.json'))}
@@ -135,6 +135,22 @@ def initialize(seed, output, authorization, evidence_job=None):
     r.save(output/'protocol.json',protocol)
     pipe.load(output)
     return protocol['response_recovery']
+
+
+def validate_recovery(recovery):
+    """Every saved job must be accounted for before any successor can launch."""
+    seed=Path(recovery['seed']);old=r.read(seed/'protocol.json')
+    code=Path(next(x['path'] for x in old['code'] if x['path'].endswith('/earnings_mixed_runner.py'))).parent.parent
+    jobs={q.parent.name:q.parent for q in (seed/'jobs').glob('*/request.json')}
+    failed=recovery.get('provider_retry')
+    excluded={'analysis-r0'} if failed else set()
+    if failed:
+        require(set(jobs)=={'financial-r0','retrieval-r0','analysis-r0'} and
+                Path(failed['job'])==jobs['analysis-r0'] and Path(failed['code'])==code,
+                'Provider failure must bind original first analysis attempt')
+    require(set(recovery['imports'])==set(jobs)-excluded,'All completed seed jobs must be imported')
+    for name in set(jobs)-excluded:
+        require(recovery['imports'][name]==reference(jobs[name],code),'Imported preparer provenance differs')
 
 
 def complete_courtesy(out, bundle, catalog):

@@ -170,6 +170,13 @@ def load(root):
         recovery = p['response_recovery']
         if base.sha(Path(recovery['seed'])/'protocol.json') != recovery['protocol_sha256']:
             raise ValueError('Recovery source protocol changed')
+        if recovery.get('provider_retry'):
+            from .earnings_provider_recovery import validate as validate_failure
+            validate_failure(recovery['provider_retry'])
+            if recovery.get('attempt') != 2:
+                raise ValueError('Provider retry attempt differs')
+        from .earnings_role_import import validate_recovery
+        validate_recovery(recovery)
         original = base.read(Path(recovery['seed'])/'protocol.json')
         compared = {k:v for k,v in p.items() if k not in ('code','response_recovery')}
         if original.get('qa_grounding_path'):
@@ -331,8 +338,17 @@ def run(output, max_new_jobs=None):
             return raw, record, inputs
         text = prompt(role, bundle, writing, inputs['dependencies'], inputs['feedback'], catalog,
                       inputs['prior'], inputs['issues'])
-        result = run_role(job, text, *MODELS[role], {'protocol_sha256': base.sha(root / 'protocol.json'),
-                          'role': role, 'round': round_number, 'inputs_sha256': base.sha(input_path)}, timeout=1200)
+        recovery = p.get('response_recovery', {})
+        from .earnings_provider_recovery import require_retry_prompt
+        require_retry_prompt(recovery, job.name, text, *MODELS[role])
+        bindings = {'protocol_sha256': base.sha(root / 'protocol.json'), 'role': role,
+                    'round': round_number, 'inputs_sha256': base.sha(input_path)}
+        imported = recovery.get('imports', {}).get(job.name)
+        if imported is not None:
+            from .earnings_role_import import create
+            result = create(job, text, *MODELS[role], bindings, 1200, imported)
+        else:
+            result = run_role(job, text, *MODELS[role], bindings, timeout=1200)
         record = {'role': role, 'round': round_number, 'mode': 'selection_patch' if repair else 'full',
                   'path': str(job), 'receipt': result['receipt']}
         return result['content'], record, inputs
@@ -436,6 +452,8 @@ def verify(output):
     prepared = bundle.get('_prepared_recovery')
     if prepared:
         deps = copy.deepcopy(prepared['artifacts']); identities.update(prepared['identities'])
+    failed = p.get('response_recovery', {}).get('provider_retry')
+    if failed: identities.add(failed['receipt']['session_id'])
     review = None; review_deps = None; round_snapshots = {}; refusals = {}
     for job in result['jobs']:
         if review and any(f['target'] == 'formatter' for f in review['findings']):
@@ -486,6 +504,15 @@ def verify(output):
             value = {'content': content, 'receipt': chain[-1]['receipt']}
         else:
             request = base.read(path / 'request.json'); value = verify_job(path)
+            recovery = p.get('response_recovery', {})
+            imported = recovery.get('imports', {}).get(path.name)
+            if imported is not None:
+                if base.read(path/'import.json')['source'] != imported:
+                    raise ValueError('Recovery import changed')
+            elif (path/'import.json').exists():
+                raise ValueError('Unreserved role import')
+            from .earnings_provider_recovery import require_retry_prompt
+            require_retry_prompt(recovery, path.name, (path/'prompt.txt').read_text(), *MODELS[role])
             if value['receipt'] != job['receipt'] or (request['model'], request['effort']) != MODELS[role]:
                 raise ValueError('Receipt/model mismatch')
             sid = value['receipt']['session']['id']
