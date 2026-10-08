@@ -42,3 +42,31 @@ with completed preparation responses. Every inherited response is authenticated
 with its original verifier and must match the newly reconstructed prompt exactly.
 No completed preparation is repeated. Shared execution locks and durable private
 reservation remain the caller's responsibility; neither initializer launches jobs.
+
+## Financial-only display evidence
+
+A saved financial-only `set_display` row correction can opt into
+`--reuse-proposal --resolve-financial-evidence`. This creates the explicit
+`deterministic-corrections-financial-evidence-v1` continuation. It inherits the
+original token ceiling, measured usage and remaining ordinary correction rounds;
+no new author call or experiment reset is permitted.
+
+The original author response remains unchanged. For exactly empty passage lists
+whose explicit citations are all financial observations, derivation adds
+`financial_evidence_ids` referencing typed `FE-…` entries. These entries contain
+original source slices, raw/source/span hashes, observation context and units,
+and available complete table rows. The manifest binds each operation to its
+actual target row and the cited member observations. Other empty passage lists
+in the same batch follow the existing complete cited-scope passage derivation.
+Financial evidence never creates transcript or document passage IDs.
+
+Only display-row operations may use financial-only evidence. The independent
+reviewer receives the exact derived plan, original response hash, target-row
+correspondence and financial source context. Decisions on these operations must
+use typed financial evidence. Financial-only resolutions/new findings may use
+`financial_evidence_ids` with exactly corresponding F citations and
+`passage_ids: []`; all other claims retain nonempty original passage requirements.
+Source location and row membership do not approve the proposed label: the
+reviewer still adjudicates every operation, finding and whole-report criterion.
+Load and replay reconstruct the derivation and reject changed source spans,
+receipts, manifests, targets, budgets or candidate hashes.

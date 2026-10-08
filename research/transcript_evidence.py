@@ -284,6 +284,73 @@ def _publisher_speaker_role(name, label, issuer_names):
     return 'unknown'
 
 
+class _ParagraphBlocks(HTMLParser):
+    def __init__(self, raw):
+        super().__init__(convert_charrefs=True)
+        self.raw=raw;self.lines=[0]
+        for match in re.finditer('\n',raw):self.lines.append(match.end())
+        self.depth=0;self.container=None;self.heading=False;self.start=None;self.end=None
+        self.paragraph=None;self.blocks=[];self.containers=0;self.headings=0
+    def position(self):
+        line,column=self.getpos();return self.lines[line-1]+column
+    def handle_starttag(self, tag, attrs):
+        attrs=dict(attrs)
+        if tag=='div':
+            self.depth+=1
+            if attrs.get('id')=='article-body-transcript':
+                self.containers+=1;self.container=self.depth
+        if self.container is None:return
+        if tag=='h2' and attrs.get('id')=='full-conference-call-transcript':
+            self.headings+=1;self.heading=True
+        if tag=='p' and self.start is not None and self.end is None:
+            if self.paragraph is not None:raise ValueError('Nested transcript paragraphs')
+            self.paragraph=self.position()
+    def handle_endtag(self,tag):
+        if tag=='h2' and self.heading:
+            self.start=self.position()+len('</h2>');self.heading=False
+        if tag=='p' and self.paragraph is not None:
+            self.blocks.append(self.raw[self.paragraph:self.position()+len('</p>')]);self.paragraph=None
+        if tag=='div':
+            if self.container==self.depth:
+                self.end=self.position();self.container=None
+            self.depth-=1
+
+
+def _paragraph_turns(text,raw):
+    """Return exact source turns or None for an unrecognized layout.
+
+    Speaker labels are structural evidence only. An unlabeled paragraph continues
+    the immediately preceding speaker. Review must separately establish Q&A roles.
+    """
+    from .source_parse import page
+    parser=_ParagraphBlocks(raw.decode('utf-8',errors='replace'));parser.feed(parser.raw)
+    if not parser.containers:return None
+    if parser.containers!=1 or parser.headings!=1 or parser.start is None or parser.end is None or parser.paragraph is not None:
+        raise ValueError('Incomplete or ambiguous paragraph transcript container')
+    if not parser.blocks:raise ValueError('Empty paragraph transcript')
+    bodies=[page(block.encode(),'').text for block in parser.blocks]
+    scoped=page(parser.raw[parser.start:parser.end].encode(),'').text
+    if scoped!='\n'.join(bodies):raise ValueError('Unindexed content in paragraph transcript')
+    cursor=text.find(scoped)
+    if cursor<0 or text.find(scoped,cursor+1)>=0:raise ValueError('Paragraph transcript text not uniquely present')
+    result=[]
+    for block,body in zip(parser.blocks,bodies):
+        if not body:raise ValueError('Empty paragraph inside transcript')
+        match=re.match(r'<p(?:\s[^>]*)?>\s*<strong(?:\s[^>]*)?>(.*?)</strong>',block,re.S|re.I)
+        if match:
+            label=page(match.group(1).encode(),'').text
+            if not re.fullmatch(r'[^:\n]{1,100}:',label):raise ValueError('Invalid paragraph speaker label')
+            name=label[:-1].strip()
+            if not name or not body.startswith(label):raise ValueError('Paragraph speaker differs from source')
+            result.append({'start':cursor,'end':cursor+len(body),'speaker':name,
+                           'role':'operator' if name.casefold()=='operator' else 'unknown'})
+        elif result:
+            result[-1]['end']=cursor+len(body)
+        else:raise ValueError('Transcript begins without speaker label')
+        cursor+=len(body)+1
+    return result
+
+
 def index_publisher_transcript(text, source, raw):
     """Index timed HTML call blocks against unchanged text and original offsets.
 
@@ -296,6 +363,21 @@ def index_publisher_transcript(text, source, raw):
     from .source_parse import page
     if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != source.get('raw_sha256'):
         raise ValueError('Publisher HTML source hash mismatch')
+    paragraphs = _paragraph_turns(text, raw)
+    if paragraphs is not None:
+        first, last = paragraphs[0]['start'], paragraphs[-1]['end']
+        result = index_transcript(text, source, provisional_boundaries={
+            'source_sha256': source['text_sha256'],
+            'sections': [{'start': first, 'end': last, 'kind': 'prepared_remarks'}],
+            'turns': paragraphs})
+        result.update(layout='speaker-paragraphs-v1', raw_sha256=source['raw_sha256'],
+                      issuer_affiliation={'issuer_id': source.get('issuer_id'),
+                                          'catalog_id': source.get('catalog_id'),
+                                          'names': source.get('issuer_names', [])},
+                      call_span={'start': first, 'end': last},
+                      excluded_spans=[{'start': a, 'end': b, 'reason': 'outside_rendered_call'}
+                                      for a, b in ((0, first), (last, len(text))) if a < b])
+        return result
     parser = _TranscriptBlocks(raw.decode('utf-8', errors='replace'))
     parser.feed(parser.raw)
     if parser.unbound_sentences:
