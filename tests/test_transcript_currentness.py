@@ -47,6 +47,39 @@ class CurrentnessTest(unittest.TestCase):
             scope.compare(before.replace(b'<footer>',b'<section>').replace(b'</footer>',b'</section>'),
                           after.replace(b'<footer>',b'<section>').replace(b'</footer>',b'</section>'), URL)
 
+    def test_exact_country_navigation_and_old_comparison_strictness(self):
+        nav='<nav aria-label="Main navigation"><ul id="Stocks-menu"><li>Stock Exchanges</li>{}</ul></nav>'
+        link='<li><a class="fake" href="/list/countries/" title="By Country">By Country</a></li>'
+        before=html().replace(b'<body>',('<body>'+nav.format('')).encode())
+        after=html().replace(b'<body>',('<body>'+nav.format(link)).encode())
+        scope.compare(before,after,URL)
+        call_before=before.replace(b'Fictional dialogue.',b'By Country.')
+        call_after=after.replace(b'Fictional dialogue.',b'By Country.')
+        scope.compare(call_before,call_after,URL)
+        with self.assertRaises(ValueError):
+            scope.compare(call_before,call_after.replace(b'By Country. This',b'Changed Country. This'),URL)
+        with self.assertRaises(ValueError):
+            scope.compare(before,after,URL,allow_country_navigation=False)
+        for changed in [after.replace(b'dialogue',b'changed'),after.replace(b'Q2',b'Q3'),
+                        after.replace(b'Stock Exchanges',b'Other Meaning'),
+                        after.replace(b'By Country</a>',b'New claim</a>'),
+                        after.replace(b'/list/countries/',b'/different/'),
+                        after.replace(link.encode(),(link+link).encode()),
+                        after.replace(b'id="Stocks-menu"',b'id="Other-menu"'),
+                        after.replace(b'aria-label="Main navigation"',b'aria-label="Report"')]:
+            with self.subTest(changed=changed),self.assertRaises(ValueError):scope.compare(before,changed,URL)
+        # The same words outside the recognized menu remain material source text.
+        with self.assertRaises(ValueError):scope.compare(html(),html().replace(b'<footer>',link.encode()+b'<footer>'),URL)
+        with self.assertRaises(ValueError):scope.compare(before,after.replace(b'</ul>',BLOCK.encode()+b'</ul>'),URL)
+
+    def test_old_receipt_versions_replay_original_rules(self):
+        for version in (scope.LEGACY_VERSION,scope.APP_COUNTER_VERSION):
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp).resolve();ref,doc=self.fixture(root)
+                value=library.read_json(root/ref['path']);value['version']=version
+                library.save(root/ref['path'],value);ref['sha256']=scope.sha((root/ref['path']).read_bytes())
+                scope.replay(root,ref,doc)
+
     def fixture(self,root):
         old,new=html(),html('99 Pre-market:');text=source_parse.page(old,URL).text.encode()
         for name,body in [('old.html',old),('old.txt',text),('sources/test/objects/new.html',new)]:
