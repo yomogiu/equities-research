@@ -41,3 +41,25 @@ benchmark, quality pass, or measurement of provider token savings.
 Retrieval now uses `gpt-6-luna` at `max` effort. Financial preparation remains
 `gpt-5.6-luna` at `xhigh`; analysis and independent review remain `gpt-6.1-sol`
 at `medium`. Freeze a new run for these settings; prior receipts are unchanged.
+
+### Explicit mixed-unit presentation
+
+New layouts may select `compact-financial-mixed-units-v2` using the same fields as
+`compact-financial-v1`. The renderer combines rows only when their exact filed
+period vectors and reviewed display labels match. A Unit column retains each
+original row's units and unit-label source references. Amounts, divisors, fact IDs,
+row IDs and accounting labels remain unchanged. Different duration starts and
+instant balance-sheet dates remain separate even if displayed labels match.
+
+In v2, source-backed summaries may refer to visible rows or collapsed detail rows;
+in v1 they continue to refer only to detail rows. Ratio folds retain their existing
+restrictions. Monetary per-share values remain separate rows. Existing v1 renders
+remain byte-identical for the frozen test fixture.
+
+A frozen remediation awaiting a field plan can migrate to a new renderer only with
+an explicit `remaining_review_authorization`. The original verifier replays its
+completed reviews; the successor must authorize exactly the remaining review
+attempts and retain its source context and token policy. This migration currently
+requires an already uncapped source; finite token allowances cannot be reset. The complete original
+artifacts, history, usage and sessions remain bound. This route grants no new
+review attempts and is refused for exhausted or uncertain executions.

@@ -116,7 +116,7 @@ def validate_format(spec, financial, bundle):
 def validate_layout(layout, rows, allowed):
     """Validate presentation-only routing; original facts are never replaced."""
     keys = {'version', 'fold', 'detail_rows', 'summaries', 'basis_position'}
-    if not isinstance(layout, dict) or set(layout) != keys or layout['version'] != 'compact-financial-v1':
+    if not isinstance(layout, dict) or set(layout) != keys or layout['version'] not in ('compact-financial-v1', 'compact-financial-mixed-units-v2'):
         raise ValueError('Unknown compact financial layout schema')
     if layout['basis_position'] not in ('before_tables', 'after_tables'):
         raise ValueError('Unknown accounting basis position')
@@ -158,7 +158,8 @@ def validate_layout(layout, rows, allowed):
         if len(summary['text']) > 800:
             raise ValueError('Bounded financial summary required')
         legacy.check_ids(summary['citations'], allowed, 'financial summary sources')
-        legacy.check_ids(summary['row_ids'], set(layout['detail_rows']), 'summarized detail rows')
+        summary_rows = set(rows) if layout['version'] == 'compact-financial-mixed-units-v2' else set(layout['detail_rows'])
+        legacy.check_ids(summary['row_ids'], summary_rows, 'summarized financial rows')
         if described & set(summary['row_ids']):
             raise ValueError('Duplicate financial summary row')
         described.update(summary['row_ids'])
@@ -189,27 +190,40 @@ def table(financial, bundle, spec, refs=None):
         return label + (' · ' + dims if dims else '')
 
     def tables(in_detail):
+        mixed = layout.get('version') == 'compact-financial-mixed-units-v2'
+        blocks = {}
         for group in display.build(financial, bundle)['groups']:
-            visible = []
-            for row in group['rows']:
-                key = 'row-' + base.digest([row['concept'], row['dimensions'], group['unit'], group['periods']])[:20]
-                if key not in folded and (key in detail) == in_detail:
-                    visible.append((key, row))
-            if not visible:
-                continue
             table_key = 'table-' + base.digest([group['unit'], group['periods']])[:20]
             labels = spec.get('tables', {}).get(table_key, {})
             unit = labels.get('unit_label', group['unit'])
             periods = labels.get('period_labels', [p['label'] for p in group['periods']])
-            # Source periods, units, divisors, values and group membership are inert.
-            # Semantic label changes carry original evidence and require review.
             citations = labels.get('citations', [])
-            lines.extend([unit + (' [' + ', '.join(citations) + ']' if citations else ''), 'Metric | ' + ' | '.join(periods)])
-            parts.append('<table><caption>' + e(unit) + ((' ' + refs(citations)) if refs and citations else '') + '</caption><tr><th>Metric</th>' + ''.join('<th>' + e(label) + '</th>' for label in periods) + '</tr>')
-            for key, row in visible:
+            # Merge presentation only when both exact filed period contexts and
+            # reviewed displayed period labels match. Unit stays on each row.
+            block_key = base.digest([group['periods'], periods] if mixed else [table_key])
+            block = blocks.setdefault(block_key, {'unit': unit, 'periods': periods,
+                                                   'citations': citations, 'rows': []})
+            for row in group['rows']:
+                key = 'row-' + base.digest([row['concept'], row['dimensions'], group['unit'], group['periods']])[:20]
+                if key not in folded and (key in detail) == in_detail:
+                    block['rows'].append((key, row, unit, citations))
+        for block in blocks.values():
+            visible = block['rows']
+            if not visible:
+                continue
+            periods = block['periods']; citations = block['citations']; unit = block['unit']
+            if mixed:
+                lines.append('Metric | Unit | ' + ' | '.join(periods))
+                parts.append('<table><tr><th>Metric</th><th>Unit</th>' + ''.join('<th>' + e(label) + '</th>' for label in periods) + '</tr>')
+            else:
+                lines.extend([unit + (' [' + ', '.join(citations) + ']' if citations else ''), 'Metric | ' + ' | '.join(periods)])
+                parts.append('<table><caption>' + e(unit) + ((' ' + refs(citations)) if refs and citations else '') + '</caption><tr><th>Metric</th>' + ''.join('<th>' + e(label) + '</th>' for label in periods) + '</tr>')
+            for key, row, row_unit, row_citations in visible:
                 override = spec['rows'].get(key, {})
                 cells = []; label = full_label(key)
                 parts.append('<tr data-financial-row="' + e(key) + '"><th>' + e(label) + ((' ' + refs(override['citations'])) if refs and override else '') + '</th>')
+                if mixed:
+                    parts.append('<td class="financial-unit">' + e(row_unit) + ((' ' + refs(row_citations)) if refs and row_citations else '') + '</td>')
                 for number, cell in enumerate(row['cells']):
                     text = cell['value'] + ' [' + ', '.join(cell['fact_ids']) + ']'
                     value = e(cell['value']) + (' ' + refs(cell['fact_ids']) if refs else '')
@@ -226,7 +240,8 @@ def table(financial, bundle, spec, refs=None):
                             value += ' ' + refs(source_cell['fact_ids'] + source_citations)
                         value += '</small>'
                     cells.append(text); parts.append('<td>' + value + '</td>')
-                lines.append(label + ' | ' + ' | '.join(cells)); parts.append('</tr>')
+                unit_text = row_unit + (' [' + ', '.join(row_citations) + ']' if row_citations else '')
+                lines.append(label + (' | ' + unit_text if mixed else '') + ' | ' + ' | '.join(cells)); parts.append('</tr>')
             parts.append('</table>')
 
     if layout['basis_position'] == 'before_tables': basis()
