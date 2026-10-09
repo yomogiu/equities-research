@@ -186,7 +186,7 @@ def export_seed(seed):
     result = subprocess.run([sys.executable, '-c', EXPORT, str(seed)], cwd=code,
                             env={**os.environ, 'PYTHONPATH': str(code)}, check=True, capture_output=True, text=True)
     exported = json.loads(result.stdout)
-    if exported['status'] not in STOPPED:
+    if exported['status'] not in STOPPED and not (p['version'].startswith('targeted-remediation-') and exported['status'] == 'awaiting_plan'):
         raise ValueError('Seed must be conclusively stopped, not accepted or uncertain')
     return p, exported
 
@@ -217,6 +217,9 @@ def _authorization(value, seed, plan, output):
             raise ValueError('Distinct absolute source review budget references required')
     if isinstance(value, dict) and 'review_context_policy' in value:
         names += ('review_context_policy',)
+    if isinstance(value, dict) and 'remaining_review_authorization' in value:
+        names += ('remaining_review_authorization',)
+        legacy.check_text(value['remaining_review_authorization'], 'remaining review authority')
     corrections.fields(value, names, 'authorization')
     policy = context_policy(value)
     if value['kind'] != 'targeted_remediation' or value['enabled'] is not True:
@@ -265,12 +268,35 @@ def _source_bundle(source_protocol):
     return bundle, catalog
 
 
+def validate_remaining_reviews(old, exported, authorization):
+    """A new renderer may spend only the old edition's unspent review attempts."""
+    marker = authorization.get('remaining_review_authorization')
+    if exported['status'] != 'awaiting_plan':
+        if marker is not None:
+            raise ValueError('Remaining review migration requires awaiting_plan source')
+        return
+    if (not old.get('version', '').startswith('targeted-remediation-')
+            or not isinstance(marker, str) or not marker.strip()):
+        raise ValueError('Explicit remaining review migration authority required')
+    used = exported['prior_rounds'] - old['history']['prior_rounds']
+    remaining = old['max_review_attempts'] - used
+    if (type(used) is not int or not 1 <= used <= old['max_review_attempts']
+            or remaining < 1 or authorization['max_review_attempts'] != remaining):
+        raise ValueError('Migration must preserve exactly the remaining review attempts')
+    if old['max_tokens'] is not None:
+        raise ValueError('Remaining review migration requires an already uncapped source')
+    if (authorization.get('review_context_policy') != old.get('review_context_policy')
+            or authorization['max_tokens'] != old['max_tokens']):
+        raise ValueError('Remaining review migration must preserve context and token policy')
+
+
 def initialize(seed, output, plan, authorization):
     seed = Path(seed).resolve(); root = Path(output).resolve()
     if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
         raise ValueError('New private sibling remediation directory required')
     _authorization(authorization, seed, plan, root)
     old, exported = export_seed(seed)
+    validate_remaining_reviews(old, exported, authorization)
     snapshot = exported['snapshot']
     if set(snapshot['artifacts']) != {'financial', 'retrieval', 'analysis'} or not snapshot['findings']:
         raise ValueError('Complete stopped candidate and unresolved findings required')
@@ -328,6 +354,7 @@ def load(output):
     elif 'budget_reference_jobs' in p or 'budget_calibration' in p:
         raise ValueError('Unapproved review budget calibration')
     old, exported = export_seed(Path(p['seed']))
+    validate_remaining_reviews(old, exported, auth)
     expected_bindings, expected_sessions = seed_bindings(Path(p['seed']), old)
     if (p['source_bindings'] != expected_bindings or p['excluded_session_ids'] != expected_sessions
             or p['source_code'] != old['code'] + old.get('source_code', [])
