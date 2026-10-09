@@ -84,8 +84,14 @@ STYLE = '''.signal-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1f
 
 def render(path, state, pack, review, bundle, catalog):
     if not validate_review(review,pack,state,bundle,catalog): raise ValueError('Signals remain blocked; preserve original accepted report')
+    return _render_content(path,state,pack,bundle,catalog,status='accepted')
+
+
+def _render_content(path, state, pack, bundle, catalog, *, status):
+    """Internal renderer; callers establish acceptance through their own verifier."""
+    validate(pack,state,bundle,catalog)
     with tempfile.TemporaryDirectory() as directory:
-        plain=Path(directory)/'plain.html'; repair.render(plain,{**state,'status':'accepted'},bundle,catalog);text=plain.read_text()
+        plain=Path(directory)/'plain.html'; repair.render(plain,{**state,'status':status},bundle,catalog);text=plain.read_text()
     e=html.escape
     def badge(s):
         return '<span class="signal-badge">'+DIRECTIONS[s['direction']]+'</span><span class="signal-basis">'+BASES[s['evidence_basis']]+'</span>'
