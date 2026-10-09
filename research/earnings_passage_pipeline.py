@@ -123,7 +123,7 @@ def repair_handoff(root, deps, prior, issues, review, catalog, refusals=None):
     return None
 
 
-def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False, qa_grounding=True, qa_grounding_version=None):
+def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False, qa_grounding=True, qa_grounding_version=None, batch_review=False):
     if repair_loop and deterministic_corrections:
         raise ValueError("Choose one correction strategy")
     root = Path(output).resolve(); root.mkdir(parents=True, exist_ok=True)
@@ -142,6 +142,10 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
                 'writing_standard': str(Path(writing_path).resolve()), 'writing_sha256': base.sha(writing_path),
                 'models': {k: list(v) for k, v in MODELS.items()}, 'max_correction_rounds': 2,
                 'code': [{'path': str(Path(__file__).parent / n), 'sha256': base.sha(Path(__file__).parent / n)} for n in names]}
+    if batch_review:
+        if not deterministic_corrections or not signals:
+            raise ValueError('Batched review requires corrections and signals')
+        protocol['batch_review'] = 'batched-report-review-v1'
     if efficient:
         protocol['evidence_reuse'] = copy.deepcopy(EFFICIENT_POLICY)
     if qa_grounding:
