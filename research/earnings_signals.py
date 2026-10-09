@@ -112,8 +112,13 @@ EXPORT = '''
 import json,sys
 from pathlib import Path
 from research import earnings_experiment as b
-root=Path(sys.argv[1]); p=b.read(root/'protocol.json'); excluded=[]
-if p['version']=='authorized-acceptance-exception-v1':
+root=Path(sys.argv[1]); p=b.read(root/'protocol.json'); excluded=[]; uncertainty=None
+if p['version']=='interrupted-report-review-v1':
+ from research import earnings_interrupted_review as c
+ r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
+ excluded=p['excluded_session_ids']+[b.read(root/'review/execution.json')['session']['id']]
+ uncertainty=p['unknown_prior_usage']
+elif p['version']=='authorized-acceptance-exception-v1':
  from research import earnings_acceptance_exception as c
  r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
  excluded=p['excluded_session_ids']
@@ -130,7 +135,7 @@ else:
  from research import earnings_passage_pipeline as c
  r=c.verify(root); state={'artifacts':b.read(root/'artifacts.json'),'format':{'rows':{},'basis':{'text':'','citations':[]}}};sp=p
 if r['status']!='accepted':raise ValueError('Signals require an accepted source report')
-print(json.dumps({'state':{'artifacts':state['artifacts'],'format':state['format']},'source_protocol':sp,'excluded_session_ids':excluded}))
+print(json.dumps({'state':{'artifacts':state['artifacts'],'format':state['format']},'source_protocol':sp,'excluded_session_ids':excluded,'source_usage_uncertainty':uncertainty}))
 '''
 
 
@@ -150,6 +155,7 @@ def initialize(seed, output):
               'state_sha256':base.digest(exported['state']),'code':[{'path':str(f),'sha256':base.sha(f)} for f in names],
               'source_code':p['code']+p.get('source_code',[]),'model':list(MODEL),'max_tokens':400000,'max_prompt_chars':1500000,
               'excluded_session_ids':exported.get('excluded_session_ids',[])}
+    if exported.get('source_usage_uncertainty') is not None:protocol['source_usage_uncertainty']=exported['source_usage_uncertainty']
     repair.write(root/'protocol.json',protocol);repair.write(root/'state.json',exported['state'])
     return {'status':'pending','next_role':'analysis'}
 
@@ -166,6 +172,11 @@ def load(root):
     seed_protocol=base.read(Path(p['seed'])/'protocol.json')
     if seed_protocol.get('version')=='authorized-acceptance-exception-v1' and p.get('excluded_session_ids')!=seed_protocol['excluded_session_ids']:
         raise ValueError('Exception source session exclusions changed')
+    if seed_protocol.get('version')=='interrupted-report-review-v1':
+        expected=seed_protocol['excluded_session_ids']+[base.read(Path(p['seed'])/'review/execution.json')['session']['id']]
+        if p.get('excluded_session_ids')!=expected or p.get('source_usage_uncertainty')!=seed_protocol['unknown_prior_usage']:
+            raise ValueError('Interrupted source history changed')
+    elif p.get('source_usage_uncertainty') is not None:raise ValueError('Unexpected unknown source usage')
     sp=p['source_protocol']
     for path,digest in [(sp['case_path'],sp['case_sha256']),(sp['evidence_manifest'],sp['evidence_sha256']),(sp['writing_standard'],sp['writing_sha256'])]:
         if base.sha(path)!=digest:raise ValueError('Original source changed')
@@ -219,6 +230,7 @@ def advance(output, execute=True):
             else:
                 review=result['content'];accepted=validate_review(review,pack,state,b,cat)
                 out={'status':'accepted' if accepted else 'blocked','tokens':tokens,'report_sha256':report_digest(state),'signals_sha256':base.digest(pack),'review_sha256':base.sha(job/'output.json')}
+                if p.get('source_usage_uncertainty') is not None:out.update(source_usage_uncertainty=p['source_usage_uncertainty'],total_tokens=None)
                 if accepted:render(root/'report.html',state,pack,review,b,cat);out['html_sha256']=base.sha(root/'report.html')
                 repair.write(root/'result.json',out);return out
 
