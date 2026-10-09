@@ -1,0 +1,7 @@
+# Explicit interrupted report review
+
+`earnings_interrupted_review.initialize` reserves one new private report-review edition after an explicitly authorized local stop. It authenticates the original correction verifier, completed author response, exact candidate and prompt, request and runtime identity, pause evidence, partial-file inventory, and current absence of the original helper. A journal, output, completion receipt, finite token ceiling, or already terminal report must use its own reconciliation path instead.
+
+The old request is unchanged. An exclusively created sibling claim permits one successor only. The interrupted review is attempt one and the new session is attempt two within the existing correction round. There is no author call, evidence expansion, or additional correction round. A second uncertain execution is never automatically retried. Unknown original provider usage stays explicitly unknown; known measured usage is recorded separately. Independent signal review preserves the unknown-usage field and excludes the original and successor report-review sessions.
+
+Prepare and execute under the existing shared execution guard and persist exact private reservations before dispatch. Call `advance(output, execute=True)` to execute at most one new review; `verify(output)` never launches a model. Only a substantive passing review can produce an accepted report. A blocked, malformed or evidence-insufficient response cannot be promoted to acceptance.
