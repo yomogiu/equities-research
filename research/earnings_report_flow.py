@@ -156,7 +156,11 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
 def advance(output, execute=True):
     """Replay completed stages and execute at most one new worker; fail closed."""
     root = Path(output).resolve()
-    kind = base.read(root/'protocol.json').get('version')
+    frozen = base.read(root/'protocol.json')
+    if frozen.get('batch_review'):
+        from . import earnings_batched_flow
+        return earnings_batched_flow.advance(root,execute)
+    kind = frozen.get('version')
     if kind in (corrections.VERSION, corrections.regression.VERSION, corrections.cited_passages.VERSION, corrections.financial_evidence.VERSION):
         continuation, _, _, _ = corrections.load(root)
         protocol = continuation['source_protocol']

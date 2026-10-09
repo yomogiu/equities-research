@@ -60,3 +60,18 @@ an explicit adapter preserving original usage, remaining rounds and receipts.
 The current production cohort and automation remain paused. No live efficiency
 claim follows from the synthetic tests; measure actual calls and recorded usage
 when an authorized new edition is selected for rollout.
+
+## Production routing
+
+New queue requests select `review_policy: batched-report-review-v1` and freeze
+`batch_review` in the passage protocol. `earnings_report_flow.advance` then routes
+to `earnings_batched_flow`: financial context, retrieval, analysis, draft signals,
+one combined baseline review, and (when necessary) at most two proposal/review
+batches. Every invocation starts at most one model call. Completed preparers are
+replayed without regeneration. Corrections are proposed together and applied by
+code; malformed proposals stop with their authenticated outputs retained.
+
+The private completion verifier replays this pinned route and checks its exact
+HTML and complete artifact inventory before counting a report. Legacy requests
+continue through their original report and signal verifier. Changing the default
+pin or policy does not migrate stopped work or restart paused schedules.

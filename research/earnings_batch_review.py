@@ -197,12 +197,12 @@ def load(root):
     return p,items,bundle,catalog,writing.read_text()
 
 
-def replay(root):
+def replay(root, *, stop_before=None):
     root=Path(root);p,items,b,c,w=load(root);accepted={};findings={};tokens=0;sessions=set(p['source_protocol'].get('excluded_session_ids',[]))
     for n in range(MAX_CORRECTIONS+1):
         before=copy.deepcopy(items);folder=root/'batches'/str(n)
         if n:
-            if not (folder/'plan.json').exists():return {'status':'awaiting_batch','round':n,'accepted':accepted,'findings':findings,'items':items,'tokens':tokens}
+            if n==stop_before or not (folder/'plan.json').exists():return {'status':'awaiting_batch','round':n,'accepted':accepted,'findings':findings,'items':items,'tokens':tokens}
             items,changed=apply(items,runner.read(folder/'plan.json'));validate(items,b,c)
             # All outstanding findings are considered in this same review call.
             pending=set(findings)|changed
