@@ -13,7 +13,8 @@ from .freshness import timestamp
 from . import source_parse, transcript_evidence, financial_evidence
 
 LEGACY_VERSION = 'stockanalysis-market-widget-currentness-v1'
-VERSION = 'stockanalysis-market-and-app-counter-currentness-v2'
+APP_COUNTER_VERSION = 'stockanalysis-market-and-app-counter-currentness-v2'
+VERSION = 'stockanalysis-market-app-counter-and-country-navigation-currentness-v3'
 STATUS = 'scoped_transcript_verified'
 
 
@@ -78,7 +79,34 @@ def app_counters(html):
     return html
 
 
-def signature(raw, url, *, allow_app_counters=False):
+def country_navigation(html):
+    """Ignore one exact publisher directory link inside its main Stocks menu.
+
+    The complete call, metadata and every other navigation word remain compared.
+    Old receipts never use this rule.
+    """
+    navs = list(re.finditer(r'<nav\b(?=[^>]*\baria-label="Main navigation")[^>]*>.*?</nav>', html, re.S))
+    if not navs:
+        return html
+    require(len(navs) == 1, 'Ambiguous main navigation')
+    nav = navs[0]
+    require('transcript-sentence' not in nav.group(), 'Navigation overlaps call evidence')
+    menus = list(re.finditer(r'<ul\b(?=[^>]*\bid="Stocks-menu")[^>]*>.*?</ul>', nav.group(), re.S))
+    if not menus:
+        return html
+    require(len(menus) == 1, 'Ambiguous Stocks navigation menu')
+    menu = menus[0]
+    links = list(re.finditer(r'<li>\s*<a\b(?=[^>]*\bhref="/list/countries/")(?=[^>]*\btitle="By Country")[^>]*>By Country</a>\s*</li>', menu.group()))
+    require(len(links) <= 1, 'Ambiguous country navigation link')
+    if not links:
+        return html
+    link = links[0]
+    start = nav.start() + menu.start() + link.start()
+    end = nav.start() + menu.start() + link.end()
+    return html[:start] + html[end:]
+
+
+def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False):
     require(urlsplit(url).hostname == 'stockanalysis.com' and
             re.fullmatch(r'/stocks/[a-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path),
             'Unsupported transcript publisher URL')
@@ -104,6 +132,8 @@ def signature(raw, url, *, allow_app_counters=False):
     outside_html = html[:a] + '<div>QUOTE_WIDGET</div>' + html[b:]
     if allow_app_counters:
         outside_html = app_counters(outside_html)
+    if allow_country_navigation:
+        outside_html = country_navigation(outside_html)
     outside = source_parse.page(outside_html.encode(), url).text
     facts = financial_evidence.extract_inline_xbrl(html, {'document_id': 'scope', 'raw_sha256': sha(raw), 'text_sha256': sha(page.text.encode())})
     facts = {'observations': [{k:v for k,v in o.items() if k not in ('observation_id','source_raw_sha256','support')} for o in facts['observations']],
@@ -115,9 +145,9 @@ def signature(raw, url, *, allow_app_counters=False):
             'widget_html_span': [a,b], 'widget_sha256': sha(html[a:b].encode())}
 
 
-def compare(before, after, url, *, allow_app_counters=True):
-    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters)
-    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters)
+def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True):
+    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation)
+    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation)
     require(old == new, 'Complete transcript, metadata or non-widget content changed')
     require(old['title'] and old['block_sha256'], 'Transcript metadata missing')
     return {'signature': old, 'archived': old_spans, 'observed': new_spans,
@@ -130,7 +160,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -138,7 +168,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     observed_text = library.load_bytes(root, new['text_path'], new['text_sha256'])
     require(source_parse.page(after,value['source_url']).text.encode() == observed_text, 'Observed extraction mismatch')
     require(source_parse.page(before,value['source_url']).text.encode() == text, 'Archived extraction mismatch')
-    require(compare(before,after,value['source_url'], allow_app_counters=value['version'] == VERSION) == value['comparison'], 'Scoped comparison changed')
+    require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] == VERSION) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
