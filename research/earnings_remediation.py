@@ -135,7 +135,18 @@ def apply(snapshot, plan, bundle, catalog):
 EXPORT = '''
 import json,sys
 from pathlib import Path
-root=Path(sys.argv[1]);p=json.loads((root/'protocol.json').read_text())
+root=Path(sys.argv[1]);p=json.loads((root/'protocol.json').read_text());uncertainty=None
+if p['version']=='interrupted-report-review-v1':
+ from research import earnings_interrupted_review as c
+ v=c.verify(root)
+ if v['status']!='blocked':raise ValueError('Only a completed blocked interrupted review may be remediated')
+ p,e,b,k=c.load(root);review=c.runner.verify_job(root/'review')['content']
+ after,status=c.corrections.adjudicate(e['before'],e['candidate'],e['plan'],review,b,k)
+ if status not in ('revise','blocked'):raise ValueError('Interrupted review is not a stopped substantive disposition')
+ print(json.dumps({'status':'blocked','snapshot':after,'source_protocol':p['source_protocol'],
+  'prior_rounds':p['correction_round'],'prior_tokens':p['known_prior_tokens']+v['measured_new_tokens'],
+  'source_usage_uncertainty':p['unknown_prior_usage']}))
+ sys.exit(0)
 if p.get('prepared_recovery'):
  from research import earnings_passage_pipeline as c
  from research import earnings_report_repair as repair
@@ -163,24 +174,26 @@ elif p['version'].startswith('targeted-remediation-'):
  p,b,k,w=c.load(root);v=c._replay(root,p,b,k,w)
  rounds=p['history']['prior_rounds']+v['review_attempts']
  tokens=p['history']['prior_tokens']+v['tokens']
+ uncertainty=p.get('source_usage_uncertainty')
 else:
  from research import earnings_corrections as c
  p,b,k,w=c.load(root);v=c.replay(root,p,b,k,w)
  rounds=p.get('prior_rounds',0)+v['round']
  tokens=p.get('inherited_tokens',0)+v['tokens']
 print(json.dumps({'status':v['status'],'snapshot':v['state'],'source_protocol':p['source_protocol'],
- 'prior_rounds':rounds,'prior_tokens':tokens}))
+ 'prior_rounds':rounds,'prior_tokens':tokens,**({'source_usage_uncertainty':uncertainty} if uncertainty is not None else {})}))
 '''
 
 
 def export_seed(seed):
     p = base.read(seed/'protocol.json')
     prepared = p.get('version') == pipe.EFFICIENT_VERSION and bool(p.get('prepared_recovery'))
-    if not prepared and p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, corrections.financial_evidence.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION}:
+    if not prepared and p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, corrections.financial_evidence.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION, 'interrupted-report-review-v1'}:
         raise ValueError('A stopped corrections or remediation seed is required')
     for item in p['code']:
         if base.sha(item['path']) != item['sha256']: raise ValueError('Seed verifier code changed')
-    verifier_name = ('earnings_passage_pipeline.py' if prepared else
+    verifier_name = ('earnings_interrupted_review.py' if p['version']=='interrupted-report-review-v1' else
+                     'earnings_passage_pipeline.py' if prepared else
                      'earnings_remediation.py' if p['version'].startswith('targeted-remediation-') else 'earnings_corrections.py')
     code = Path(next(x['path'] for x in p['code'] if x['path'].endswith('/' + verifier_name))).parent.parent
     result = subprocess.run([sys.executable, '-c', EXPORT, str(seed)], cwd=code,
@@ -248,7 +261,7 @@ def seed_bindings(seed, old):
     for p in seed.rglob('*'):
         if p.is_symlink(): raise ValueError('Seed symlinks are forbidden')
         if p.is_file() and not p.name.startswith('.'): bindings[str(p)] = base.sha(p)
-    prior_sessions = []
+    prior_sessions = list(old.get('excluded_session_ids', [])) if old.get('version')=='interrupted-report-review-v1' or old.get('source_usage_uncertainty') is not None else []
     for name in bindings:
         if Path(name).name == 'execution.json':
             sid = base.read(name).get('session', {}).get('id')
@@ -298,6 +311,9 @@ def initialize(seed, output, plan, authorization):
     old, exported = export_seed(seed)
     validate_remaining_reviews(old, exported, authorization)
     snapshot = exported['snapshot']
+    uncertainty=exported.get('source_usage_uncertainty')
+    if uncertainty is not None and (authorization['max_tokens'] is not None or authorization['max_review_attempts']!=1):
+        raise ValueError('Unknown historical usage requires explicit uncapped authority and one targeted review')
     if set(snapshot['artifacts']) != {'financial', 'retrieval', 'analysis'} or not snapshot['findings']:
         raise ValueError('Complete stopped candidate and unresolved findings required')
     if root.exists() and any(root.iterdir()): raise ValueError('New remediation directory must be empty')
@@ -313,6 +329,7 @@ def initialize(seed, output, plan, authorization):
                 'history': {k: exported[k] for k in ('status', 'prior_rounds', 'prior_tokens')},
                 'excluded_session_ids': sorted(set(prior_sessions)), 'model': list(MODEL),
                 'max_review_attempts': authorization['max_review_attempts'], 'max_tokens': authorization['max_tokens'], 'max_prompt_chars': MAX_PROMPT_CHARS}
+    if uncertainty is not None:protocol['source_usage_uncertainty']=uncertainty
     policy = context_policy(authorization)
     if policy is not None:
         protocol.update(review_context_policy=policy, max_prompt_chars=policy['prompt_characters'])
@@ -362,6 +379,10 @@ def load(output):
             or p['history'] != {k: exported[k] for k in ('status', 'prior_rounds', 'prior_tokens')}
             or p['initial_sha256'] != base.digest(exported['snapshot'])):
         raise ValueError('Derived seed provenance differs from original authenticated replay')
+    if p.get('source_usage_uncertainty')!=exported.get('source_usage_uncertainty'):
+        raise ValueError('Original unknown usage changed')
+    if p.get('source_usage_uncertainty') is not None and (p['max_tokens'] is not None or p['max_review_attempts']!=1):
+        raise ValueError('Unknown usage targeted review policy changed')
     sp = p['source_protocol']
     for name, h in ((sp['case_path'], sp['case_sha256']), (sp['writing_standard'], sp['writing_sha256']),
                     (sp['evidence_manifest'], sp['evidence_sha256'])):
@@ -462,6 +483,8 @@ def advance(output, execute=False):
             run_role(progress['job'], progress['prompt'], *MODEL, progress['bindings'], timeout=1200)
             progress = _replay(root, p, b, c, w)
         summary = {k: v for k, v in progress.items() if k not in ('state', 'prompt', 'bindings', 'job', 'result')}
+        if p.get('source_usage_uncertainty') is not None:
+            summary.update(source_usage_uncertainty=p['source_usage_uncertainty'],total_tokens=None)
         if progress['status'] == 'accepted':
             repair.render(root/'report.html', {**progress['state'], 'status': 'accepted'}, b, c)
             repair.write(root/'result.json', {**summary, 'state': progress['state'],

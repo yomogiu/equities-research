@@ -125,6 +125,8 @@ elif p['version']=='authorized-acceptance-exception-v1':
 elif p['version'] in ('targeted-remediation-v1','targeted-remediation-v2','targeted-remediation-v3'):
  from research import earnings_remediation as c
  r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
+ if p.get('source_usage_uncertainty') is not None:
+  uncertainty=p['source_usage_uncertainty'];excluded=sorted(set(p['excluded_session_ids']+[b.read(x)['session']['id'] for x in root.rglob('execution.json')]))
 elif p['version'] in ('deterministic-corrections-v1','deterministic-corrections-regression-v1','deterministic-corrections-cited-passages-v1','deterministic-corrections-financial-evidence-v1'):
  from research import earnings_corrections as c
  r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
@@ -176,6 +178,10 @@ def load(root):
         expected=seed_protocol['excluded_session_ids']+[base.read(Path(p['seed'])/'review/execution.json')['session']['id']]
         if p.get('excluded_session_ids')!=expected or p.get('source_usage_uncertainty')!=seed_protocol['unknown_prior_usage']:
             raise ValueError('Interrupted source history changed')
+    elif seed_protocol.get('version','').startswith('targeted-remediation-') and seed_protocol.get('source_usage_uncertainty') is not None:
+        expected=sorted(set(seed_protocol['excluded_session_ids']+[base.read(x)['session']['id'] for x in Path(p['seed']).rglob('execution.json')]))
+        if p.get('excluded_session_ids')!=expected or p.get('source_usage_uncertainty')!=seed_protocol['source_usage_uncertainty']:
+            raise ValueError('Remediated interrupted source history changed')
     elif p.get('source_usage_uncertainty') is not None:raise ValueError('Unexpected unknown source usage')
     sp=p['source_protocol']
     for path,digest in [(sp['case_path'],sp['case_sha256']),(sp['evidence_manifest'],sp['evidence_sha256']),(sp['writing_standard'],sp['writing_sha256'])]:
