@@ -50,6 +50,10 @@ def _advance(root,execute):
     batch.require(protocol.get('batch_review')==POLICY,'Not a batched production request')
     writing=Path(protocol['writing_standard']).read_text()
     artifacts={};sessions=set();tokens=0
+    inherited={}
+    if protocol.get('grounding_recovery'):
+        from .earnings_batched_grounding_recovery import validate
+        inherited=validate(protocol,bundle,catalog)
     for role in ('financial','retrieval','analysis','signal_author'):
         if role=='signal_author':
             state={'artifacts':copy.deepcopy(artifacts),'format':{'rows':{},'basis':{'text':'','citations':[]}}}
@@ -59,7 +63,13 @@ def _advance(root,execute):
             text=pipe.prompt(role,bundle,writing,artifacts,[],catalog)
             model=pipe.MODELS[role]
         bindings={'protocol_sha256':runner.sha(root/'protocol.json'),'role':role,'dependencies_sha256':runner.digest(artifacts)}
-        result=job(root,role,text,model,bindings,execute,sessions)
+        if role in inherited:
+            result=inherited[role]
+            sid=result['receipt']['session']['id']
+            batch.require(sid not in sessions,'Independent role session required')
+            sessions.add(sid)
+        else:
+            result=job(root,role,text,model,bindings,execute,sessions)
         if 'pending_status' in result:return {'status':result['pending_status'],'stage':role}
         tokens+=result['receipt']['session']['usage']['totalTokens']
         out=result['content']
