@@ -55,7 +55,7 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
         protocol['grounding_recovery']['reviewed_boundary']=reviewed_boundary
         bundle,_,_=apply(reviewed_boundary,bundle,imp.authenticate(refs['retrieval'])['content'])
     version=grounding_version or pipe.grounding.NAMED_GREETING_VERSION
-    require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION},'Unsupported recovery grounding')
+    require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION},'Unsupported recovery grounding')
     grounding=pipe.grounding.build(bundle,catalog,version)
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
@@ -73,7 +73,7 @@ def validate(protocol,bundle,catalog):
     require(r.sha(seed/'protocol.json')==recovery['protocol_sha256'],'Seed protocol changed')
     ignored={'code','grounding_recovery','qa_grounding','qa_grounding_path','qa_grounding_sha256'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored},'Recovery changed original settings or evidence')
-    require(protocol['qa_grounding'] in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION},'Recovery requires new grounding version')
+    require(protocol['qa_grounding'] in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION},'Recovery requires new grounding version')
     require(set(recovery['responses'])=={'financial','retrieval'},'Both original preparers required')
     results={}
     for role,ref in recovery['responses'].items():

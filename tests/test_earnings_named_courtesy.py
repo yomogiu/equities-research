@@ -45,3 +45,12 @@ class NamedCourtesyTests(unittest.TestCase):
         self.assertEqual(output, original)
         self.assertEqual(derived['exchange_coverage'][1], original['exchange_coverage'][1])
         self.assertTrue(receipts)
+
+    def test_named_thanks_requires_exact_complete_body_and_known_peer(self):
+        for text in ['Thanks, Alex.','Makes sense. Thanks, Alex.']:
+            bundle,catalog=fixture(question='Great.',chief=text)
+            self.assertEqual(q.build(bundle,catalog,q.NAMED_THANKS_VERSION)['exchanges'][0]['mechanical_disposition'],'courtesy_only')
+            self.assertIsNone(q.build(bundle,catalog,q.COURTESY_ROUTING_VERSION)['exchanges'][0]['mechanical_disposition'])
+        for text in ['Thanks, Unknown.','Thanks, Alex. Revenue rose.']:
+            bundle,catalog=fixture(question='Great.',chief=text)
+            self.assertIsNone(q.build(bundle,catalog,q.NAMED_THANKS_VERSION)['exchanges'][0]['mechanical_disposition'])
