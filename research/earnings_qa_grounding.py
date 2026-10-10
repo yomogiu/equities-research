@@ -14,7 +14,8 @@ from research import earnings_experiment as base
 VERSION = 'source-bound-qa-membership-v1'
 HEADER_VERSION = 'source-bound-qa-membership-v2'
 NAMED_GREETING_VERSION = 'source-bound-qa-membership-v3'
-HEADER_VERSIONS = {HEADER_VERSION, NAMED_GREETING_VERSION}
+COURTESY_ROUTING_VERSION = 'source-bound-qa-membership-v4'
+HEADER_VERSIONS = {HEADER_VERSION, NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION}
 SUPPORTED_VERSIONS = {VERSION, *HEADER_VERSIONS}
 NOTICE = ('Membership validation checks source offsets and indexed speaker roles, not '
           'whether a question was understood, answered, relevant or summarized correctly. '
@@ -53,7 +54,7 @@ def _greeting(turn, rows, version=VERSION, peers=()):
     # This deliberately recognizes only complete, simple courtesy turns. Other
     # short statements remain evidence; a greeting followed by a question is not
     # discarded. The source text itself is never removed or rewritten.
-    if version == NAMED_GREETING_VERSION and turn['role'] in {'analyst', 'management'}:
+    if version in {NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION} and turn['role'] in {'analyst', 'management'}:
         # Only another named participant in this exchange can be addressed.
         # Require complete contiguous source coverage before excluding a turn.
         cursor = turn['start']
@@ -71,16 +72,28 @@ def _greeting(turn, rows, version=VERSION, peers=()):
                 if re.fullmatch(r'(?:Hi|Hello|Hey|Good morning|Good afternoon|Good evening),?\s+'
                                 + re.escape(address) + r'[.!]?', body, re.I):
                     return True
+    if version == COURTESY_ROUTING_VERSION and _complete(turn,rows) and body in {'Thank you. Thanks for the questions.', 'Got it. That makes a lot of sense. Thank you.', 'Perfect. Thank you.'}:
+        return True
     return bool(body and (GREETING.fullmatch(body) or version in HEADER_VERSIONS and re.fullmatch(
         r'(?:Great|Okay|Got it|I appreciate that)\. (?:Thank you\.|That[’\']s helpful\. Thank you\.)', body)))
 
 
-def _routing(turn, rows, targets):
+def _complete(turn, rows):
+    cursor=turn['start']
+    for row in rows:
+        if row['start']!=cursor or len(row['text'])!=row['end']-row['start']:return False
+        cursor=row['end']
+    return bool(rows) and cursor==turn['end']
+
+
+def _routing(turn, rows, targets, version=HEADER_VERSION):
     if _function(turn) != 'moderator' or turn['role'] != 'operator':
         return False
     body = _header_body(turn, rows)
     normalize = lambda text: re.sub(r'\s+', '', text)
     for name, firm in targets:
+        if version == COURTESY_ROUTING_VERSION and _complete(turn,rows) and normalize(body)==normalize(f'The next question comes from {name} with {firm}. Please go ahead.'):
+            return True
         for prefix in ('', 'Thank you for your question. '):
             for ordinal in ('next', 'final'):
                 for opened in ('open', 'now open'):
@@ -165,7 +178,7 @@ def build(bundle, catalog, version=VERSION):
                           passage_offsets=[{k: p[k] for k in ('passage_id', 'start', 'end', 'span_sha256')} for p in rows if p['text'].strip()],
                           courtesy_only=greeting)
             if version in HEADER_VERSIONS:
-                record['routing_only'] = _routing(turn, rows, targets)
+                record['routing_only'] = _routing(turn, rows, targets, version)
             records.append(record)
             if len(membership[tid]) != 1:
                 flags.append('shared_turn_membership')
