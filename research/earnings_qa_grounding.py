@@ -318,6 +318,11 @@ def attach(root, protocol, bundle, catalog):
     if base.sha(path) != protocol['qa_grounding_sha256']:
         raise ValueError('Q&A grounding sidecar changed')
     computed = build(bundle, catalog, version=protocol['qa_grounding'])
+    binding=protocol.get('grounding_recovery',{}).get('operator_review')
+    if binding:
+        from .earnings_reviewed_operator import apply
+        computed,_=apply(binding,computed,bundle,catalog)
+        bundle['operator_review_binding']=binding
     if computed != base.read(path):
         raise ValueError('Q&A grounding differs from original indexed sources')
     bundle['qa_grounding'] = computed
@@ -348,7 +353,11 @@ def normalize_courtesy(out, bundle, catalog):
     grounding = bundle.get('qa_grounding', {})
     if grounding.get('version') not in HEADER_VERSIONS:
         raise ValueError('Courtesy normalization requires explicit header-aware grounding')
-    if grounding != build(bundle, catalog, version=grounding['version']):
+    replayed=build(bundle,catalog,version=grounding['version'])
+    if bundle.get('operator_review_binding'):
+        from .earnings_reviewed_operator import apply
+        replayed,_=apply(bundle['operator_review_binding'],replayed,bundle,catalog)
+    if grounding != replayed:
         raise ValueError('Courtesy normalization requires replayable grounding')
     derived = copy.deepcopy(out)
     exchanges = {e['exchange_id']: e for e in grounding['exchanges']}
