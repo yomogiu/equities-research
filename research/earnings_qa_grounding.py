@@ -15,7 +15,8 @@ VERSION = 'source-bound-qa-membership-v1'
 HEADER_VERSION = 'source-bound-qa-membership-v2'
 NAMED_GREETING_VERSION = 'source-bound-qa-membership-v3'
 COURTESY_ROUTING_VERSION = 'source-bound-qa-membership-v4'
-HEADER_VERSIONS = {HEADER_VERSION, NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION}
+NAMED_THANKS_VERSION = 'source-bound-qa-membership-v5'
+HEADER_VERSIONS = {HEADER_VERSION, NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION}
 SUPPORTED_VERSIONS = {VERSION, *HEADER_VERSIONS}
 NOTICE = ('Membership validation checks source offsets and indexed speaker roles, not '
           'whether a question was understood, answered, relevant or summarized correctly. '
@@ -30,13 +31,14 @@ GREETING = re.compile(r'(?:(?:hi|hello|hey|thanks|thank you|good (?:morning|afte
                       r'[\s,.!?;:]*)+', re.I)
 
 
-def _header_body(turn, rows):
+def _header_body(turn, rows, version=HEADER_VERSION):
     """Strip an exact speaker header and known-role title, never infer a role."""
     raw = ''.join(p['text'] for p in rows).strip()
     body = re.sub(r'^' + re.escape(turn['speaker']) + r'\s*[:\n]\s*', '', raw).strip()
     lines = body.splitlines()
     patterns = {'analyst': r'Analyst, [^\n]+',
                 'management': r'(?:President and CEO|EVP and CFO|VP of Investor Relations|SVP of Global Sales), [^\n]+'}
+    if version == NAMED_THANKS_VERSION:patterns['analyst']=r'(?:Analyst|Managing Director), [^\n]+'
     pattern = patterns.get(turn['role'])
     if (raw.splitlines()[0] == turn['speaker'] and len(lines) >= 2
             and pattern and re.fullmatch(pattern, lines[0])):
@@ -50,11 +52,12 @@ def _body(turn, rows):
 
 
 def _greeting(turn, rows, version=VERSION, peers=()):
-    body = _header_body(turn, rows) if version in HEADER_VERSIONS else _body(turn, rows)
+    body = _header_body(turn, rows, version) if version in HEADER_VERSIONS else _body(turn, rows)
     # This deliberately recognizes only complete, simple courtesy turns. Other
     # short statements remain evidence; a greeting followed by a question is not
     # discarded. The source text itself is never removed or rewritten.
-    if version in {NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION} and turn['role'] in {'analyst', 'management'}:
+    if version == NAMED_THANKS_VERSION and _complete(turn,rows) and body == 'Great.':return True
+    if version in {NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and turn['role'] in {'analyst', 'management'}:
         # Only another named participant in this exchange can be addressed.
         # Require complete contiguous source coverage before excluding a turn.
         cursor = turn['start']
@@ -69,10 +72,12 @@ def _greeting(turn, rows, version=VERSION, peers=()):
                     or len(name.split()) < 2):
                 continue
             for address in (name, name.split()[0]):
+                if version == NAMED_THANKS_VERSION and re.fullmatch(r'(?:Makes sense\. )?Thanks,?\s+'+re.escape(address)+r'[.!]?',body,re.I):
+                    return True
                 if re.fullmatch(r'(?:Hi|Hello|Hey|Good morning|Good afternoon|Good evening),?\s+'
                                 + re.escape(address) + r'[.!]?', body, re.I):
                     return True
-    if version == COURTESY_ROUTING_VERSION and _complete(turn,rows) and body in {'Thank you. Thanks for the questions.', 'Got it. That makes a lot of sense. Thank you.', 'Perfect. Thank you.'}:
+    if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and _complete(turn,rows) and body in {'Thank you. Thanks for the questions.', 'Got it. That makes a lot of sense. Thank you.', 'Perfect. Thank you.'}:
         return True
     return bool(body and (GREETING.fullmatch(body) or version in HEADER_VERSIONS and re.fullmatch(
         r'(?:Great|Okay|Got it|I appreciate that)\. (?:Thank you\.|That[’\']s helpful\. Thank you\.)', body)))
@@ -89,10 +94,10 @@ def _complete(turn, rows):
 def _routing(turn, rows, targets, version=HEADER_VERSION):
     if _function(turn) != 'moderator' or turn['role'] != 'operator':
         return False
-    body = _header_body(turn, rows)
+    body = _header_body(turn, rows, version)
     normalize = lambda text: re.sub(r'\s+', '', text)
     for name, firm in targets:
-        if version == COURTESY_ROUTING_VERSION and _complete(turn,rows) and normalize(body)==normalize(f'The next question comes from {name} with {firm}. Please go ahead.'):
+        if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and _complete(turn,rows) and normalize(body)==normalize(f'The next question comes from {name} with {firm}. Please go ahead.'):
             return True
         for prefix in ('', 'Thank you for your question. '):
             for ordinal in ('next', 'final'):
