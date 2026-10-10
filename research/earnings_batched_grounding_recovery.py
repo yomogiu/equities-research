@@ -38,7 +38,7 @@ def original(seed):
     return old,code
 
 
-def initialize(seed, output, authorization, reviewed_boundary=None, selection_repair=None):
+def initialize(seed, output, authorization, reviewed_boundary=None, selection_repair=None, grounding_version=None):
     from . import earnings_passage_pipeline as pipe
     seed,output=Path(seed).resolve(),Path(output).resolve()
     require(authorization.strip() and not output.exists(),'New authorized continuation required')
@@ -54,11 +54,13 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
         from .earnings_reviewed_grounding import apply
         protocol['grounding_recovery']['reviewed_boundary']=reviewed_boundary
         bundle,_,_=apply(reviewed_boundary,bundle,imp.authenticate(refs['retrieval'])['content'])
-    grounding=pipe.grounding.build(bundle,catalog,pipe.grounding.NAMED_GREETING_VERSION)
+    version=grounding_version or pipe.grounding.NAMED_GREETING_VERSION
+    require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION},'Unsupported recovery grounding')
+    grounding=pipe.grounding.build(bundle,catalog,version)
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
     r.save(output/'qa-grounding.json',grounding)
-    protocol.update(qa_grounding=pipe.grounding.NAMED_GREETING_VERSION,qa_grounding_path=str(output/'qa-grounding.json'),qa_grounding_sha256=r.sha(output/'qa-grounding.json'))
+    protocol.update(qa_grounding=version,qa_grounding_path=str(output/'qa-grounding.json'),qa_grounding_sha256=r.sha(output/'qa-grounding.json'))
     r.save(output/'protocol.json',protocol)
     p,b,c=pipe.load(output);validate(p,b,c)
     return protocol
@@ -71,7 +73,7 @@ def validate(protocol,bundle,catalog):
     require(r.sha(seed/'protocol.json')==recovery['protocol_sha256'],'Seed protocol changed')
     ignored={'code','grounding_recovery','qa_grounding','qa_grounding_path','qa_grounding_sha256'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored},'Recovery changed original settings or evidence')
-    require(protocol['qa_grounding']==pipe.grounding.NAMED_GREETING_VERSION,'Recovery requires new grounding version')
+    require(protocol['qa_grounding'] in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION},'Recovery requires new grounding version')
     require(set(recovery['responses'])=={'financial','retrieval'},'Both original preparers required')
     results={}
     for role,ref in recovery['responses'].items():
