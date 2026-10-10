@@ -119,7 +119,11 @@ import json,sys
 from pathlib import Path
 from research import earnings_experiment as b
 root=Path(sys.argv[1]); p=b.read(root/'protocol.json'); excluded=[]; uncertainty=None
-if p['version']=='interrupted-report-review-v1':
+if p['version']=='completed-review-recovery-v1':
+ from research import earnings_review_recovery as c
+ r=c.verify(root); state=b.read(root/'state.json'); sp=p['source_protocol']
+ excluded=p['excluded_session_ids']; uncertainty=p['source_usage_uncertainty']
+elif p['version']=='interrupted-report-review-v1':
  from research import earnings_interrupted_review as c
  r=c.verify(root); state=b.read(root/'result.json')['state']; sp=p['source_protocol']
  excluded=p['excluded_session_ids']+[b.read(root/'review/execution.json')['session']['id']]
@@ -188,6 +192,9 @@ def load(root):
         expected=sorted(set(seed_protocol['excluded_session_ids']+[base.read(x)['session']['id'] for x in Path(p['seed']).rglob('execution.json')]))
         if p.get('excluded_session_ids')!=expected or p.get('source_usage_uncertainty')!=seed_protocol['source_usage_uncertainty']:
             raise ValueError('Remediated interrupted source history changed')
+    elif seed_protocol.get('version')=='completed-review-recovery-v1':
+        if p.get('excluded_session_ids')!=seed_protocol['excluded_session_ids'] or p.get('source_usage_uncertainty')!=seed_protocol.get('source_usage_uncertainty'):
+            raise ValueError('Recovery history changed')
     elif p.get('source_usage_uncertainty') is not None:raise ValueError('Unexpected unknown source usage')
     sp=p['source_protocol']
     for path,digest in [(sp['case_path'],sp['case_sha256']),(sp['evidence_manifest'],sp['evidence_sha256']),(sp['writing_standard'],sp['writing_sha256'])]:
