@@ -184,7 +184,7 @@ class GroundingTests(PassageFixture, unittest.TestCase):
         writing = self.root / 'writing.txt'; writing.write_text('Fictitious standard')
         root = self.root / 'grounded'
         protocol = pipe.freeze(self.casepath, root, writing)
-        self.assertEqual(protocol['qa_grounding'], grounding.HEADER_VERSION)
+        self.assertEqual(protocol['qa_grounding'], grounding.NAMED_GREETING_VERSION)
         v1 = self.root/'explicit-v1'
         pipe.freeze(self.casepath, v1, writing, qa_grounding_version=grounding.VERSION)
         self.assertEqual(pipe.load(v1)[1]['qa_grounding']['version'], grounding.VERSION)
