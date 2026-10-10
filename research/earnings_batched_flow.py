@@ -54,6 +54,11 @@ def _advance(root,execute):
     if protocol.get('grounding_recovery'):
         from .earnings_batched_grounding_recovery import validate
         inherited=validate(protocol,bundle,catalog)
+        if protocol['grounding_recovery'].get('selection_repair'):
+            from .earnings_role_import import authenticate
+            selection=authenticate(protocol['grounding_recovery']['selection_repair']['review'])
+            sessions.add(selection['session']['id'])
+            tokens+=selection['session']['usage']['totalTokens']
         if protocol['grounding_recovery'].get('reviewed_boundary'):
             from .earnings_role_import import authenticate
             boundary=authenticate(protocol['grounding_recovery']['reviewed_boundary']['review'])
