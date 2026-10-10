@@ -54,6 +54,11 @@ def _advance(root,execute):
     if protocol.get('grounding_recovery'):
         from .earnings_batched_grounding_recovery import validate
         inherited=validate(protocol,bundle,catalog)
+        if protocol['grounding_recovery'].get('reviewed_boundary'):
+            from .earnings_role_import import authenticate
+            boundary=authenticate(protocol['grounding_recovery']['reviewed_boundary']['review'])
+            sessions.add(boundary['session']['id'])
+            tokens+=boundary['session']['usage']['totalTokens']
     for role in ('financial','retrieval','analysis','signal_author'):
         if role=='signal_author':
             state={'artifacts':copy.deepcopy(artifacts),'format':{'rows':{},'basis':{'text':'','citations':[]}}}
