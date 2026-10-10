@@ -38,7 +38,7 @@ def original(seed):
     return old,code
 
 
-def initialize(seed, output, authorization, reviewed_boundary=None, selection_repair=None, grounding_version=None):
+def initialize(seed, output, authorization, reviewed_boundary=None, selection_repair=None, grounding_version=None, operator_review=None):
     from . import earnings_passage_pipeline as pipe
     seed,output=Path(seed).resolve(),Path(output).resolve()
     require(authorization.strip() and not output.exists(),'New authorized continuation required')
@@ -57,6 +57,10 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
     version=grounding_version or pipe.grounding.NAMED_GREETING_VERSION
     require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION},'Unsupported recovery grounding')
     grounding=pipe.grounding.build(bundle,catalog,version)
+    if operator_review:
+        from .earnings_reviewed_operator import apply
+        protocol['grounding_recovery']['operator_review']=operator_review
+        grounding,_=apply(operator_review,grounding,bundle,catalog)
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
     r.save(output/'qa-grounding.json',grounding)
