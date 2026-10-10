@@ -197,6 +197,15 @@ def load(root):
     return p,items,bundle,catalog,writing.read_text()
 
 
+def bind_review_response(content, verified_bindings):
+    """Use only after replay verifies the exact request, prompt and session."""
+    require(isinstance(content,dict) and set(content)=={'batch_sha256','decisions','reopen'},'Malformed review response')
+    require(isinstance(content['batch_sha256'],str),'Malformed echoed batch identifier')
+    derived=copy.deepcopy(content)
+    derived['batch_sha256']=verified_bindings['batch_sha256']
+    return derived
+
+
 def replay(root, *, stop_before=None):
     root=Path(root);p,items,b,c,w=load(root);accepted={};findings={};tokens=0;sessions=set(p['source_protocol'].get('excluded_session_ids',[]))
     for n in range(MAX_CORRECTIONS+1):
@@ -217,7 +226,10 @@ def replay(root, *, stop_before=None):
         require(request['bindings']==bindings and [request['model'],request['effort']]==list(MODEL) and (job/'prompt.txt').read_text()==text,'Review request changed')
         require(session['id'] not in sessions,'Fresh independent batch reviewer required');sessions.add(session['id'])
         tokens+=session['usage']['totalTokens']
-        accepted,findings=adjudicate(items,pending,accepted,result['content'],c,runner.sha(job/'output.json'))
+        # The authenticated request and exact prompt above bind the batch. A
+        # model-echoed digest is transport metadata, not a second source identity.
+        review=bind_review_response(result['content'],bindings)
+        accepted,findings=adjudicate(items,pending,accepted,review,c,runner.sha(job/'output.json'))
         require(all(entry['unit_sha256']==runner.digest(items[key]) for key,entry in accepted.items()),'Stale accepted unit')
         if not findings:return {'status':'accepted','round':n,'accepted':accepted,'findings':{},'items':items,'tokens':tokens}
     return {'status':'blocked','round':2,'accepted':accepted,'findings':findings,'items':items,'tokens':tokens}
