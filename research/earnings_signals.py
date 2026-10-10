@@ -43,6 +43,13 @@ def validate(pack, state, bundle, catalog):
     signals = pack['signals']
     if not isinstance(signals, list) or not 1 <= len(signals) <= 4: raise ValueError('One to four selective signals required')
     seen = set(); findings = finding_catalog(state)
+    anchors=state['format'].get('signal_anchors',{})
+    if not isinstance(anchors,dict) or not set(anchors)<={x['id'] for x in signals}:raise ValueError('Unknown anchored signal')
+    for signal in signals:
+        if signal['id'] in anchors:
+            anchor=anchors[signal['id']]
+            finding=findings.get(signal['finding_id'],{})
+            if not isinstance(anchor,str) or not anchor.strip() or len(anchor)>240 or finding.get('text','').count(anchor)!=1:raise ValueError('Signal anchor must occur exactly once in its finding')
     for s in signals:
         if not isinstance(s, dict) or set(s) != {'id', 'finding_id', 'direction', 'evidence_basis', 'label', 'summary', 'comparison', 'period', 'rationale', 'citations', 'passage_ids'}:
             raise ValueError('Signal schema differs')
@@ -98,17 +105,27 @@ def _render_content(path, state, pack, bundle, catalog, *, status):
     cards=[]
     for s in pack['signals']:
         cards.append('<article class="signal-card signal-'+s['direction']+'">'+badge(s)+'<h3><a href="#'+s['finding_id']+'">'+e(s['label'])+'</a></h3><p>'+e(s['summary'])+'</p><details class="signal-detail"><summary>Basis &amp; evidence</summary><p>'+e(s['period'])+'</p><p>'+e(s['comparison'])+'</p><p>'+e(s['rationale'])+'</p>'+' '.join('<a href="#signal-e-'+e(i)+'">'+e(i)+'</a>' for i in s['citations'])+'</details></article>')
-    strip='<section aria-label="Business signals"><div class="signal-strip">'+''.join(cards)+'</div><p class="signal-note">Direction describes the specific development. Evidence labels identify its basis. Reported results include management-reported completed milestones.</p></section>'
+    note=state['format'].get('signal_note','Direction describes the specific development. Evidence labels identify its basis. Reported results include management-reported completed milestones.')
+    strip='<section aria-label="Business signals"><div class="signal-strip">'+''.join(cards)+'</div><p class="signal-note">'+e(note)+'</p></section>'
     text=text.replace('</style>',STYLE+'</style>',1).replace('<h2>Financial context</h2>',strip+'<h2>Financial context</h2>',1)
     # Replace finding headings in order, preserving every original paragraph and table.
     cursor=0
     for fid,f in finding_catalog(state).items():
         old='<h2>'+e(f['heading'])+'</h2>';at=text.index(old,cursor)
-        annotations=[s for s in pack['signals'] if s['finding_id']==fid]
+        annotations=[s for s in pack['signals'] if s['finding_id']==fid and s['id'] not in state['format'].get('signal_anchors',{})]
         replacement='<h2 id="'+fid+'">'+e(f['heading'])+'</h2>'
         if annotations:
             replacement+='<div class="finding-signals">'+''.join('<div class="signal-'+s['direction']+'">'+badge(s)+'</div>' for s in annotations)+'</div>'
         text=text[:at]+replacement+text[at+len(old):];cursor=at+len(replacement)
+    for signal in pack['signals']:
+        anchor=state['format'].get('signal_anchors',{}).get(signal['id'])
+        if anchor is None:continue
+        start=text.index('<h2 id="'+signal['finding_id']+'">');end=text.find('<h2',start+4)
+        end=len(text) if end<0 else end
+        section=text[start:end];needle=e(anchor)
+        if section.count(needle)!=1:raise ValueError('Rendered signal anchor is ambiguous')
+        annotation='<span class="signal-'+signal['direction']+'">'+badge(signal)+'</span> '
+        text=text[:start]+section.replace(needle,annotation+needle,1)+text[end:]
     ids=sorted({i for s in pack['signals'] for i in s['citations']})
     appendix='<h2>Signal evidence</h2>'+''.join('<details id="signal-e-'+e(x['id'])+'"><summary>'+e(x['id'])+'</summary><pre>'+e(json.dumps(x,indent=2,ensure_ascii=False))+'</pre></details>' for x in evidence.source_slices(bundle['manifest'],ids))
     legacy.immutable_text(path,text.replace('</main>',appendix+'</main>',1))

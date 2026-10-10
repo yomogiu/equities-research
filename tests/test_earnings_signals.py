@@ -123,3 +123,18 @@ class SignalTests(PassageFixture, unittest.TestCase):
         job=root/'jobs/analysis';job.mkdir(parents=True);base.save(job/'request.json',{})
         with patch.object(s,'load',return_value=({'max_tokens':100,'max_prompt_chars':750000},self.state(),self.bundle,self.catalog,'Fictional')),patch.object(s,'run_role') as runner:
             self.assertEqual(s.advance(root)['status'],'launch_uncertain');runner.assert_not_called()
+
+    def test_exact_signal_anchor_and_note_render_without_heading_badge(self):
+        state=self.state();state['artifacts']['analysis']['findings'][0]['text']='First fictional matter. Separate financing development.'
+        state['format'].update(signal_anchors={'signal-1':'Separate financing'},signal_note='Specific <development>.')
+        pack=self.pack(state);s.validate(pack,state,self.bundle,self.catalog)
+        s._render_content(self.root/'anchored.html',state,pack,self.bundle,self.catalog,status='draft')
+        text=(self.root/'anchored.html').read_text();fid=pack['signals'][0]['finding_id'];section=text.split('<h2 id="'+fid+'">')[1].split('<h2')[0]
+        self.assertNotIn('finding-signals',section)
+        self.assertLess(section.index('First fictional matter.'),section.index('signal-badge'))
+        self.assertLess(section.index('signal-badge'),section.index('Separate financing'))
+        self.assertIn('Specific &lt;development&gt;.',text)
+        self.assertNotIn('Reported results include management-reported completed milestones.',text)
+        for anchor in ['missing','First fictional matter. Separate financing development. First','']:
+            state['format']['signal_anchors']['signal-1']=anchor;pack=self.pack(state)
+            with self.assertRaises(ValueError):s.validate(pack,state,self.bundle,self.catalog)
