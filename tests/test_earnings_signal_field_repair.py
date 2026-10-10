@@ -44,6 +44,27 @@ class SignalLabelRepairTests(PassageFixture,unittest.TestCase):
             value=m.verify(self.out)
         self.assertIsNone(value['total_tokens']);self.assertEqual(value['source_usage_uncertainty'],uncertainty)
 
+    def test_invalid_draft_fails_before_reservation(self):
+        row=self.export['pack']['signals'][2]
+        self.plan['changes'][0]['before']={'rationale':row['rationale']}
+        self.plan['changes'][0]['after']={'rationale':'x'*241}
+        self.auth['plan_sha256']=m.runner.digest(self.plan)
+        with self.assertRaisesRegex(ValueError,'rationale exceeds'):self.init()
+        self.assertFalse(self.out.exists());self.assertFalse(m.claim_path(self.seed).exists())
+
+    def test_unexecuted_invalid_preflight_is_retained_and_bound(self):
+        self.init()
+        pack=m.runner.read(self.out/'signals.json');pack['signals'][2]['rationale']='x'*241
+        (self.out/'signals.json').write_text(json.dumps(pack))
+        original_claim=self.seed.parent/('.signal-field-repair-'+m.runner.sha(self.seed/'protocol.json')+'.json')
+        saved=m.runner.sha(original_claim);other=self.root/'replacement'
+        m.initialize(self.seed,other,self.plan,{**self.auth,'output_path':str(other)})
+        p,*_=m.load(other)
+        self.assertEqual(m.runner.sha(original_claim),saved)
+        self.assertIn(str(self.out/'signals.json'),p['source_bindings'])
+        (self.out/'jobs').mkdir()
+        with self.assertRaises(ValueError):m.load(other)
+
     def test_second_successor_and_protocol_tampering_rejected(self):
         self.init();other=self.root/'other'
         with self.assertRaisesRegex(ValueError,'already reserved'):m.initialize(self.seed,other,self.plan,{**self.auth,'output_path':str(other)})
