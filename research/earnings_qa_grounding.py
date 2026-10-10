@@ -13,7 +13,9 @@ from research import earnings_experiment as base
 
 VERSION = 'source-bound-qa-membership-v1'
 HEADER_VERSION = 'source-bound-qa-membership-v2'
-SUPPORTED_VERSIONS = {VERSION, HEADER_VERSION}
+NAMED_GREETING_VERSION = 'source-bound-qa-membership-v3'
+HEADER_VERSIONS = {HEADER_VERSION, NAMED_GREETING_VERSION}
+SUPPORTED_VERSIONS = {VERSION, *HEADER_VERSIONS}
 NOTICE = ('Membership validation checks source offsets and indexed speaker roles, not '
           'whether a question was understood, answered, relevant or summarized correctly. '
           'All provisional annotations and unresolved boundaries require substantive review.')
@@ -46,12 +48,30 @@ def _body(turn, rows):
     return re.sub(r'^' + re.escape(turn['speaker']) + r'\s*[:\n]\s*', '', body).strip()
 
 
-def _greeting(turn, rows, version=VERSION):
-    body = _header_body(turn, rows) if version == HEADER_VERSION else _body(turn, rows)
+def _greeting(turn, rows, version=VERSION, peers=()):
+    body = _header_body(turn, rows) if version in HEADER_VERSIONS else _body(turn, rows)
     # This deliberately recognizes only complete, simple courtesy turns. Other
     # short statements remain evidence; a greeting followed by a question is not
     # discarded. The source text itself is never removed or rewritten.
-    return bool(body and (GREETING.fullmatch(body) or version == HEADER_VERSION and re.fullmatch(
+    if version == NAMED_GREETING_VERSION and turn['role'] in {'analyst', 'management'}:
+        # Only another named participant in this exchange can be addressed.
+        # Require complete contiguous source coverage before excluding a turn.
+        cursor = turn['start']
+        complete = bool(rows)
+        for row in rows:
+            complete = complete and row['start'] == cursor and len(row['text']) == row['end'] - row['start']
+            cursor = row['end']
+        complete = complete and cursor == turn['end']
+        for peer in peers:
+            name = peer.get('speaker', '').strip()
+            if (not complete or peer['id'] == turn['id'] or peer['role'] not in {'analyst', 'management'}
+                    or len(name.split()) < 2):
+                continue
+            for address in (name, name.split()[0]):
+                if re.fullmatch(r'(?:Hi|Hello|Hey|Good morning|Good afternoon|Good evening),?\s+'
+                                + re.escape(address) + r'[.!]?', body, re.I):
+                    return True
+    return bool(body and (GREETING.fullmatch(body) or version in HEADER_VERSIONS and re.fullmatch(
         r'(?:Great|Okay|Got it|I appreciate that)\. (?:Thank you\.|That[’\']s helpful\. Thank you\.)', body)))
 
 
@@ -97,7 +117,7 @@ def build(bundle, catalog, version=VERSION):
     for rows in by_turn.values():
         rows.sort(key=lambda p: (p['start'], p['end'], p['passage_id']))
     targets = []
-    if version == HEADER_VERSION:
+    if version in HEADER_VERSIONS:
         for tid, turn in turns.items():
             raw = ''.join(p['text'] for p in by_turn[tid]).strip().splitlines()
             if turn['role'] == 'analyst' and len(raw) >= 2 and raw[0] == turn['speaker'] and raw[1].startswith('Analyst, '):
@@ -138,13 +158,13 @@ def build(bundle, catalog, version=VERSION):
         records, flags = [], []
         for tid in tids:
             turn, rows = turns[tid], by_turn[tid]
-            greeting = _greeting(turn, rows, version)
+            greeting = _greeting(turn, rows, version, [turns[t] for t in tids])
             record = {k: turn.get(k) for k in ('id', 'start', 'end', 'speaker', 'role', 'section_id', 'section_kind',
                          'role_review', 'participant_function', 'dialogue_function', 'indexed_dialogue_function')}
             record.update(passage_ids=[p['passage_id'] for p in rows if p['text'].strip()],
                           passage_offsets=[{k: p[k] for k in ('passage_id', 'start', 'end', 'span_sha256')} for p in rows if p['text'].strip()],
                           courtesy_only=greeting)
-            if version == HEADER_VERSION:
+            if version in HEADER_VERSIONS:
                 record['routing_only'] = _routing(turn, rows, targets)
             records.append(record)
             if len(membership[tid]) != 1:
@@ -179,7 +199,7 @@ def build(bundle, catalog, version=VERSION):
                        'answer_turn_ids': sorted(exchange.get('answer_turn_ids', [])),
                        'followup_of': followup, 'boundary_review': exchange.get('boundary_review', index.get('boundary_review', 'provisional')),
                        'flags': sorted(set(flags)),
-                       'mechanical_disposition': 'courtesy_only' if all(r['courtesy_only'] or version == HEADER_VERSION and r.get('routing_only') for r in records) else None})
+                       'mechanical_disposition': 'courtesy_only' if all(r['courtesy_only'] or version in HEADER_VERSIONS and r.get('routing_only') for r in records) else None})
     result.sort(key=lambda e: (e['turns'][0]['start'], e['exchange_id']))
     for e in result:
         e['allowed_continuation_exchange_ids'] = sorted(x['exchange_id'] for x in result
@@ -302,15 +322,15 @@ def require_analysis_ready(out, bundle, catalog):
 
 
 def normalize_courtesy(out, bundle, catalog):
-    """New-edition derivative only: exact v2 courtesy scopes, no source mutation.
+    """New-edition derivative only: exact versioned courtesy scopes, no source mutation.
 
     The full original response remains a separate artifact. This receipt binds
     each replaced row and source offsets; substantive and uncertain rows survive.
     """
     grounding = bundle.get('qa_grounding', {})
-    if grounding.get('version') != HEADER_VERSION:
-        raise ValueError('Courtesy normalization requires explicit v2 grounding')
-    if grounding != build(bundle, catalog, version=HEADER_VERSION):
+    if grounding.get('version') not in HEADER_VERSIONS:
+        raise ValueError('Courtesy normalization requires explicit header-aware grounding')
+    if grounding != build(bundle, catalog, version=grounding['version']):
         raise ValueError('Courtesy normalization requires replayable grounding')
     derived = copy.deepcopy(out)
     exchanges = {e['exchange_id']: e for e in grounding['exchanges']}

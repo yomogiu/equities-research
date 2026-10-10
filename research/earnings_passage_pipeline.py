@@ -149,7 +149,7 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
     if efficient:
         protocol['evidence_reuse'] = copy.deepcopy(EFFICIENT_POLICY)
     if qa_grounding:
-        version = qa_grounding_version or grounding.HEADER_VERSION
+        version = qa_grounding_version or grounding.NAMED_GREETING_VERSION
         qa_index = grounding.build(evidence.load_bundle(manifest), base.read(root / 'passages.json'), version=version)
         base.save(root / 'qa-grounding.json', qa_index)
         protocol.update(qa_grounding=version, qa_grounding_path=str(root / 'qa-grounding.json'),
@@ -293,7 +293,7 @@ def run(output, max_new_jobs=None):
     root = Path(output).resolve(); p, bundle, catalog = load(root)
     if (root / 'result.json').exists():
         return verify(root)
-    if p.get('qa_grounding') == grounding.HEADER_VERSION:
+    if p.get('qa_grounding') in grounding.HEADER_VERSIONS:
         index = bundle['qa_grounding']
         blocked = [e['exchange_id'] for e in index['exchanges'] if e['flags'] and e['mechanical_disposition'] != 'courtesy_only']
         blocked += [t['id'] for t in index['unassigned_qa_turns'] if t['mechanical_disposition'] == 'unresolved']
@@ -366,7 +366,7 @@ def run(output, max_new_jobs=None):
                    if inputs['issues'] is not None else raw)
             if role == 'financial' and p['version'] == EFFICIENT_VERSION:
                 out = bind_efficient_financial(out, bundle, record['expanded_scope_ids'])
-            if role == 'retrieval' and p.get('qa_grounding') == grounding.HEADER_VERSION:
+            if role == 'retrieval' and p.get('qa_grounding') in grounding.HEADER_VERSIONS:
                 out, normalization = grounding.normalize_courtesy(out, bundle, catalog)
                 record['courtesy_normalization'] = normalization
             if role == 'retrieval' and p.get('response_recovery'):
@@ -535,7 +535,7 @@ def verify(output):
             out = bounded_patch(role, inputs['prior'], value['content'], catalog) if mode == 'selection_patch' else value['content']
             if role == 'financial' and p['version'] == EFFICIENT_VERSION:
                 out = bind_efficient_financial(out, bundle, job['expanded_scope_ids'])
-            if role == 'retrieval' and p.get('qa_grounding') == grounding.HEADER_VERSION:
+            if role == 'retrieval' and p.get('qa_grounding') in grounding.HEADER_VERSIONS:
                 out, normalization = grounding.normalize_courtesy(out, bundle, catalog)
                 if job.get('courtesy_normalization') != normalization:
                     raise ValueError('Courtesy derivation differs')
