@@ -191,6 +191,11 @@ def load(root):
     catalog = passages.catalog(p['evidence_manifest'])
     if catalog != base.read(root / 'passages.json'):
         raise ValueError('Passage catalogue differs from original evidence')
+    if p.get('grounding_recovery',{}).get('reviewed_boundary'):
+        from .earnings_reviewed_grounding import apply
+        from .earnings_role_import import authenticate
+        rec=p['grounding_recovery']
+        bundle,_,_=apply(rec['reviewed_boundary'],bundle,authenticate(rec['responses']['retrieval'])['content'])
     grounding.attach(root, p, bundle, catalog)
     if p.get('prepared_recovery'):
         from .earnings_prepared_recovery import apply

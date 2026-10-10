@@ -38,7 +38,7 @@ def original(seed):
     return old,code
 
 
-def initialize(seed, output, authorization):
+def initialize(seed, output, authorization, reviewed_boundary=None):
     from . import earnings_passage_pipeline as pipe
     seed,output=Path(seed).resolve(),Path(output).resolve()
     require(authorization.strip() and not output.exists(),'New authorized continuation required')
@@ -48,6 +48,10 @@ def initialize(seed, output, authorization):
     protocol['code']=[{'path':str(p),'sha256':r.sha(p)} for p in sorted(Path(__file__).parent.glob('earnings_*')) if p.suffix in ('.py','.mjs')]
     protocol['grounding_recovery']={'seed':str(seed),'protocol_sha256':r.sha(seed/'protocol.json'),'authorization':authorization,'responses':refs,'prior_correction_rounds':0}
     bundle=pipe.evidence.load_bundle(old['evidence_manifest']);catalog=r.read(seed/'passages.json')
+    if reviewed_boundary:
+        from .earnings_reviewed_grounding import apply
+        protocol['grounding_recovery']['reviewed_boundary']=reviewed_boundary
+        bundle,_,_=apply(reviewed_boundary,bundle,imp.authenticate(refs['retrieval'])['content'])
     grounding=pipe.grounding.build(bundle,catalog,pipe.grounding.NAMED_GREETING_VERSION)
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
@@ -73,6 +77,13 @@ def validate(protocol,bundle,catalog):
         value=imp.authenticate(ref)
         results[role]={'content':value['content'],'receipt':{'session':value['session'],'usage_is_inherited':True}}
         out=value['content']
+        if role=='retrieval' and recovery.get('reviewed_boundary'):
+            from .earnings_reviewed_grounding import apply
+            pristine=pipe.evidence.load_bundle(old['evidence_manifest'])
+            derived,out,review=apply(recovery['reviewed_boundary'],pristine,out)
+            require(derived['transcript_index']==bundle['transcript_index'],'Reviewed index differs')
+            require(review['session']['id'] not in {v['receipt']['session']['id'] for v in results.values()},'Boundary reviewer reused preparer session')
+            results[role]['content']=out
         if role=='retrieval':out,_=pipe.grounding.normalize_courtesy(out,bundle,catalog)
         pipe.validate(role,out,bundle,catalog)
     require(len({v['receipt']['session']['id'] for v in results.values()})==2,'Distinct preparer sessions required')
