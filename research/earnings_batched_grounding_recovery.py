@@ -28,7 +28,7 @@ print(json.dumps({'verified':True}))
 
 def original(seed):
     seed=Path(seed);old=r.read(seed/'protocol.json')
-    require(old.get('batch_review')=='batched-report-review-v1' and old.get('qa_grounding')=='source-bound-qa-membership-v2', 'Original v2 batch required')
+    require(old.get('batch_review')=='batched-report-review-v1' and old.get('qa_grounding') in {'source-bound-qa-membership-v2','source-bound-qa-membership-v3'}, 'Original supported grounding batch required')
     require(old.get('max_correction_rounds')==2 and not any('recovery' in k for k in old), 'Original untouched budget required')
     require(not (seed/'batch-review').exists() and not (seed/'result.json').exists(), 'Reviewed work cannot restart')
     require({p.name for p in (seed/'batch-jobs').iterdir()}=={'financial','retrieval'}, 'Exactly two completed preparers required; no later launch allowed')
