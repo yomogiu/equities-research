@@ -73,8 +73,24 @@ def apply(pack, review, plan):
     return candidate
 
 
+def invalid_preflight(seed):
+    claim=seed.parent/('.signal-field-repair-'+runner.sha(seed/'protocol.json')+'.json')
+    if not claim.exists():return None
+    value=runner.read(claim);prior=Path(value['output']).resolve()
+    require(value['source_protocol_sha256']==runner.sha(seed/'protocol.json'),'Prior seed differs')
+    if (prior/'jobs').exists():return None
+    pp=runner.read(prior/'protocol.json')
+    if pp.get('version')!=VERSION:return None
+    bundle,catalog=remediation._source_bundle(pp['source_protocol'])
+    try:signals.validate(runner.read(prior/'signals.json'),runner.read(prior/'state.json'),bundle,catalog)
+    except ValueError:
+        return claim,prior
+    return None
+
+
 def claim_path(seed):
-    return seed.parent/('.signal-field-repair-'+runner.sha(seed/'protocol.json')+'.json')
+    original=seed.parent/('.signal-field-repair-'+runner.sha(seed/'protocol.json')+'.json')
+    return original.with_suffix('.preflight.json') if invalid_preflight(seed) else original
 
 
 def expected(seed, output, plan, authorization, code):
@@ -90,6 +106,11 @@ def expected(seed, output, plan, authorization, code):
     require(uncertainty is None or (isinstance(uncertainty,dict) and set(uncertainty)=={'session_id','total_tokens','status'} and isinstance(uncertainty['session_id'],str) and bool(uncertainty['session_id']) and uncertainty['total_tokens'] is None and uncertainty['status']=='unknown_interrupted_request'), 'Invalid source usage uncertainty')
     pack=apply(e['pack'],e['review'],plan)
     bound={**old['source_bindings'],**{str(seed/k):v for k,v in imports.inventory(seed).items()}}
+    prior=invalid_preflight(seed)
+    if prior:
+        claim,folder=prior
+        bound[str(claim)]=runner.sha(claim)
+        bound.update({str(folder/k):v for k,v in imports.inventory(folder).items()})
     sessions=set(old.get('excluded_session_ids',[]))
     for name in bound:
         if Path(name).name=='execution.json':
@@ -110,6 +131,8 @@ def initialize(seed, output, plan, authorization):
             and not output.is_relative_to(Path(__file__).resolve().parents[1]),'New private sibling edition required')
     code=[{'path':str(f),'sha256':runner.sha(f)} for f in sorted(Path(__file__).parent.glob('earnings_*')) if f.suffix in ('.py','.mjs')]
     p,e,pack=expected(seed,output,plan,authorization,code)
+    bundle,catalog=remediation._source_bundle(p['source_protocol'])
+    signals.validate(pack,e['state'],bundle,catalog)
     claim={'version':VERSION,'output':str(output),'source_protocol_sha256':runner.sha(seed/'protocol.json')}
     path=claim_path(seed)
     if path.exists():require(runner.read(path)==claim,'A label-repair successor is already reserved')
