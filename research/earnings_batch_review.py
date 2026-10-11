@@ -119,6 +119,11 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
     context=set(pending)
     context.update(d for k in pending for d in items[k]['depends_on'] if d.startswith('analysis:'))
     wanted=set()
+    for finding in findings.values():
+        if '\nSOURCE PASSAGE IDS\n' in finding:
+            ids=json.loads(finding.split('\nSOURCE PASSAGE IDS\n',1)[1].splitlines()[0])
+            require(isinstance(ids,list) and all(pid in {p['passage_id'] for p in catalog['passages']} for pid in ids),'Finding source IDs changed')
+            wanted.update(ids)
     for key in context:
         wanted |= references(items[key]['value'])
         wanted |= references(before[key]['value'])
@@ -205,7 +210,7 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
             require(isinstance(repairs,list),'Editorial repairs must be a list')
             kind=d['review_kind'];require(kind in ('none','editorial','factual','mixed'),'Unknown review kind')
             require((d.get('verdict')=='pass') == (kind=='none'),'Pass requires no unresolved findings')
-            require(bool(repairs)==(kind in ('editorial','mixed')),'Editorial findings require concrete repairs')
+            require(kind not in ('editorial','mixed') or bool(repairs),'Editorial findings require concrete repairs')
             require(d.get('verdict')!='pass' or not repairs,'Cannot pass unresolved editorial defects')
             for repair in repairs:
                 require(isinstance(repair,dict) and set(repair)=={'field_path','before','after','reason'},'Exact editorial repair fields required')
@@ -217,8 +222,9 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
                     require((isinstance(value,dict) and isinstance(part,str) and part in value) or
                             (isinstance(value,list) and type(part) is int and 0<=part<len(value)), 'Unknown editorial field path')
                     value=value[part]
-                require(isinstance(value,str) and isinstance(repair['before'],str) and repair['before']
-                        and value.count(repair['before'])==1,'Editorial repair must locate exact unique text')
+                require(isinstance(value,str) and isinstance(repair['before'],str) and
+                        ((repair['before'] and value.count(repair['before'])==1) or value==repair['before']==''),
+                        'Editorial repair must locate exact unique text or an exact empty field')
                 require(isinstance(repair['after'],str) and repair['after']!=repair['before']
                         and isinstance(repair['reason'],str) and repair['reason'].strip(),'Concrete cut or rewrite and reason required')
         require(isinstance(d['reason'],str) and d['reason'].strip(),'Specific decision reason required')
@@ -229,6 +235,7 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
         if d['verdict']=='pass':out[key]={'unit_sha256':runner.digest(items[key]),'review_receipt_sha256':receipt}
         else:
             out.pop(key,None);findings[key]=d['reason']
+            if policy==EDITORIAL_VERSION:findings[key]+='\nSOURCE PASSAGE IDS\n'+json.dumps(d['passage_ids'])
             if policy==EDITORIAL_VERSION and d['editorial_repairs']:
                 findings[key]+='\nEDITORIAL REPAIRS\n'+json.dumps(d['editorial_repairs'],ensure_ascii=False,sort_keys=True)
         if d['verdict']=='pass' and policy in MECHANICAL_POLICIES:
@@ -240,6 +247,7 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
         if policy==EDITORIAL_VERSION:
             require(not d['editorial_repairs'],'Editorial edits must target pending units, not unchanged accepted work')
         seen.add(key);out.pop(key,None);findings[key]=d['reason']
+        if policy==EDITORIAL_VERSION:findings[key]+='\nSOURCE PASSAGE IDS\n'+json.dumps(d['passage_ids'])
     invalid=affected(items,set(findings))
     for key in invalid:
         out.pop(key,None);findings.setdefault(key,'Dependency remains unresolved')
