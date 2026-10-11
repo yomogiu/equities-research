@@ -150,7 +150,7 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
         signals._render_content(target,state,pack,bundle,catalog,status='draft')
         rendered=remediation.repair.rendered_review_view(target.read_text())
     data={'round':round_no,'batch_sha256':runner.digest(items),'pending':sorted(pending),
-          'changes':{k:{'before':before[k]['value'],'after':items[k]['value']} for k in pending if before[k]!=items[k]},
+          'changes':{k:{'before':before[k]['value'],'after':items[k]['value']} for k in sorted(pending) if before[k]!=items[k]},
           'review_units':{k:items[k] for k in sorted(pending)},
           'dependency_context':{k:items[k] for k in sorted(context-set(pending))},
           'accepted_unchanged':{k:accepted[k] for k in sorted(accepted) if k not in pending},
