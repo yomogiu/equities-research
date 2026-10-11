@@ -11,6 +11,17 @@ from research import earnings_batch_review as b
 class BatchTests(PassageFixture, unittest.TestCase):
     state = fixtures.SignalTests.state
     pack = fixtures.SignalTests.pack
+    def test_changed_unit_prompt_order_is_canonical(self):
+        before=self.items();items=copy.deepcopy(before)
+        items['signal-1']['value']['label']='Fictional repaired signal'
+        items['analysis:opening']['value']['opening']='Fictional repaired opening'
+        a=b.prompt(before,items,['signal-1','analysis:opening'],{}, {},self.catalog,'Fictional writing',1,self.bundle)
+        z=b.prompt(before,items,['analysis:opening','signal-1'],{}, {},self.catalog,'Fictional writing',1,self.bundle)
+        self.assertEqual(a,z)
+        a=b.prompt(before,items,['signal-1','analysis:opening'],{}, {'signal-1':'Fix signal','analysis:opening':'Fix opening'},self.catalog,'Fictional writing',1,self.bundle)
+        z=b.prompt(before,items,['analysis:opening','signal-1'],{}, {'analysis:opening':'Fix opening','signal-1':'Fix signal'},self.catalog,'Fictional writing',1,self.bundle)
+        self.assertEqual(a,z)
+
     def items(self):
         state=self.state()
         return b.units(state,self.pack(state))

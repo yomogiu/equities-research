@@ -150,7 +150,7 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
         signals._render_content(target,state,pack,bundle,catalog,status='draft')
         rendered=remediation.repair.rendered_review_view(target.read_text())
     data={'round':round_no,'batch_sha256':runner.digest(items),'pending':sorted(pending),
-          'changes':{k:{'before':before[k]['value'],'after':items[k]['value']} for k in pending if before[k]!=items[k]},
+          'changes':{k:{'before':before[k]['value'],'after':items[k]['value']} for k in sorted(pending) if before[k]!=items[k]},
           'review_units':{k:items[k] for k in sorted(pending)},
           'dependency_context':{k:items[k] for k in sorted(context-set(pending))},
           'accepted_unchanged':{k:accepted[k] for k in sorted(accepted) if k not in pending},
@@ -172,7 +172,7 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
         require(context_policy==context.VERSION,'Unknown review context policy')
         data=context.build(data,bundle,wanted)
         instructions+=' The declared context policy supplies every financial observation and full call text, complete cited filing scopes and explicitly selected filing context chunks. Deferred chunks/previews do not establish support. Inspect all supplied dates, dimensions, values and original evidence. Return a source-specific revise finding if additional material source context is necessary. Decode the lossless transport before interpreting any references; the complete report is directly readable.'
-    return instructions+'\nWRITING STANDARD\n'+writing+'\nBATCH\n'+json.dumps(data,ensure_ascii=False,separators=(',',':'))
+    return instructions+'\nWRITING STANDARD\n'+writing+'\nBATCH\n'+json.dumps(data,ensure_ascii=False,sort_keys=True,separators=(',',':'))
 
 
 def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
