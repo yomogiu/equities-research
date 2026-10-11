@@ -19,6 +19,9 @@ class FlowTests(PassageFixture,unittest.TestCase):
     def test_one_combined_correction_preserves_report_acceptance(self):
         self.exercise(True)
 
+    def test_two_correction_rounds_advance_without_manual_intervention(self):
+        self.exercise(2,mechanical=True)
+
     def test_mechanical_policy_compiles_before_signal_author_and_retains_acceptance(self):
         self.exercise(True,mechanical=True)
 
@@ -35,12 +38,12 @@ class FlowTests(PassageFixture,unittest.TestCase):
             job=Path(job);job.mkdir(parents=True);calls.append(str(job))
             if 'role' in bindings:out=outputs[bindings['role']]
             elif job.name.startswith('correction-'):
-                prior=batch.replay(root/'batch-review');items=prior['items'];value=dict(items['signal-1']['value']);value['label']='Fictional corrected label'
+                prior=batch.replay(root/'batch-review');items=prior['items'];value=dict(items['signal-1']['value']);value['label']='Fictional corrected label '+str(prior['round'])
                 out={'before_sha256':batch.runner.digest(items),'changes':[{'unit_id':'signal-1','before_sha256':batch.runner.digest(items['signal-1']['value']),'value':value,'reason':'Fix fictional label'}]}
             else:
                 data=json.loads(text.split('\nBATCH\n')[1])
                 out={'batch_sha256':data['batch_sha256'],'decisions':[
-                    {'unit_id':k,'verdict':'revise' if correction and data['round']==0 and k=='signal-1' else 'pass','reason':'Fictional original-source check','passage_ids':[] if mechanical and not (correction and data['round']==0 and k=='signal-1') else self.ids[:1]} for k in data['pending']],'reopen':[]}
+                    {'unit_id':k,'verdict':'revise' if correction and data['round']<int(correction) and k=='signal-1' else 'pass','reason':'Fictional original-source check','passage_ids':[] if mechanical and not (correction and data['round']<int(correction) and k=='signal-1') else self.ids[:1]} for k in data['pending']],'reopen':[]}
             (job/'prompt.txt').write_text(text)
             batch.runner.save(job/'request.json',{'model':model,'effort':effort,'bindings':bindings})
             batch.runner.save(job/'output.json',out)
@@ -51,14 +54,17 @@ class FlowTests(PassageFixture,unittest.TestCase):
                 before=len(calls);result=dispatch.advance(root)
                 self.assertLessEqual(len(calls)-before,1)
                 if result['status']=='accepted':break
+                # Match the real host controller: no further advance after a
+                # terminal result. A correction request must keep it active.
+                self.assertEqual(result['status'],'pending',result)
             self.assertEqual(result['status'],'accepted')
-            self.assertEqual(len(calls),7 if correction else 5)
-            self.assertEqual(result['detail']['tokens'],119 if correction else 85)
+            self.assertEqual(len(calls),5+2*int(correction))
+            self.assertEqual(result['detail']['tokens'],17*(5+2*int(correction)))
             if correction:
                 accepted=batch.replay(root/'batch-review')['accepted']
                 self.assertEqual(accepted['analysis:0']['review_receipt_sha256'],batch.runner.sha(root/'batch-review/batches/0/review/output.json'))
             self.assertEqual(dispatch.advance(root,False)['report_sha256'],result['report_sha256'])
-            self.assertEqual(len(calls),7 if correction else 5)
+            self.assertEqual(len(calls),5+2*int(correction))
             self.assertFalse((root/'jobs/review-r0').exists())
             expected={'financial':('gpt-6-luna','max'),'retrieval':('gpt-6-luna','max'),
                       'analysis':('gpt-6-luna','max'),'signal_author':('gpt-6.1-sol','low')}

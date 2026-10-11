@@ -234,7 +234,7 @@ def load(root):
 
 
 def bind_review_response(content, verified_bindings):
-    """Use only after replay verifies the exact request, prompt and session."""
+    """Derive transport identity only after exact request/prompt verification."""
     require(isinstance(content,dict) and set(content)=={'batch_sha256','decisions','reopen'},'Malformed review response')
     require(isinstance(content['batch_sha256'],str),'Malformed echoed batch identifier')
     derived=copy.deepcopy(content)

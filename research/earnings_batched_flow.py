@@ -28,9 +28,18 @@ def job(root, name, text, model, bindings, execute, sessions):
         sessions.add(sid)
         return result
     if target.exists() and any(target.iterdir()):
-        return {'pending_status':'execution_uncertain'}
+        if (target/'request.json').exists():
+            request=runner.read(target/'request.json')
+            batch.require(request['bindings']==bindings and (request['model'],request['effort'])==tuple(model)
+                          and (target/'prompt.txt').read_text()==text,'Incomplete batch worker request changed')
+        from .earnings_execution_state import classify
+        diagnostic = classify(target)
+        return {'pending_status':diagnostic['status'], 'execution':diagnostic}
     if execute:
-        runner.run_role(target,text,*model,bindings,timeout=1200)
+        try:
+            runner.run_role(target,text,*model,bindings,timeout=1200)
+        except runner.RoleExecutionError as error:
+            return {'pending_status':error.diagnostic['status'], 'execution':error.diagnostic}
     return {'pending_status':'pending'}
 
 
@@ -99,7 +108,8 @@ def _advance(root,execute):
             sessions.add(sid)
         else:
             result=job(root,role,text,model,bindings,execute,sessions)
-        if 'pending_status' in result:return {'status':result['pending_status'],'stage':role}
+        if 'pending_status' in result:return {'status':result['pending_status'],'stage':role,
+            **({'execution':result['execution']} if 'execution' in result else {})}
         tokens+=result['receipt']['session']['usage']['totalTokens']
         out=result['content']
         if role=='retrieval' and protocol.get('qa_grounding') in pipe.grounding.HEADER_VERSIONS:
@@ -139,13 +149,19 @@ def _advance(root,execute):
         # Existing proposal may have been accounted above; job checks its session separately.
         author_sessions=set(protocol.get('excluded_session_ids',[]))
         proposal=job(root,'correction-'+str(n),text,batch.MODEL,bindings,execute,author_sessions)
-        if 'pending_status' in proposal:return {'status':proposal['pending_status'],'stage':'batch_correction'}
+        if 'pending_status' in proposal:return {'status':proposal['pending_status'],'stage':'batch_correction',
+            **({'execution':proposal['execution']} if 'execution' in proposal else {})}
         if not execute:return {'status':'pending','stage':'batch_apply'}
         batch.submit(edition,proposal['content'])
         return {'status':'pending','stage':'batch_review'}
     result=batch.advance(edition,execute) if execute else batch.summary(result)
     result['tokens']+=tokens
-    return {'status':result['status'],'stage':'batch_review','detail':result,
+    # A completed review requesting revisions is normal forward progress. The
+    # host worker continues only on pending; exposing the internal replay state
+    # here used to stop every company needing its first correction.
+    status = 'pending' if result['status']=='awaiting_batch' else result['status']
+    stage = 'batch_correction' if result['status']=='awaiting_batch' else 'batch_review'
+    return {'status':status,'stage':stage,'detail':result,
             **({'report':str(edition/'report.html'),'report_sha256':runner.sha(edition/'report.html')} if result['status']=='accepted' else {})}
 
 
@@ -153,4 +169,12 @@ def advance(output,execute=True):
     root=Path(output).resolve()
     with (root/'.batch-flow.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        return _advance(root,execute)
+        try:
+            return _advance(root,execute)
+        except runner.RoleExecutionError as error:
+            return {'status':error.diagnostic['status'], 'stage':'batch_review',
+                    'execution':error.diagnostic}
+        except ValueError as error:
+            # Schema/source/application checks are deterministic holds. They do
+            # not establish an unknown provider launch or authorize a retry.
+            return {'status':'validation_blocked', 'reason':str(error)}
