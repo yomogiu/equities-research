@@ -172,7 +172,7 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
         require(context_policy==context.VERSION,'Unknown review context policy')
         data=context.build(data,bundle,wanted)
         instructions+=' The declared context policy supplies every financial observation and full call text, complete cited filing scopes and explicitly selected filing context chunks. Deferred chunks/previews do not establish support. Inspect all supplied dates, dimensions, values and original evidence. Return a source-specific revise finding if additional material source context is necessary. Decode the lossless transport before interpreting any references; the complete report is directly readable.'
-    return instructions+'\nWRITING STANDARD\n'+writing+'\nBATCH\n'+json.dumps(data,ensure_ascii=False,separators=(',',':'))
+    return instructions+'\nWRITING STANDARD\n'+writing+'\nBATCH\n'+json.dumps(data,ensure_ascii=False,sort_keys=True,separators=(',',':'))
 
 
 def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):

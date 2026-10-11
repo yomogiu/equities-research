@@ -18,6 +18,9 @@ class BatchTests(PassageFixture, unittest.TestCase):
         a=b.prompt(before,items,['signal-1','analysis:opening'],{}, {},self.catalog,'Fictional writing',1,self.bundle)
         z=b.prompt(before,items,['analysis:opening','signal-1'],{}, {},self.catalog,'Fictional writing',1,self.bundle)
         self.assertEqual(a,z)
+        a=b.prompt(before,items,['signal-1','analysis:opening'],{}, {'signal-1':'Fix signal','analysis:opening':'Fix opening'},self.catalog,'Fictional writing',1,self.bundle)
+        z=b.prompt(before,items,['analysis:opening','signal-1'],{}, {'analysis:opening':'Fix opening','signal-1':'Fix signal'},self.catalog,'Fictional writing',1,self.bundle)
+        self.assertEqual(a,z)
 
     def items(self):
         state=self.state()
