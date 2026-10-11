@@ -254,7 +254,7 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
     return out,findings
 
 
-def initialize(source_protocol,state,pack,output,authorization):
+def initialize(source_protocol,state,pack,output,authorization, *, presentation_derivation=None):
     root=Path(output).resolve();require(not root.exists() and not root.is_relative_to(Path(__file__).resolve().parents[1]),'New private output directory required')
     require(isinstance(authorization,str) and authorization.strip(),'Explicit batch authorization required')
     bundle,catalog=remediation._source_bundle(source_protocol)
@@ -277,6 +277,7 @@ def initialize(source_protocol,state,pack,output,authorization):
         from . import earnings_batch_context as context
         require(source_protocol['review_context']==context.VERSION,'Unknown review context policy')
         p['review_context']=context.VERSION
+    if presentation_derivation is not None:p['presentation_derivation']=presentation_derivation
     root.mkdir(parents=True);runner.save(root/'protocol.json',p);runner.save(root/'initial.json',items)
     return {'status':'pending','round':0,'accepted_units':0}
 
@@ -317,6 +318,8 @@ def replay(root, *, stop_before=None):
             for key in pending:accepted.pop(key,None)
         else:pending=set(items)
         text=prompt(before,items,pending,accepted,findings,c,w,n,b,p.get('version',VERSION),p.get('review_context'));job=folder/'review'
+        if n and p.get('presentation_derivation'):
+            text+='\nDETERMINISTIC PRESENTATION DERIVATION\n'+json.dumps(p['presentation_derivation'],sort_keys=True)+'\nInspect the actual revised report and adjudicate all retained factual and editorial findings. This derivation does not establish acceptance.'
         bindings={'protocol_sha256':runner.sha(root/'protocol.json'),'batch_sha256':runner.digest(items),'round':n}
         if not (job/'output.json').exists():
             return {'status':'execution_uncertain' if job.exists() and any(job.iterdir()) else 'pending',
