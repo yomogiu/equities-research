@@ -90,8 +90,12 @@ def validate_table_labels(labels, financial, bundle):
 
 
 def validate_format(spec, financial, bundle):
-    if not isinstance(spec, dict) or not {'rows', 'basis'} <= set(spec) or set(spec) - {'rows', 'basis', 'layout', 'tables', 'source_rows'} or not isinstance(spec['rows'], dict):
+    if not isinstance(spec, dict) or not {'rows', 'basis'} <= set(spec) or set(spec) - {'rows', 'basis', 'layout', 'tables', 'source_rows', 'signal_note', 'signal_anchors'} or not isinstance(spec['rows'], dict):
         raise ValueError('Formatting requires rows, basis and optional declarative layout')
+    if 'signal_note' in spec and (not isinstance(spec['signal_note'],str) or not spec['signal_note'].strip() or len(spec['signal_note'])>240):
+        raise ValueError('Bounded plain-text signal note required')
+    if 'signal_anchors' in spec and (not isinstance(spec['signal_anchors'],dict) or any(k not in ('signal-1','signal-2','signal-3','signal-4') or not isinstance(v,str) or not v.strip() or len(v)>240 for k,v in spec['signal_anchors'].items())):
+        raise ValueError('Exact bounded signal anchors required')
     supplemental.build(spec.get('source_rows', []), bundle)
     allowed = legacy.ids_for(bundle); rows = row_catalog(financial, bundle)
     for key, item in spec['rows'].items():

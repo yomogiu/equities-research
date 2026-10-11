@@ -274,6 +274,12 @@ def _source_bundle(source_protocol):
     """Replay original reviewed attribution before validating/reporting a derivative."""
     bundle = evidence.load_bundle(source_protocol['evidence_manifest'])
     catalog = passages.catalog(bundle['manifest'])
+    recovery = source_protocol.get('grounding_recovery', {})
+    if recovery.get('reviewed_boundary'):
+        from .earnings_reviewed_grounding import apply
+        from .earnings_role_import import authenticate
+        bundle, _, _ = apply(recovery['reviewed_boundary'], bundle,
+                             authenticate(recovery['responses']['retrieval'])['content'])
     corrections.qa_grounding.attach(None, source_protocol, bundle, catalog)
     if source_protocol.get('prepared_recovery'):
         from research import earnings_prepared_recovery

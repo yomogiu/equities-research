@@ -61,6 +61,29 @@ def _advance(root,execute):
     policy=protocol['batch_review']
     writing=Path(protocol['writing_standard']).read_text()
     artifacts={};sessions=set();tokens=0
+    inherited={}
+    if protocol.get('grounding_recovery'):
+        from .earnings_batched_grounding_recovery import validate
+        inherited=validate(protocol,bundle,catalog)
+        if protocol['grounding_recovery'].get('batch_attribution_review'):
+            from .earnings_role_import import authenticate
+            attribution=authenticate(protocol['grounding_recovery']['batch_attribution_review']['review'])
+            sessions.add(attribution['session']['id']);tokens+=attribution['session']['usage']['totalTokens']
+        if protocol['grounding_recovery'].get('operator_review'):
+            from .earnings_role_import import authenticate
+            operator=authenticate(protocol['grounding_recovery']['operator_review']['review'])
+            sessions.add(operator['session']['id'])
+            tokens+=operator['session']['usage']['totalTokens']
+        if protocol['grounding_recovery'].get('selection_repair'):
+            from .earnings_role_import import authenticate
+            selection=authenticate(protocol['grounding_recovery']['selection_repair']['review'])
+            sessions.add(selection['session']['id'])
+            tokens+=selection['session']['usage']['totalTokens']
+        if protocol['grounding_recovery'].get('reviewed_boundary'):
+            from .earnings_role_import import authenticate
+            boundary=authenticate(protocol['grounding_recovery']['reviewed_boundary']['review'])
+            sessions.add(boundary['session']['id'])
+            tokens+=boundary['session']['usage']['totalTokens']
     for role in ('financial','retrieval','analysis','signal_author'):
         if role=='signal_author':
             state={'artifacts':copy.deepcopy(artifacts),'format':{'rows':{},'basis':{'text':'','citations':[]}}}
@@ -78,7 +101,13 @@ def _advance(root,execute):
             text=pipe.prompt(role,bundle,writing,artifacts,[],catalog)
             model=pipe.MODELS[role]
         bindings={'protocol_sha256':runner.sha(root/'protocol.json'),'role':role,'dependencies_sha256':runner.digest(artifacts)}
-        result=job(root,role,text,model,bindings,execute,sessions)
+        if role in inherited:
+            result=inherited[role]
+            sid=result['receipt']['session']['id']
+            batch.require(sid not in sessions,'Independent role session required')
+            sessions.add(sid)
+        else:
+            result=job(root,role,text,model,bindings,execute,sessions)
         if 'pending_status' in result:return {'status':result['pending_status'],'stage':role,
             **({'execution':result['execution']} if 'execution' in result else {})}
         tokens+=result['receipt']['session']['usage']['totalTokens']

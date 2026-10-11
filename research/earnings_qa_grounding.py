@@ -14,7 +14,9 @@ from research import earnings_experiment as base
 VERSION = 'source-bound-qa-membership-v1'
 HEADER_VERSION = 'source-bound-qa-membership-v2'
 NAMED_GREETING_VERSION = 'source-bound-qa-membership-v3'
-HEADER_VERSIONS = {HEADER_VERSION, NAMED_GREETING_VERSION}
+COURTESY_ROUTING_VERSION = 'source-bound-qa-membership-v4'
+NAMED_THANKS_VERSION = 'source-bound-qa-membership-v5'
+HEADER_VERSIONS = {HEADER_VERSION, NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION}
 SUPPORTED_VERSIONS = {VERSION, *HEADER_VERSIONS}
 NOTICE = ('Membership validation checks source offsets and indexed speaker roles, not '
           'whether a question was understood, answered, relevant or summarized correctly. '
@@ -29,13 +31,14 @@ GREETING = re.compile(r'(?:(?:hi|hello|hey|thanks|thank you|good (?:morning|afte
                       r'[\s,.!?;:]*)+', re.I)
 
 
-def _header_body(turn, rows):
+def _header_body(turn, rows, version=HEADER_VERSION):
     """Strip an exact speaker header and known-role title, never infer a role."""
     raw = ''.join(p['text'] for p in rows).strip()
     body = re.sub(r'^' + re.escape(turn['speaker']) + r'\s*[:\n]\s*', '', raw).strip()
     lines = body.splitlines()
     patterns = {'analyst': r'Analyst, [^\n]+',
                 'management': r'(?:President and CEO|EVP and CFO|VP of Investor Relations|SVP of Global Sales), [^\n]+'}
+    if version == NAMED_THANKS_VERSION:patterns['analyst']=r'(?:Analyst|Managing Director), [^\n]+'
     pattern = patterns.get(turn['role'])
     if (raw.splitlines()[0] == turn['speaker'] and len(lines) >= 2
             and pattern and re.fullmatch(pattern, lines[0])):
@@ -49,11 +52,12 @@ def _body(turn, rows):
 
 
 def _greeting(turn, rows, version=VERSION, peers=()):
-    body = _header_body(turn, rows) if version in HEADER_VERSIONS else _body(turn, rows)
+    body = _header_body(turn, rows, version) if version in HEADER_VERSIONS else _body(turn, rows)
     # This deliberately recognizes only complete, simple courtesy turns. Other
     # short statements remain evidence; a greeting followed by a question is not
     # discarded. The source text itself is never removed or rewritten.
-    if version == NAMED_GREETING_VERSION and turn['role'] in {'analyst', 'management'}:
+    if version == NAMED_THANKS_VERSION and _complete(turn,rows) and body == 'Great.':return True
+    if version in {NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and turn['role'] in {'analyst', 'management'}:
         # Only another named participant in this exchange can be addressed.
         # Require complete contiguous source coverage before excluding a turn.
         cursor = turn['start']
@@ -68,19 +72,33 @@ def _greeting(turn, rows, version=VERSION, peers=()):
                     or len(name.split()) < 2):
                 continue
             for address in (name, name.split()[0]):
+                if version == NAMED_THANKS_VERSION and re.fullmatch(r'(?:Makes sense\. )?Thanks,?\s+'+re.escape(address)+r'[.!]?',body,re.I):
+                    return True
                 if re.fullmatch(r'(?:Hi|Hello|Hey|Good morning|Good afternoon|Good evening),?\s+'
                                 + re.escape(address) + r'[.!]?', body, re.I):
                     return True
+    if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and _complete(turn,rows) and body in {'Thank you. Thanks for the questions.', 'Got it. That makes a lot of sense. Thank you.', 'Perfect. Thank you.'}:
+        return True
     return bool(body and (GREETING.fullmatch(body) or version in HEADER_VERSIONS and re.fullmatch(
         r'(?:Great|Okay|Got it|I appreciate that)\. (?:Thank you\.|That[’\']s helpful\. Thank you\.)', body)))
 
 
-def _routing(turn, rows, targets):
+def _complete(turn, rows):
+    cursor=turn['start']
+    for row in rows:
+        if row['start']!=cursor or len(row['text'])!=row['end']-row['start']:return False
+        cursor=row['end']
+    return bool(rows) and cursor==turn['end']
+
+
+def _routing(turn, rows, targets, version=HEADER_VERSION):
     if _function(turn) != 'moderator' or turn['role'] != 'operator':
         return False
-    body = _header_body(turn, rows)
+    body = _header_body(turn, rows, version)
     normalize = lambda text: re.sub(r'\s+', '', text)
     for name, firm in targets:
+        if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and _complete(turn,rows) and normalize(body)==normalize(f'The next question comes from {name} with {firm}. Please go ahead.'):
+            return True
         for prefix in ('', 'Thank you for your question. '):
             for ordinal in ('next', 'final'):
                 for opened in ('open', 'now open'):
@@ -165,7 +183,7 @@ def build(bundle, catalog, version=VERSION):
                           passage_offsets=[{k: p[k] for k in ('passage_id', 'start', 'end', 'span_sha256')} for p in rows if p['text'].strip()],
                           courtesy_only=greeting)
             if version in HEADER_VERSIONS:
-                record['routing_only'] = _routing(turn, rows, targets)
+                record['routing_only'] = _routing(turn, rows, targets, version)
             records.append(record)
             if len(membership[tid]) != 1:
                 flags.append('shared_turn_membership')
@@ -247,8 +265,11 @@ def validate_retrieval(out, bundle, catalog):
                 if pid not in pids or pid not in allowed or not pids[pid]['text'].strip():
                     raise ValueError('Q&A supporting passage is outside the indexed ' + field + ': ' + eid)
         status = row['grounding_status']
-        if status not in ('bound', 'unresolved', 'courtesy_only') or not isinstance(row['grounding_notes'], str) or not row['grounding_notes'].strip():
+        if status not in ('bound', 'unresolved', 'courtesy_only', 'reviewed_non_qa') or not isinstance(row['grounding_notes'], str) or not row['grounding_notes'].strip():
             raise ValueError('Q&A grounding needs explicit status and review notes: ' + eid)
+        if status == 'reviewed_non_qa':
+            if e['mechanical_disposition']!='reviewed_non_qa' or not e.get('reviewed_turn_dispositions') or any(row[k] for k in FIELDS[:3]):
+                raise ValueError('Non-Q&A disposition requires authenticated complete-turn review: '+eid)
         if status == 'courtesy_only':
             if e['mechanical_disposition'] != 'courtesy_only' or any(row[k] for k in FIELDS[:3]):
                 raise ValueError('Courtesy disposition requires only exact courtesy turns and no analytical support: ' + eid)
@@ -285,6 +306,8 @@ def prompt_contract(role, bundle):
                  'a management answer from a coverage paraphrase alone. Provisional roles and '
                  'followup links require semantic verification. Independently compare selected '
                  'question/answer passages with the full turns before using their claims.\n')
+    if bundle.get('batch_attribution_review_binding'):
+        text += 'Authenticated reviewed_non_qa rows are not substantive Q&A. All original turns remain evidence: management_closing may contain business assertions and must be considered independently of an analyst acknowledgment. Do not classify closing content as courtesy or attribute it as an answer.\n'
     return text + json.dumps(index, ensure_ascii=False, sort_keys=True)
 
 
@@ -300,6 +323,16 @@ def attach(root, protocol, bundle, catalog):
     if base.sha(path) != protocol['qa_grounding_sha256']:
         raise ValueError('Q&A grounding sidecar changed')
     computed = build(bundle, catalog, version=protocol['qa_grounding'])
+    binding=protocol.get('grounding_recovery',{}).get('operator_review')
+    if binding:
+        from .earnings_reviewed_operator import apply
+        computed,_=apply(binding,computed,bundle,catalog)
+        bundle['operator_review_binding']=binding
+    batch_binding=protocol.get('grounding_recovery',{}).get('batch_attribution_review')
+    if batch_binding:
+        from .earnings_reviewed_attribution_batch import apply
+        computed,_=apply(batch_binding,computed,bundle,catalog)
+        bundle['batch_attribution_review_binding']=batch_binding
     if computed != base.read(path):
         raise ValueError('Q&A grounding differs from original indexed sources')
     bundle['qa_grounding'] = computed
@@ -315,7 +348,7 @@ def require_analysis_ready(out, bundle, catalog):
             raise ValueError('Substantive unassigned Q&A turns require source-index repair before analysis: '
                              + ', '.join(unassigned))
         unresolved = [row['exchange_id'] for row in out['exchange_coverage']
-                      if row['grounding_status'] not in ('bound', 'courtesy_only')]
+                      if row['grounding_status'] not in ('bound', 'courtesy_only', 'reviewed_non_qa')]
         if unresolved:
             raise ValueError('Q&A grounding unresolved; repair source attribution before analysis: '
                              + ', '.join(unresolved))
@@ -330,7 +363,14 @@ def normalize_courtesy(out, bundle, catalog):
     grounding = bundle.get('qa_grounding', {})
     if grounding.get('version') not in HEADER_VERSIONS:
         raise ValueError('Courtesy normalization requires explicit header-aware grounding')
-    if grounding != build(bundle, catalog, version=grounding['version']):
+    replayed=build(bundle,catalog,version=grounding['version'])
+    if bundle.get('operator_review_binding'):
+        from .earnings_reviewed_operator import apply
+        replayed,_=apply(bundle['operator_review_binding'],replayed,bundle,catalog)
+    if bundle.get('batch_attribution_review_binding'):
+        from .earnings_reviewed_attribution_batch import apply
+        replayed,_=apply(bundle['batch_attribution_review_binding'],replayed,bundle,catalog)
+    if grounding != replayed:
         raise ValueError('Courtesy normalization requires replayable grounding')
     derived = copy.deepcopy(out)
     exchanges = {e['exchange_id']: e for e in grounding['exchanges']}
@@ -342,6 +382,14 @@ def normalize_courtesy(out, bundle, catalog):
         e = exchanges.get(row.get('exchange_id'))
         if e is None:
             raise ValueError('Unknown exchange in courtesy normalization')
+        if e['mechanical_disposition']=='reviewed_non_qa':
+            before=copy.deepcopy(row)
+            row.update(question_passage_ids=[],answer_passage_ids=[],continuation_exchange_ids=[],
+                       grounding_status='reviewed_non_qa',grounding_notes=e['review_reason'])
+            for key in ('question','answer','question_summary','answer_summary','consequence'):
+                if key in row:row[key]='Independently reviewed non-question dialogue. All original turns, including any business-bearing closing remarks, remain available as source evidence outside Q&A answer membership.'
+            receipt.append({'exchange_id':e['exchange_id'],'before_sha256':base.digest(before),'after_sha256':base.digest(row),'turns':copy.deepcopy(e['turns']),'reviewed_turn_dispositions':copy.deepcopy(e['reviewed_turn_dispositions'])})
+            continue
         if e['mechanical_disposition'] != 'courtesy_only':
             continue
         before = copy.deepcopy(row)
