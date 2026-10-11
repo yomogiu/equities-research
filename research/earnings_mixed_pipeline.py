@@ -18,9 +18,9 @@ from research import earnings_compact_evidence as evidence
 from research import earnings_financial_display as display
 
 VERSION = 'luna-sol-earnings-v1'
-MODELS = {'financial': ('gpt-5.6-luna', 'xhigh'),
+MODELS = {'financial': ('gpt-6-luna', 'max'),
           'retrieval': ('gpt-6-luna', 'max'),
-          'analysis': ('gpt-6.1-sol', 'medium'),
+          'analysis': ('gpt-6-luna', 'max'),
           'review': ('gpt-6.1-sol', 'medium')}
 CRITERIA = ('source_fidelity', 'question_answer_fidelity', 'financial_context',
             'technical_reasoning', 'counterevidence', 'coverage_scope',
