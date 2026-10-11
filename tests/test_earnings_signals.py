@@ -23,6 +23,23 @@ class SignalTests(PassageFixture, unittest.TestCase):
         return {'signals_sha256':base.digest(pack),'verdict':'pass','criteria':{k:{'status':'pass','evidence':'Fictional source check'} for k in s.CRITERIA},
                 'decisions':[{'id':x['id'],'approved':True,'reason':'Fictional evidence','citations':['D001'],'passage_ids':[self.ids[0]]} for x in pack['signals']]}
 
+    def test_optional_detail_cuts_preserve_mandatory_signal_fields(self):
+        state=self.state();pack=self.pack(state)
+        pack['signals'][0]['comparison']='';pack['signals'][0]['rationale']=''
+        s.validate(pack,state,self.bundle,self.catalog)
+        target=self.root/'cut.html';s._render_content(target,state,pack,self.bundle,self.catalog,status='draft')
+        self.assertNotIn('<p></p>',target.read_text())
+        state['artifacts']['analysis']['findings'][0]['text']='Fictional first finding.\n\nFictional second finding.'
+        pack['report_sha256']=s.report_digest(state)
+        # Rebind the existing positional finding after an authorized prose edit.
+        pack['signals'][0]['finding_id']=list(s.finding_catalog(state))[0]
+        target=self.root/'paragraphs.html'
+        s._render_content(target,state,pack,self.bundle,self.catalog,status='draft')
+        self.assertIn('<p>Fictional first finding.</p><p>Fictional second finding.',target.read_text())
+        for field in ('label','summary','period'):
+            bad=copy.deepcopy(pack);bad['signals'][0][field]=''
+            with self.assertRaises(ValueError):s.validate(bad,state,self.bundle,self.catalog)
+
     def test_stale_report_cannot_reuse_signals(self):
         state=self.state();p=self.pack(state);state['artifacts']['analysis']['opening']='Changed'
         with self.assertRaises(ValueError):s.validate(p,state,self.bundle,self.catalog)

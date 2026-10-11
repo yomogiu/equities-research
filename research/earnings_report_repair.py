@@ -278,7 +278,8 @@ def render(path, state, bundle, catalog):
     status = 'Accepted after independent adjudication and review' if state['status'] == 'accepted' else 'DRAFT — unresolved findings'
     parts = ['<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + e(out['title']) + '</title><style>body{max-width:1050px;margin:30px auto;padding:0 22px;background:#f5f4ef;color:#202924;font:16px/1.55 system-ui}h1{line-height:1.2}table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:8px;border-bottom:1px solid #ccd3cb}td{font-variant-numeric:tabular-nums}caption{text-align:left}a{color:#17634d}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}details{border-top:1px solid #ccd3cb;padding:8px}blockquote{border-left:3px solid #859e8c;padding-left:14px}</style><header>' + e(status) + '</header><main><h1>' + e(out['title']) + '</h1><p>' + e(out['opening']) + ' ' + refs(out['opening_citations']) + '</p>', table(deps['financial'], bundle, state['format'], refs)]
     for f in out['findings']:
-        parts.append('<h2>' + e(f['heading']) + '</h2><p>' + e(f['text']) + ' ' + refs(f['citations']) + '</p>')
+        paragraphs=f['text'].split('\n\n')
+        parts.append('<h2>' + e(f['heading']) + '</h2>'+''.join('<p>'+e(text)+(' '+refs(f['citations']) if i==len(paragraphs)-1 else '')+'</p>' for i,text in enumerate(paragraphs)))
         parts.extend('<blockquote>' + e(q['text']) + ' ' + refs([q['scope_id']]) + '</blockquote>' for q in f['quotes'])
     parts.append('<h2>Next tests</h2><ul>')
     parts.extend('<li>' + e(x['text']) + ' ' + refs(x['citations']) + '</li>' for x in out['next_tests'])
