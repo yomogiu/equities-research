@@ -60,6 +60,8 @@ def validate(pack, state, bundle, catalog):
         if s['finding_id'] not in findings or s['direction'] not in DIRECTIONS or s['evidence_basis'] not in BASES:
             raise ValueError('Unknown finding, direction or evidence basis')
         for field, limit in [('label',60),('summary',200),('comparison',240),('period',100),('rationale',240)]:
+            if field in ('comparison','rationale') and s[field]=='':
+                continue  # Optional detail may be cut; summary, period and evidence remain mandatory.
             legacy.check_text(s[field],field)
             if len(s[field])>limit: raise ValueError(f'{field} exceeds {limit} characters')
         legacy.check_ids(s['citations'],legacy.ids_for(bundle),'signal sources')
@@ -106,7 +108,7 @@ def _render_content(path, state, pack, bundle, catalog, *, status):
         return '<span class="signal-badge">'+DIRECTIONS[s['direction']]+'</span><span class="signal-basis">'+BASES[s['evidence_basis']]+'</span>'
     cards=[]
     for s in pack['signals']:
-        cards.append('<article class="signal-card signal-'+s['direction']+'">'+badge(s)+'<h3><a href="#'+s['finding_id']+'">'+e(s['label'])+'</a></h3><p>'+e(s['summary'])+'</p><details class="signal-detail"><summary>Basis &amp; evidence</summary><p>'+e(s['period'])+'</p><p>'+e(s['comparison'])+'</p><p>'+e(s['rationale'])+'</p>'+' '.join('<a href="#signal-e-'+e(i)+'">'+e(i)+'</a>' for i in s['citations'])+'</details></article>')
+        cards.append('<article class="signal-card signal-'+s['direction']+'">'+badge(s)+'<h3><a href="#'+s['finding_id']+'">'+e(s['label'])+'</a></h3><p>'+e(s['summary'])+'</p><details class="signal-detail"><summary>Basis &amp; evidence</summary><p>'+e(s['period'])+'</p>'+''.join('<p>'+e(s[field])+'</p>' for field in ('comparison','rationale') if s[field])+' '.join('<a href="#signal-e-'+e(i)+'">'+e(i)+'</a>' for i in s['citations'])+'</details></article>')
     note=state['format'].get('signal_note','Direction describes the specific development. Evidence labels identify its basis. Reported results include management-reported completed milestones.')
     strip='<section aria-label="Business signals"><div class="signal-strip">'+''.join(cards)+'</div><p class="signal-note">'+e(note)+'</p></section>'
     text=text.replace('</style>',STYLE+'</style>',1).replace('<h2>Financial context</h2>',strip+'<h2>Financial context</h2>',1)
