@@ -20,8 +20,16 @@ import uuid
 
 VERSION = 'mixed-prime-role-v1'
 PROVIDER = 'openai-codex'
-ALLOWED = {'gpt-6-luna': {'max'}, 'gpt-5.6-luna': {'xhigh', 'max'}, 'gpt-6.1-sol': {'medium'}}
+ALLOWED = {'gpt-6-luna': {'max'}, 'gpt-5.6-luna': {'xhigh', 'max'}, 'gpt-6.1-sol': {'low', 'medium'}}
 HELPER = Path(__file__).with_name('earnings_mixed_prime.mjs')
+
+
+class RoleExecutionError(RuntimeError):
+    """Preserve failure classification through the host worker boundary."""
+    def __init__(self, job):
+        from .earnings_execution_state import classify
+        self.diagnostic = classify(job)
+        super().__init__('Prime role failed or timed out (' + self.diagnostic['status'] + '); duplicate launch blocked')
 
 
 def digest(value):
@@ -300,7 +308,7 @@ def run_role(job_path, prompt, model, effort, bindings, timeout=900):
                  'exit_code': code, 'status': status}
     if code != 0 or status == 'timeout':
         save(job / 'execution.json', execution)
-        raise RuntimeError('Prime role failed or timed out; duplicate launch blocked')
+        raise RoleExecutionError(job)
     try:
         execution['session'] = session_receipt(job, request)
         execution['token_accounting'] = usage_comparison(estimate, execution['session']['usage'])
