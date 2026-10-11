@@ -39,6 +39,41 @@ class GroundingTests(PassageFixture, unittest.TestCase):
         self.assertIn('not whether', expected['notice'])
         self.assertEqual(expected['annotation_status'], 'provisional')
 
+    def test_exact_short_operator_routing_version(self):
+        body = 'Operator\nYour next question comes from the line of Fictional Analyst from Fictional Firm. Please go ahead.'
+        turn = {'role':'operator','speaker':'Operator','start':0,'end':len(body)}
+        rows = [{'start':0,'end':len(body),'text':body}]
+        targets = [('Fictional Analyst','Fictional Firm')]
+        self.assertTrue(grounding._routing(turn,rows,targets,grounding.FOLLOWUP_ROUTING_VERSION))
+        self.assertFalse(grounding._routing(turn,rows,targets,grounding.NAMED_THANKS_VERSION))
+        self.assertFalse(grounding._routing(turn,rows,[('Another Analyst','Fictional Firm')],grounding.FOLLOWUP_ROUTING_VERSION))
+        for changed in (body+' Revenue grew.', body.replace('Please go ahead.', 'Do you expect demand to grow?')):
+            bad = {**turn,'end':len(changed)}
+            self.assertFalse(grounding._routing(bad,[{'start':0,'end':len(changed),'text':changed}],targets,grounding.FOLLOWUP_ROUTING_VERSION))
+        self.assertFalse(grounding._routing({**turn,'role':'management'},rows,targets,grounding.FOLLOWUP_ROUTING_VERSION))
+
+    def test_followup_question_context_is_versioned_and_exact(self):
+        out = copy.deepcopy(self.retrieval)
+        out['exchange_coverage'][1]['question_passage_ids'] = out['exchange_coverage'][0]['question_passage_ids']
+        with self.assertRaisesRegex(ValueError, 'outside the indexed'):
+            grounding.validate_retrieval(out, self.bundle, self.catalog)
+        bundle = copy.deepcopy(self.bundle)
+        bundle['qa_grounding'] = grounding.build(bundle, self.catalog, grounding.FOLLOWUP_QUESTION_VERSION)
+        grounding.validate_retrieval(out, bundle, self.catalog)
+        exchanges = bundle['qa_grounding']['exchanges']
+        for change in ('missing_link', 'wrong_speaker', 'cycle', 'overlap'):
+            bad = copy.deepcopy(bundle); first, second = bad['qa_grounding']['exchanges'][:2]
+            if change == 'missing_link': second['followup_of'] = None
+            elif change == 'wrong_speaker':
+                for turn in first['turns']:
+                    if turn['id'] in first['question_turn_ids']: turn['speaker'] = 'Another analyst'
+            elif change == 'cycle': second['followup_of'] = second['exchange_id']
+            else: first['turns'][-1]['end'] = second['turns'][0]['start'] + 1
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                grounding.validate_retrieval(out, bad, self.catalog)
+        out['exchange_coverage'][1]['question_passage_ids'] = out['exchange_coverage'][0]['answer_passage_ids']
+        with self.assertRaises(ValueError): grounding.validate_retrieval(out, bundle, self.catalog)
+
     def test_neighbor_support_without_explicit_followup_is_rejected(self):
         out = copy.deepcopy(self.retrieval)
         out['exchange_coverage'][0]['answer_passage_ids'] = out['exchange_coverage'][1]['answer_passage_ids']

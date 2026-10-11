@@ -83,3 +83,11 @@ class FlowTests(PassageFixture,unittest.TestCase):
         flow.pipe.freeze(self.casepath,root,writing,deterministic_corrections=True,qa_grounding=False)
         with patch.object(flow,'advance') as advance:
             self.assertEqual(dispatch.advance(root,False)['status'],'pending');advance.assert_not_called()
+
+class JointAttributionUsageTest(unittest.TestCase):
+    def test_joint_review_usage_is_counted_once(self):
+        from research.earnings_batched_flow import inherited_review_tokens
+        sessions=set();review={'session':{'id':'fake-review','usage':{'totalTokens':9}}}
+        self.assertEqual(inherited_review_tokens(review,sessions),9)
+        self.assertEqual(inherited_review_tokens(review,sessions),0)
+        self.assertEqual(inherited_review_tokens({'session':{'id':'another-review','usage':{'totalTokens':13}}},sessions),13)

@@ -24,7 +24,11 @@ def apply(binding, grounding, bundle, catalog):
     require(r.sha(binding['catalog_path'])==expected['catalog_sha256'] and r.read(binding['catalog_path'])==catalog,'Attribution catalog changed')
     require(r.sha(binding['retrieval_output'])==expected['retrieval_sha256'],'Original retrieval changed')
     require(value['session']['id']!=reservation['prior_session'],'Attribution reviewer reused author session')
-    verdict=value['content'];require(set(verdict)=={'exchanges'} and isinstance(verdict['exchanges'],list),'Exact attribution response required')
+    verdict=value['content']
+    if binding.get('review_field') is not None:
+        require(binding['review_field']=='non_qa' and set(verdict)=={'boundary','non_qa'},'Exact combined non-Q&A response required')
+        verdict=verdict['non_qa']
+    require(set(verdict)=={'exchanges'} and isinstance(verdict['exchanges'],list),'Exact attribution response required')
     decisions=verdict['exchanges'];ids=[d.get('exchange_id') for d in decisions]
     require(len(ids)==len(set(ids)) and set(ids)==set(expected['exchange_ids']),'Every reserved exchange required exactly once')
     result=copy.deepcopy(grounding);groups={e['exchange_id']:e for e in result['exchanges']}

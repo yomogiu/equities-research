@@ -16,7 +16,9 @@ HEADER_VERSION = 'source-bound-qa-membership-v2'
 NAMED_GREETING_VERSION = 'source-bound-qa-membership-v3'
 COURTESY_ROUTING_VERSION = 'source-bound-qa-membership-v4'
 NAMED_THANKS_VERSION = 'source-bound-qa-membership-v5'
-HEADER_VERSIONS = {HEADER_VERSION, NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION}
+FOLLOWUP_QUESTION_VERSION = 'source-bound-qa-membership-v6'
+FOLLOWUP_ROUTING_VERSION = 'source-bound-qa-membership-v7'
+HEADER_VERSIONS = {FOLLOWUP_ROUTING_VERSION, FOLLOWUP_QUESTION_VERSION, HEADER_VERSION, NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION}
 SUPPORTED_VERSIONS = {VERSION, *HEADER_VERSIONS}
 NOTICE = ('Membership validation checks source offsets and indexed speaker roles, not '
           'whether a question was understood, answered, relevant or summarized correctly. '
@@ -38,7 +40,7 @@ def _header_body(turn, rows, version=HEADER_VERSION):
     lines = body.splitlines()
     patterns = {'analyst': r'Analyst, [^\n]+',
                 'management': r'(?:President and CEO|EVP and CFO|VP of Investor Relations|SVP of Global Sales), [^\n]+'}
-    if version == NAMED_THANKS_VERSION:patterns['analyst']=r'(?:Analyst|Managing Director), [^\n]+'
+    if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION}:patterns['analyst']=r'(?:Analyst|Managing Director), [^\n]+'
     pattern = patterns.get(turn['role'])
     if (raw.splitlines()[0] == turn['speaker'] and len(lines) >= 2
             and pattern and re.fullmatch(pattern, lines[0])):
@@ -56,8 +58,8 @@ def _greeting(turn, rows, version=VERSION, peers=()):
     # This deliberately recognizes only complete, simple courtesy turns. Other
     # short statements remain evidence; a greeting followed by a question is not
     # discarded. The source text itself is never removed or rewritten.
-    if version == NAMED_THANKS_VERSION and _complete(turn,rows) and body == 'Great.':return True
-    if version in {NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and turn['role'] in {'analyst', 'management'}:
+    if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and _complete(turn,rows) and body == 'Great.':return True
+    if version in {NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and turn['role'] in {'analyst', 'management'}:
         # Only another named participant in this exchange can be addressed.
         # Require complete contiguous source coverage before excluding a turn.
         cursor = turn['start']
@@ -72,12 +74,12 @@ def _greeting(turn, rows, version=VERSION, peers=()):
                     or len(name.split()) < 2):
                 continue
             for address in (name, name.split()[0]):
-                if version == NAMED_THANKS_VERSION and re.fullmatch(r'(?:Makes sense\. )?Thanks,?\s+'+re.escape(address)+r'[.!]?',body,re.I):
+                if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and re.fullmatch(r'(?:Makes sense\. )?Thanks,?\s+'+re.escape(address)+r'[.!]?',body,re.I):
                     return True
                 if re.fullmatch(r'(?:Hi|Hello|Hey|Good morning|Good afternoon|Good evening),?\s+'
                                 + re.escape(address) + r'[.!]?', body, re.I):
                     return True
-    if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and _complete(turn,rows) and body in {'Thank you. Thanks for the questions.', 'Got it. That makes a lot of sense. Thank you.', 'Perfect. Thank you.'}:
+    if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and _complete(turn,rows) and body in {'Thank you. Thanks for the questions.', 'Got it. That makes a lot of sense. Thank you.', 'Perfect. Thank you.'}:
         return True
     return bool(body and (GREETING.fullmatch(body) or version in HEADER_VERSIONS and re.fullmatch(
         r'(?:Great|Okay|Got it|I appreciate that)\. (?:Thank you\.|That[’\']s helpful\. Thank you\.)', body)))
@@ -97,7 +99,9 @@ def _routing(turn, rows, targets, version=HEADER_VERSION):
     body = _header_body(turn, rows, version)
     normalize = lambda text: re.sub(r'\s+', '', text)
     for name, firm in targets:
-        if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION} and _complete(turn,rows) and normalize(body)==normalize(f'The next question comes from {name} with {firm}. Please go ahead.'):
+        if version == FOLLOWUP_ROUTING_VERSION and _complete(turn, rows) and normalize(body) == normalize(f'Your next question comes from the line of {name} from {firm}. Please go ahead.'):
+            return True
+        if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and _complete(turn,rows) and normalize(body)==normalize(f'The next question comes from {name} with {firm}. Please go ahead.'):
             return True
         for prefix in ('', 'Thank you for your question. '):
             for ordinal in ('next', 'final'):
@@ -230,6 +234,26 @@ def build(bundle, catalog, version=VERSION):
             'exchanges': result, 'notice': NOTICE}
 
 
+def question_contexts(exchange, exchanges):
+    """Earlier questions only through explicit, ordered, same-speaker followups."""
+    contexts = [exchange]; seen = {exchange['exchange_id']}
+    current = exchange
+    speakers = {t['speaker'] for t in exchange['turns'] if t['id'] in exchange['question_turn_ids']}
+    if len(speakers) != 1: return contexts
+    while current.get('followup_of'):
+        if 'invalid_followup_link' in current.get('flags', []): break
+        parent_id = current['followup_of']
+        if parent_id in seen or parent_id not in exchanges:
+            raise ValueError('Invalid question followup chain')
+        parent = exchanges[parent_id]
+        prior_speakers = {t['speaker'] for t in parent['turns'] if t['id'] in parent['question_turn_ids']}
+        if prior_speakers != speakers: break
+        if max(t['end'] for t in parent['turns']) > min(t['start'] for t in current['turns']):
+            raise ValueError('Question followup chain must be ordered and disjoint')
+        seen.add(parent_id); contexts.append(parent); current = parent
+    return contexts
+
+
 def validate_retrieval(out, bundle, catalog):
     grounding = bundle.get('qa_grounding')
     if grounding is None:
@@ -255,7 +279,7 @@ def validate_retrieval(out, bundle, catalog):
         continuations = row['continuation_exchange_ids']
         if not set(continuations) <= set(e['allowed_continuation_exchange_ids']):
             raise ValueError('Q&A continuation must use an explicit indexed followup link: ' + eid)
-        groups = {'question_passage_ids': [e], 'answer_passage_ids': [e] + [exchanges[x] for x in continuations]}
+        groups = {'question_passage_ids': question_contexts(e, exchanges) if grounding['version'] in {FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} else [e], 'answer_passage_ids': [e] + [exchanges[x] for x in continuations]}
         for field, contexts in groups.items():
             turn_field = 'question_turn_ids' if field == 'question_passage_ids' else 'answer_turn_ids'
             allowed = {pid for context in contexts for turn in context['turns']
@@ -306,6 +330,8 @@ def prompt_contract(role, bundle):
                  'a management answer from a coverage paraphrase alone. Provisional roles and '
                  'followup links require semantic verification. Independently compare selected '
                  'question/answer passages with the full turns before using their claims.\n')
+    if index['version'] in {FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION}:
+        text += ('Exact earlier question support is permitted only through the indexed ordered same-speaker followup chain. No unrelated or merely adjacent question is authorized. Independently verify the question and response against full original turns.\n')
     if bundle.get('batch_attribution_review_binding'):
         text += 'Authenticated reviewed_non_qa rows are not substantive Q&A. All original turns remain evidence: management_closing may contain business assertions and must be considered independently of an analyst acknowledgment. Do not classify closing content as courtesy or attribute it as an answer.\n'
     return text + json.dumps(index, ensure_ascii=False, sort_keys=True)

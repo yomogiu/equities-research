@@ -12,8 +12,15 @@ def check(value,message):
 def apply(binding,bundle,original_retrieval):
     path=Path(binding['proposal']);check(r.sha(path)==binding['proposal_sha256'],'Boundary proposal changed')
     proposal=r.read(path);review=imp.authenticate(binding['review']);verdict=review['content']
+    if binding.get('review_field') is not None:
+        check(binding['review_field']=='boundary' and set(verdict)=={'boundary','non_qa'},'Exact combined boundary response required')
+        verdict=verdict['boundary']
     request=r.read(Path(binding['review']['job'])/'request.json')
-    check(request['bindings']=={'proposal_sha256':r.sha(path),'scope':'source-attribution-only'},'Review is not bound to proposal')
+    expected={'proposal_sha256':r.sha(path),'scope':'source-attribution-only'}
+    if binding.get('review_field') is not None:
+        expected=binding['review_bindings']
+        check(expected.get('proposal_sha256')==r.sha(path) and expected.get('scope')=='source-attribution-only','Combined proposal binding differs')
+    check(request['bindings']==expected,'Review is not bound to proposal')
     check(verdict.get('decision')=='accept' and all(verdict.get(k) is True for k in ('membership_accepted','coverage_status_change_accepted','closing_content_retained')),'Independent boundary acceptance required')
     source=proposal['source'];index=bundle['transcript_index'];text=Path(source['path']).read_text()
     check(r.sha(source['path'])==source['sha256']==index['source']['text_sha256'] and source['document_id']==index['source']['document_id'],'Reviewed source changed')
