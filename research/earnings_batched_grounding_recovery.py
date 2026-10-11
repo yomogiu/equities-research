@@ -38,7 +38,7 @@ def original(seed):
     return old,code
 
 
-def initialize(seed, output, authorization, reviewed_boundary=None, selection_repair=None, grounding_version=None, operator_review=None):
+def initialize(seed, output, authorization, reviewed_boundary=None, selection_repair=None, grounding_version=None, operator_review=None, batch_attribution_review=None, model_policy=None):
     from . import earnings_passage_pipeline as pipe
     seed,output=Path(seed).resolve(),Path(output).resolve()
     require(authorization.strip() and not output.exists(),'New authorized continuation required')
@@ -49,6 +49,11 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
     protocol['grounding_recovery']={'seed':str(seed),'protocol_sha256':r.sha(seed/'protocol.json'),'authorization':authorization,'responses':refs,'prior_correction_rounds':0}
     if selection_repair:
         protocol['grounding_recovery']['selection_repair']=selection_repair
+    if model_policy is not None:
+        from . import earnings_mechanical_preflight as mechanical, earnings_signals as signals
+        require(model_policy==mechanical.POLICY,'Explicit supported model/review policy required')
+        protocol['grounding_recovery']['requested_model_policy']=model_policy
+        protocol.update(models={k:list(v) for k,v in pipe.MODELS.items()},batch_review=model_policy,signal_author_model=list(signals.DRAFT_MODEL))
     bundle=pipe.evidence.load_bundle(old['evidence_manifest']);catalog=r.read(seed/'passages.json')
     if reviewed_boundary:
         from .earnings_reviewed_grounding import apply
@@ -61,6 +66,10 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
         from .earnings_reviewed_operator import apply
         protocol['grounding_recovery']['operator_review']=operator_review
         grounding,_=apply(operator_review,grounding,bundle,catalog)
+    if batch_attribution_review:
+        from .earnings_reviewed_attribution_batch import apply
+        protocol['grounding_recovery']['batch_attribution_review']=batch_attribution_review
+        grounding,_=apply(batch_attribution_review,grounding,bundle,catalog)
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
     r.save(output/'qa-grounding.json',grounding)
@@ -76,6 +85,12 @@ def validate(protocol,bundle,catalog):
     require(recovery.get('authorization','').strip() and recovery['prior_correction_rounds']==0,'Recovery authorization/budget differs')
     require(r.sha(seed/'protocol.json')==recovery['protocol_sha256'],'Seed protocol changed')
     ignored={'code','grounding_recovery','qa_grounding','qa_grounding_path','qa_grounding_sha256'}
+    if recovery.get('requested_model_policy'):
+        from . import earnings_mechanical_preflight as mechanical, earnings_signals as signals
+        require(recovery['requested_model_policy']==mechanical.POLICY and protocol['batch_review']==mechanical.POLICY
+                and protocol['models']=={k:list(v) for k,v in pipe.MODELS.items()}
+                and protocol['signal_author_model']==list(signals.DRAFT_MODEL),'Requested model policy changed')
+        ignored|={'models','batch_review','signal_author_model'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored},'Recovery changed original settings or evidence')
     require(protocol['qa_grounding'] in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION},'Recovery requires new grounding version')
     require(set(recovery['responses'])=={'financial','retrieval'},'Both original preparers required')

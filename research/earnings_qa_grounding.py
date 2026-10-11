@@ -265,8 +265,11 @@ def validate_retrieval(out, bundle, catalog):
                 if pid not in pids or pid not in allowed or not pids[pid]['text'].strip():
                     raise ValueError('Q&A supporting passage is outside the indexed ' + field + ': ' + eid)
         status = row['grounding_status']
-        if status not in ('bound', 'unresolved', 'courtesy_only') or not isinstance(row['grounding_notes'], str) or not row['grounding_notes'].strip():
+        if status not in ('bound', 'unresolved', 'courtesy_only', 'reviewed_non_qa') or not isinstance(row['grounding_notes'], str) or not row['grounding_notes'].strip():
             raise ValueError('Q&A grounding needs explicit status and review notes: ' + eid)
+        if status == 'reviewed_non_qa':
+            if e['mechanical_disposition']!='reviewed_non_qa' or not e.get('reviewed_turn_dispositions') or any(row[k] for k in FIELDS[:3]):
+                raise ValueError('Non-Q&A disposition requires authenticated complete-turn review: '+eid)
         if status == 'courtesy_only':
             if e['mechanical_disposition'] != 'courtesy_only' or any(row[k] for k in FIELDS[:3]):
                 raise ValueError('Courtesy disposition requires only exact courtesy turns and no analytical support: ' + eid)
@@ -303,6 +306,8 @@ def prompt_contract(role, bundle):
                  'a management answer from a coverage paraphrase alone. Provisional roles and '
                  'followup links require semantic verification. Independently compare selected '
                  'question/answer passages with the full turns before using their claims.\n')
+    if bundle.get('batch_attribution_review_binding'):
+        text += 'Authenticated reviewed_non_qa rows are not substantive Q&A. All original turns remain evidence: management_closing may contain business assertions and must be considered independently of an analyst acknowledgment. Do not classify closing content as courtesy or attribute it as an answer.\n'
     return text + json.dumps(index, ensure_ascii=False, sort_keys=True)
 
 
@@ -323,6 +328,11 @@ def attach(root, protocol, bundle, catalog):
         from .earnings_reviewed_operator import apply
         computed,_=apply(binding,computed,bundle,catalog)
         bundle['operator_review_binding']=binding
+    batch_binding=protocol.get('grounding_recovery',{}).get('batch_attribution_review')
+    if batch_binding:
+        from .earnings_reviewed_attribution_batch import apply
+        computed,_=apply(batch_binding,computed,bundle,catalog)
+        bundle['batch_attribution_review_binding']=batch_binding
     if computed != base.read(path):
         raise ValueError('Q&A grounding differs from original indexed sources')
     bundle['qa_grounding'] = computed
@@ -338,7 +348,7 @@ def require_analysis_ready(out, bundle, catalog):
             raise ValueError('Substantive unassigned Q&A turns require source-index repair before analysis: '
                              + ', '.join(unassigned))
         unresolved = [row['exchange_id'] for row in out['exchange_coverage']
-                      if row['grounding_status'] not in ('bound', 'courtesy_only')]
+                      if row['grounding_status'] not in ('bound', 'courtesy_only', 'reviewed_non_qa')]
         if unresolved:
             raise ValueError('Q&A grounding unresolved; repair source attribution before analysis: '
                              + ', '.join(unresolved))
@@ -357,6 +367,9 @@ def normalize_courtesy(out, bundle, catalog):
     if bundle.get('operator_review_binding'):
         from .earnings_reviewed_operator import apply
         replayed,_=apply(bundle['operator_review_binding'],replayed,bundle,catalog)
+    if bundle.get('batch_attribution_review_binding'):
+        from .earnings_reviewed_attribution_batch import apply
+        replayed,_=apply(bundle['batch_attribution_review_binding'],replayed,bundle,catalog)
     if grounding != replayed:
         raise ValueError('Courtesy normalization requires replayable grounding')
     derived = copy.deepcopy(out)
@@ -369,6 +382,14 @@ def normalize_courtesy(out, bundle, catalog):
         e = exchanges.get(row.get('exchange_id'))
         if e is None:
             raise ValueError('Unknown exchange in courtesy normalization')
+        if e['mechanical_disposition']=='reviewed_non_qa':
+            before=copy.deepcopy(row)
+            row.update(question_passage_ids=[],answer_passage_ids=[],continuation_exchange_ids=[],
+                       grounding_status='reviewed_non_qa',grounding_notes=e['review_reason'])
+            for key in ('question','answer','question_summary','answer_summary','consequence'):
+                if key in row:row[key]='Independently reviewed non-question dialogue. All original turns, including any business-bearing closing remarks, remain available as source evidence outside Q&A answer membership.'
+            receipt.append({'exchange_id':e['exchange_id'],'before_sha256':base.digest(before),'after_sha256':base.digest(row),'turns':copy.deepcopy(e['turns']),'reviewed_turn_dispositions':copy.deepcopy(e['reviewed_turn_dispositions'])})
+            continue
         if e['mechanical_disposition'] != 'courtesy_only':
             continue
         before = copy.deepcopy(row)
