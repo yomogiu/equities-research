@@ -22,6 +22,8 @@ from research.earnings_mixed_runner import run_role, verify_job
 
 VERSION = 'earnings-signals-v1'
 MODEL = ('gpt-6.1-sol', 'medium')
+# Combined-review drafts have a separate effort; independent review stays medium.
+DRAFT_MODEL = ('gpt-6.1-sol', 'low')
 DIRECTIONS = {'improving': 'Improving', 'deteriorating': 'Deteriorating', 'conditional': 'Conditional', 'unresolved': 'Unresolved'}
 BASES = {'reported_result': 'Reported result', 'management_guidance': 'Management guidance', 'analyst_inference': 'Analyst inference'}
 CRITERIA = ('source_support', 'direction_and_scope', 'evidence_basis', 'period_and_comparison', 'material_selection', 'concise_writing')

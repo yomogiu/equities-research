@@ -257,7 +257,7 @@ class PreparedFlowTests(unittest.TestCase):
              patch.object(pipe,'verify_job',side_effect=lambda p:jobs[str(p)]):
             result = flow.advance(self.output)
         self.assertEqual(result['status'],'pending')
-        self.assertEqual(calls,[('gpt-5.6-luna','xhigh')])
+        self.assertEqual(calls,[('gpt-6-luna','max')])
         self.assertEqual(self.original,{p:base.sha(p) for p in self.original})
 
 

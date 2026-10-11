@@ -23,7 +23,7 @@ try {
       oauth:getOAuthProvider('openai-codex'),
       api:'openai-codex-responses', baseUrl:'https://chatgpt.com/backend-api',
       models:[{id:request.model, name:registeredNames[request.model], reasoning:true,
-        thinkingLevelMap:{minimal:null, xhigh:'xhigh', max:'max'}, input:['text'],
+        thinkingLevelMap:{minimal:null, low:'low', medium:'medium', xhigh:'xhigh', max:'max'}, input:['text'],
         contextWindow:272000, maxTokens:128000,
         // Unknown subscription pricing is deliberately excluded from receipts.
         cost:{input:0, output:0, cacheRead:0, cacheWrite:0}}]
