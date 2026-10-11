@@ -27,6 +27,16 @@ class ReviewedGroundingTests(TestCase):
     b,o,_=g.apply(binding,bundle,out)
     self.assertEqual(b['transcript_index']['turns'],turns);self.assertEqual(o['exchange_coverage'][0]['answer'],'Answer.')
     self.assertEqual(out['exchange_coverage'][0]['grounding_status'],'unresolved')
+    original_verdict=copy.deepcopy(verdict['content'])
+    verdict['content']={'boundary':copy.deepcopy(original_verdict),'non_qa':{'exchanges':[]}}
+    binding['review_field']='boundary'
+    binding['review_bindings']={'proposal_sha256':r.sha(path),'scope':'source-attribution-only'}
+    b,o,_=g.apply(binding,bundle,out)
+    self.assertEqual(o['exchange_coverage'][0]['answer'],'Answer.')
+    verdict['content']['unexpected']={}
+    with self.assertRaisesRegex(ValueError,'Exact combined'):g.apply(binding,bundle,out)
+    verdict['content']=original_verdict
+    binding.pop('review_field');binding.pop('review_bindings')
     verdict['content']['closing_content_retained']=False
     with self.assertRaisesRegex(ValueError,'acceptance'):g.apply(binding,bundle,out)
     verdict['content']['closing_content_retained']=True

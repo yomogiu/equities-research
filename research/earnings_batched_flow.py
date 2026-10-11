@@ -60,6 +60,14 @@ def proposal_prompt(result,bundle,catalog,writing,policy=POLICY,context_policy=N
     return text
 
 
+def inherited_review_tokens(value, sessions):
+    """A single joint review referenced by two contracts is charged once."""
+    sid=value['session']['id']
+    if sid in sessions:return 0
+    sessions.add(sid)
+    return value['session']['usage']['totalTokens']
+
+
 def _advance(root,execute):
     protocol,bundle,catalog=pipe.load(root)
     batch.require(protocol.get('batch_review') in (POLICY,*batch.MECHANICAL_POLICIES),'Not a batched production request')
@@ -73,22 +81,19 @@ def _advance(root,execute):
         if protocol['grounding_recovery'].get('batch_attribution_review'):
             from .earnings_role_import import authenticate
             attribution=authenticate(protocol['grounding_recovery']['batch_attribution_review']['review'])
-            sessions.add(attribution['session']['id']);tokens+=attribution['session']['usage']['totalTokens']
+            tokens+=inherited_review_tokens(attribution,sessions)
         if protocol['grounding_recovery'].get('operator_review'):
             from .earnings_role_import import authenticate
             operator=authenticate(protocol['grounding_recovery']['operator_review']['review'])
-            sessions.add(operator['session']['id'])
-            tokens+=operator['session']['usage']['totalTokens']
+            tokens+=inherited_review_tokens(operator,sessions)
         if protocol['grounding_recovery'].get('selection_repair'):
             from .earnings_role_import import authenticate
             selection=authenticate(protocol['grounding_recovery']['selection_repair']['review'])
-            sessions.add(selection['session']['id'])
-            tokens+=selection['session']['usage']['totalTokens']
+            tokens+=inherited_review_tokens(selection,sessions)
         if protocol['grounding_recovery'].get('reviewed_boundary'):
             from .earnings_role_import import authenticate
             boundary=authenticate(protocol['grounding_recovery']['reviewed_boundary']['review'])
-            sessions.add(boundary['session']['id'])
-            tokens+=boundary['session']['usage']['totalTokens']
+            tokens+=inherited_review_tokens(boundary,sessions)
     for role in ('financial','retrieval','analysis','signal_author'):
         if role=='signal_author':
             state={'artifacts':copy.deepcopy(artifacts),'format':{'rows':{},'basis':{'text':'','citations':[]}}}
