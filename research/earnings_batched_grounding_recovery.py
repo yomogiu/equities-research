@@ -28,7 +28,7 @@ print(json.dumps({'verified':True}))
 
 def original(seed):
     seed=Path(seed);old=r.read(seed/'protocol.json')
-    require(old.get('batch_review')=='batched-report-review-v1' and old.get('qa_grounding') in {'source-bound-qa-membership-v2','source-bound-qa-membership-v3'}, 'Original supported grounding batch required')
+    require(old.get('batch_review') in {'batched-report-review-v1','mechanical-report-review-v2','batched-editorial-review-v3'} and old.get('qa_grounding') in {'source-bound-qa-membership-v2','source-bound-qa-membership-v3','source-bound-qa-membership-v4','source-bound-qa-membership-v5'}, 'Original supported grounding batch required')
     require(old.get('max_correction_rounds')==2 and not any('recovery' in k for k in old), 'Original untouched budget required')
     require(not (seed/'batch-review').exists() and not (seed/'result.json').exists(), 'Reviewed work cannot restart')
     require({p.name for p in (seed/'batch-jobs').iterdir()}=={'financial','retrieval'}, 'Exactly two completed preparers required; no later launch allowed')
@@ -60,7 +60,7 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
         protocol['grounding_recovery']['reviewed_boundary']=reviewed_boundary
         bundle,_,_=apply(reviewed_boundary,bundle,imp.authenticate(refs['retrieval'])['content'])
     version=grounding_version or pipe.grounding.NAMED_GREETING_VERSION
-    require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION},'Unsupported recovery grounding')
+    require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION,pipe.grounding.FOLLOWUP_QUESTION_VERSION},'Unsupported recovery grounding')
     grounding=pipe.grounding.build(bundle,catalog,version)
     if operator_review:
         from .earnings_reviewed_operator import apply
@@ -92,7 +92,7 @@ def validate(protocol,bundle,catalog):
                 and protocol['signal_author_model']==list(signals.DRAFT_MODEL),'Requested model policy changed')
         ignored|={'models','batch_review','signal_author_model'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored},'Recovery changed original settings or evidence')
-    require(protocol['qa_grounding'] in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION},'Recovery requires new grounding version')
+    require(protocol['qa_grounding'] in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION,pipe.grounding.FOLLOWUP_QUESTION_VERSION},'Recovery requires new grounding version')
     require(set(recovery['responses'])=={'financial','retrieval'},'Both original preparers required')
     results={}
     for role,ref in recovery['responses'].items():
