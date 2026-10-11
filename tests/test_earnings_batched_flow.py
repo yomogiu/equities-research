@@ -51,6 +51,9 @@ class FlowTests(PassageFixture,unittest.TestCase):
                 before=len(calls);result=dispatch.advance(root)
                 self.assertLessEqual(len(calls)-before,1)
                 if result['status']=='accepted':break
+                # Match the real host controller: no further advance after a
+                # terminal result. A correction request must keep it active.
+                self.assertEqual(result['status'],'pending',result)
             self.assertEqual(result['status'],'accepted')
             self.assertEqual(len(calls),7 if correction else 5)
             self.assertEqual(result['detail']['tokens'],119 if correction else 85)
