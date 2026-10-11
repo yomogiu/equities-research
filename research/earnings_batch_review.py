@@ -112,7 +112,7 @@ def references(value):
     return result
 
 
-def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundle,policy=VERSION):
+def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundle,policy=VERSION,context_policy=None):
     # A correction sees its finding context, not the entire accepted preparers.
     context=set(pending)
     context.update(d for k in pending for d in items[k]['depends_on'] if d.startswith('analysis:'))
@@ -167,6 +167,11 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
             'Every revise or reopen must include nonempty exact original passage IDs. '
             'Block for incorrect facts, missing material evidence, attribution, misleading accounting labels or substantive reasoning. '
             'Optional wording preferences are nonblocking; identify all material defects together.')
+    if context_policy is not None:
+        from . import earnings_batch_context as context
+        require(context_policy==context.VERSION,'Unknown review context policy')
+        data=context.build(data,bundle,wanted)
+        instructions+=' The declared context policy supplies every financial observation and full call text, complete cited filing scopes and explicitly selected filing context chunks. Deferred chunks/previews do not establish support. Inspect all supplied dates, dimensions, values and original evidence. Return a source-specific revise finding if additional material source context is necessary. Decode the lossless transport before interpreting any references; the complete report is directly readable.'
     return instructions+'\nWRITING STANDARD\n'+writing+'\nBATCH\n'+json.dumps(data,ensure_ascii=False,separators=(',',':'))
 
 
@@ -215,6 +220,10 @@ def initialize(source_protocol,state,pack,output,authorization):
     p={'version':version,'source_protocol':source_protocol,'authorization':authorization,'initial_sha256':runner.digest(items),
        'source_bundle_sha256':runner.digest(bundle),'catalog_sha256':runner.digest(catalog),
        'code':{str(f):runner.sha(f) for f in set(files)},'model':list(MODEL),'max_correction_batches':2}
+    if source_protocol.get('review_context') is not None:
+        from . import earnings_batch_context as context
+        require(source_protocol['review_context']==context.VERSION,'Unknown review context policy')
+        p['review_context']=context.VERSION
     root.mkdir(parents=True);runner.save(root/'protocol.json',p);runner.save(root/'initial.json',items)
     return {'status':'pending','round':0,'accepted_units':0}
 
@@ -223,6 +232,7 @@ def load(root):
     root=Path(root).resolve();p=runner.read(root/'protocol.json');items=runner.read(root/'initial.json')
     require(p['version'] in (VERSION,MECHANICAL_VERSION) and p['model']==list(MODEL) and p['max_correction_batches']==2,'Frozen batch policy changed')
     require(p['version']==p['source_protocol'].get('batch_review',VERSION),'Source and batch policies differ')
+    require(p.get('review_context')==p['source_protocol'].get('review_context'),'Source and batch context policies differ')
     require(p['initial_sha256']==runner.digest(items),'Initial report changed')
     for name,digest in p['code'].items():require(runner.sha(name)==digest,'Bound implementation changed')
     require(p['code'].get(str(Path(__file__)))==runner.sha(__file__),'Use the bound batch implementation')
@@ -253,7 +263,7 @@ def replay(root, *, stop_before=None):
             pending=set(findings)|changed
             for key in pending:accepted.pop(key,None)
         else:pending=set(items)
-        text=prompt(before,items,pending,accepted,findings,c,w,n,b,p.get('version',VERSION));job=folder/'review'
+        text=prompt(before,items,pending,accepted,findings,c,w,n,b,p.get('version',VERSION),p.get('review_context'));job=folder/'review'
         bindings={'protocol_sha256':runner.sha(root/'protocol.json'),'batch_sha256':runner.digest(items),'round':n}
         if not (job/'output.json').exists():
             return {'status':'execution_uncertain' if job.exists() and any(job.iterdir()) else 'pending',

@@ -148,6 +148,9 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
         if not deterministic_corrections or not signals:
             raise ValueError('Batched review requires corrections and signals')
         protocol['batch_review'] = 'mechanical-report-review-v2' if mechanical_preflight else 'batched-report-review-v1'
+        if mechanical_preflight:
+            from .earnings_batch_context import VERSION as CONTEXT_VERSION
+            protocol['review_context']=CONTEXT_VERSION
         from .earnings_signals import DRAFT_MODEL
         protocol['signal_author_model'] = list(DRAFT_MODEL)
     if efficient:
