@@ -11,6 +11,31 @@ from research import earnings_batch_review as b
 class BatchTests(PassageFixture, unittest.TestCase):
     state = fixtures.SignalTests.state
     pack = fixtures.SignalTests.pack
+    def editorial_decision(self,items,key,kind,path,before,after):
+        return {'batch_sha256':b.runner.digest(items),'decisions':[{
+            'unit_id':key,'verdict':'revise','reason':'Fictional source-supported correction',
+            'passage_ids':[self.ids[0]],'review_kind':kind,'editorial_repairs':[
+                {'field_path':path,'before':before,'after':after,'reason':'Exact factual correction'}]}],'reopen':[]}
+
+    def test_factual_findings_may_provide_concrete_rewrites(self):
+        items=self.items();key='analysis:0';before=items[key]['value']['text']
+        review=self.editorial_decision(items,key,'factual',['text'],before,'Fictional source-backed rewrite')
+        accepted,findings=b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+        self.assertIn('EDITORIAL REPAIRS',findings[key]);self.assertIn('SOURCE PASSAGE IDS',findings[key])
+        review['decisions'][0]['passage_ids']=[]
+        with self.assertRaises(ValueError):b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+
+    def test_empty_field_replacement_is_exact_not_arbitrary_insertion(self):
+        items=self.items();items['format']['value']['basis']['text']=''
+        review=self.editorial_decision(items,'format','mixed',['basis','text'],'','Fictional source-supported basis')
+        _,findings=b.adjudicate(items,{'format'},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+        self.assertIn('format',findings)
+        items['format']['value']['basis']['text']='Existing note'
+        with self.assertRaises(ValueError):b.adjudicate(items,{'format'},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+        items['format']['value']['basis']['text']=''
+        review['decisions'][0]['editorial_repairs'][0]['field_path']=['basis','citations']
+        with self.assertRaises(ValueError):b.adjudicate(items,{'format'},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+
     def test_changed_unit_prompt_order_is_canonical(self):
         before=self.items();items=copy.deepcopy(before)
         items['signal-1']['value']['label']='Fictional repaired signal'
