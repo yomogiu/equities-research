@@ -1,10 +1,13 @@
 """Synthetic failures only. A terminal receipt is classification, not permission to retry."""
 import unittest
-from test_earnings_mixed_runner import RunnerTests
+import test_earnings_mixed_runner as fixtures
 from research import earnings_mixed_runner as r, earnings_execution_state as state
 
 
-class FailureTests(RunnerTests):
+class FailureTests(unittest.TestCase):
+    setUp = fixtures.RunnerTests.setUp
+    write_journal = fixtures.RunnerTests.write_journal
+    complete = fixtures.RunnerTests.complete
     def failed(self):
         self.entries[-1]['message'].update(stopReason='error',
             diagnostics=[{'type':'provider_stream_failure'}],

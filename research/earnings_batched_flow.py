@@ -28,6 +28,10 @@ def job(root, name, text, model, bindings, execute, sessions):
         sessions.add(sid)
         return result
     if target.exists() and any(target.iterdir()):
+        if (target/'request.json').exists():
+            request=runner.read(target/'request.json')
+            batch.require(request['bindings']==bindings and (request['model'],request['effort'])==tuple(model)
+                          and (target/'prompt.txt').read_text()==text,'Incomplete batch worker request changed')
         from .earnings_execution_state import classify
         diagnostic = classify(target)
         return {'pending_status':diagnostic['status'], 'execution':diagnostic}
@@ -116,7 +120,8 @@ def _advance(root,execute):
         # Existing proposal may have been accounted above; job checks its session separately.
         author_sessions=set(protocol.get('excluded_session_ids',[]))
         proposal=job(root,'correction-'+str(n),text,batch.MODEL,bindings,execute,author_sessions)
-        if 'pending_status' in proposal:return {'status':proposal['pending_status'],'stage':'batch_correction'}
+        if 'pending_status' in proposal:return {'status':proposal['pending_status'],'stage':'batch_correction',
+            **({'execution':proposal['execution']} if 'execution' in proposal else {})}
         if not execute:return {'status':'pending','stage':'batch_apply'}
         batch.submit(edition,proposal['content'])
         return {'status':'pending','stage':'batch_review'}
