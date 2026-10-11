@@ -123,7 +123,7 @@ def repair_handoff(root, deps, prior, issues, review, catalog, refusals=None):
     return None
 
 
-def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False, qa_grounding=True, qa_grounding_version=None, batch_review=False):
+def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False, qa_grounding=True, qa_grounding_version=None, batch_review=False, mechanical_preflight=False):
     if repair_loop and deterministic_corrections:
         raise ValueError("Choose one correction strategy")
     root = Path(output).resolve(); root.mkdir(parents=True, exist_ok=True)
@@ -142,10 +142,12 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
                 'writing_standard': str(Path(writing_path).resolve()), 'writing_sha256': base.sha(writing_path),
                 'models': {k: list(v) for k, v in MODELS.items()}, 'max_correction_rounds': 2,
                 'code': [{'path': str(Path(__file__).parent / n), 'sha256': base.sha(Path(__file__).parent / n)} for n in names]}
+    if mechanical_preflight and not batch_review:
+        raise ValueError('Mechanical preflight requires batched review')
     if batch_review:
         if not deterministic_corrections or not signals:
             raise ValueError('Batched review requires corrections and signals')
-        protocol['batch_review'] = 'batched-report-review-v1'
+        protocol['batch_review'] = 'mechanical-report-review-v2' if mechanical_preflight else 'batched-report-review-v1'
     if efficient:
         protocol['evidence_reuse'] = copy.deepcopy(EFFICIENT_POLICY)
     if qa_grounding:
@@ -602,12 +604,14 @@ def main():
                    help='Add independently reviewed signals after acceptance (default: enabled; --no-signals opts out)')
     f.add_argument('--qa-grounding', action=argparse.BooleanOptionalAction, default=True,
                    help='Bind retrieval to indexed Q&A membership before analysis (new freezes only)')
+    f.add_argument('--batch-review', action='store_true', help='Review report and signals together')
+    f.add_argument('--mechanical-preflight', action='store_true', help='Opt into source-derived presentation and mechanical-report-review-v2')
     f.add_argument('--efficient', action='store_true', help='Opt into source-bound role evidence reuse; leaves v4 defaults unchanged')
     for name in ('run', 'verify'):
         sub.add_parser(name).add_argument('output')
     args = parser.parse_args()
     if args.command == 'freeze':
-        freeze(args.case, args.output, args.writing, args.repair_loop, args.deterministic_corrections, args.signals, efficient=args.efficient, qa_grounding=args.qa_grounding); print('Frozen passage-selection protocol')
+        freeze(args.case, args.output, args.writing, args.repair_loop, args.deterministic_corrections, args.signals, efficient=args.efficient, qa_grounding=args.qa_grounding, batch_review=args.batch_review, mechanical_preflight=args.mechanical_preflight); print('Frozen passage-selection protocol')
     else:
         result = (run if args.command == 'run' else verify)(args.output)
         summary = {k: result[k] for k in ('status', 'correction_rounds', 'wall_seconds')}
