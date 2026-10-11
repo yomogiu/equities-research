@@ -39,6 +39,19 @@ class GroundingTests(PassageFixture, unittest.TestCase):
         self.assertIn('not whether', expected['notice'])
         self.assertEqual(expected['annotation_status'], 'provisional')
 
+    def test_exact_short_operator_routing_version(self):
+        body = 'Operator\nYour next question comes from the line of Fictional Analyst from Fictional Firm. Please go ahead.'
+        turn = {'role':'operator','speaker':'Operator','start':0,'end':len(body)}
+        rows = [{'start':0,'end':len(body),'text':body}]
+        targets = [('Fictional Analyst','Fictional Firm')]
+        self.assertTrue(grounding._routing(turn,rows,targets,grounding.FOLLOWUP_ROUTING_VERSION))
+        self.assertFalse(grounding._routing(turn,rows,targets,grounding.NAMED_THANKS_VERSION))
+        self.assertFalse(grounding._routing(turn,rows,[('Another Analyst','Fictional Firm')],grounding.FOLLOWUP_ROUTING_VERSION))
+        for changed in (body+' Revenue grew.', body.replace('Please go ahead.', 'Do you expect demand to grow?')):
+            bad = {**turn,'end':len(changed)}
+            self.assertFalse(grounding._routing(bad,[{'start':0,'end':len(changed),'text':changed}],targets,grounding.FOLLOWUP_ROUTING_VERSION))
+        self.assertFalse(grounding._routing({**turn,'role':'management'},rows,targets,grounding.FOLLOWUP_ROUTING_VERSION))
+
     def test_followup_question_context_is_versioned_and_exact(self):
         out = copy.deepcopy(self.retrieval)
         out['exchange_coverage'][1]['question_passage_ids'] = out['exchange_coverage'][0]['question_passage_ids']
