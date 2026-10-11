@@ -53,6 +53,8 @@ def classify(job):
             return uncertain
         kind = 'provider_stream_failure' if any(x.get('type') == 'provider_stream_failure'
                      for x in final.get('diagnostics', [])) else 'provider_error'
+        if any(x.get('error',{}).get('code')=='context_length_exceeded' for x in final.get('diagnostics',[])):
+            kind='input_context_exceeded'
         return {**uncertain, 'status': 'execution_failed', 'failure_kind': kind,
                 'session_id': start['session_id'], 'execution_sha256': r.sha(job/'execution.json'),
                 'journal_sha256': r.sha(journal),
