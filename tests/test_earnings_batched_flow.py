@@ -63,6 +63,14 @@ class FlowTests(PassageFixture,unittest.TestCase):
             self.assertEqual(dispatch.advance(root,False)['report_sha256'],result['report_sha256'])
             self.assertEqual(len(calls),7 if correction else 5)
             self.assertFalse((root/'jobs/review-r0').exists())
+            expected={'financial':('gpt-6-luna','max'),'retrieval':('gpt-6-luna','max'),
+                      'analysis':('gpt-6-luna','max'),'signal_author':('gpt-6.1-sol','low')}
+            for role,assignment in expected.items():
+                request=batch.runner.read(root/'batch-jobs'/role/'request.json')
+                self.assertEqual((request['model'],request['effort']),assignment)
+            review=batch.runner.read(root/'batch-review/batches/0/review/request.json')
+            self.assertEqual((review['model'],review['effort']),('gpt-6.1-sol','medium'))
+            self.assertEqual(batch.runner.read(root/'protocol.json')['signal_author_model'],['gpt-6.1-sol','low'])
             if mechanical:
                 self.assertEqual(batch.runner.read(root/'mechanical-preflight.json')['status'],'ready_for_independent_review')
                 self.assertTrue(batch.runner.read(root/'batch-review/initial.json')['format']['value']['rows'])
