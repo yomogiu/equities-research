@@ -55,12 +55,14 @@ def proposal_prompt(result,bundle,catalog,writing,policy=POLICY,context_policy=N
           'Signal evidence_basis is reported_result, management_guidance, management_commentary or analyst_inference; opportunities expressly distinguished from guidance use management_commentary. '
           'The review instructions in CONTEXT describe the criteria, not your output schema.\nREGISTRY\n'+json.dumps({
               'before_sha256':runner.digest(items),'value_sha256':{k:runner.digest(v['value']) for k,v in items.items()}},sort_keys=True)+'\nCONTEXT\n'+context)
+    if policy==batch.EDITORIAL_VERSION:
+        text+='\nApply exact editorial cuts and rewrites recorded in findings alongside factual repairs in the same batch. Preserve factual content and all source bindings.'
     return text
 
 
 def _advance(root,execute):
     protocol,bundle,catalog=pipe.load(root)
-    batch.require(protocol.get('batch_review') in (POLICY,mechanical.POLICY),'Not a batched production request')
+    batch.require(protocol.get('batch_review') in (POLICY,*batch.MECHANICAL_POLICIES),'Not a batched production request')
     policy=protocol['batch_review']
     writing=Path(protocol['writing_standard']).read_text()
     artifacts={};sessions=set();tokens=0
@@ -90,7 +92,7 @@ def _advance(root,execute):
     for role in ('financial','retrieval','analysis','signal_author'):
         if role=='signal_author':
             state={'artifacts':copy.deepcopy(artifacts),'format':{'rows':{},'basis':{'text':'','citations':[]}}}
-            if policy==mechanical.POLICY:
+            if policy in batch.MECHANICAL_POLICIES:
                 state['format']=mechanical.formatting(artifacts['financial'],bundle)
                 diagnostics=mechanical.check(state,bundle,catalog)
                 audit=root/'mechanical-preflight.json'
