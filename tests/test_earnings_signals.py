@@ -138,3 +138,8 @@ class SignalTests(PassageFixture, unittest.TestCase):
         for anchor in ['missing','First fictional matter. Separate financing development. First','']:
             state['format']['signal_anchors']['signal-1']=anchor;pack=self.pack(state)
             with self.assertRaises(ValueError):s.validate(pack,state,self.bundle,self.catalog)
+
+class CommentaryContractTests(unittest.TestCase):
+    def test_management_opportunity_has_distinct_evidence_label(self):
+        self.assertEqual(s.BASES['management_commentary'],'Management commentary')
+        self.assertNotEqual(s.BASES['management_commentary'],s.BASES['management_guidance'])
