@@ -47,6 +47,20 @@ class CurrentnessTest(unittest.TestCase):
             scope.compare(before.replace(b'<footer>',b'<section>').replace(b'</footer>',b'</section>'),
                           after.replace(b'<footer>',b'<section>').replace(b'</footer>',b'</section>'), URL)
 
+    def test_exact_mobile_controls_and_historical_strictness(self):
+        controls = '<div class="mb-6 mt-auto xxl:hidden border-t bg-default"><a href="/pro/">Sign Up</a><a href="/login/">Log In</a><a href="/help/">Help</a></div>'
+        before = html()
+        after = before.replace(b'<body>', ('<body>'+controls).encode())
+        scope.compare(before, after, URL)
+        with self.assertRaises(ValueError):
+            scope.compare(before, after, URL, allow_mobile_controls=False)
+        for changed in [after.replace(b'Help', b'Profit grew'), after.replace(b'/login/', b'/claim/'),
+                        after.replace(b'</a></div>', b'</a>New claim</div>'),
+                        after.replace(b'xxl:hidden', b'xxl:visible'),
+                        after.replace(b'Fictional dialogue', b'Revised dialogue')]:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                scope.compare(before, changed, URL)
+
     def test_exact_country_navigation_and_old_comparison_strictness(self):
         nav='<nav aria-label="Main navigation"><ul id="Stocks-menu"><li>Stock Exchanges</li>{}</ul></nav>'
         link='<li><a class="fake" href="/list/countries/" title="By Country">By Country</a></li>'
