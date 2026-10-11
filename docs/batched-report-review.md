@@ -112,3 +112,12 @@ before/after its table reopens only format review. Changes to labels, citations,
 basis text, folds, hidden rows or summaries still invalidate dependent claims and
 signals. Two correction batches remain the maximum. No live token-saving claim
 is established by synthetic lifecycle tests.
+
+## Model assignments for new freezes
+
+Financial selection, transcript retrieval and report analysis use GPT-6 Luna at
+max effort. The combined path's signal author uses GPT-6.1 Sol at low effort,
+explicitly frozen as `signal_author_model`. Independent combined review and
+correction proposals continue using GPT-6.1 Sol at medium effort. Legacy separate
+signal author/reviewer editions retain their existing medium assignment.
+Existing frozen checkouts, protocols and authenticated jobs are not migrated.

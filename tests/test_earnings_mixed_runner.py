@@ -119,6 +119,12 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(receipt['usage']['input'], 80)
         self.assertEqual(receipt['usage']['totalTokens'], 110)
 
+    def test_low_effort_is_exactly_bound_for_signal_drafts(self):
+        request=runner._request(self.job,self.prompt,'gpt-6.1-sol','low',{'fake':'hash'},900)
+        self.assertEqual((request['model'],request['effort']),('gpt-6.1-sol','low'))
+        with self.assertRaises(ValueError):
+            runner._request(self.job,self.prompt,'gpt-6.1-sol','minimal',{},900)
+
     def test_unknown_model_rejected_before_launch(self):
         with self.assertRaises(ValueError):
             runner.run_role(self.job, self.prompt, 'gpt-6.1-anything', 'medium', {})

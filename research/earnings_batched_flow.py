@@ -63,7 +63,8 @@ def _advance(root,execute):
                 elif execute:runner.save(audit,diagnostics)
                 if diagnostics['issues']:return {'status':'preflight_blocked','stage':'mechanical_preflight','detail':diagnostics}
             text=signals.prompt('analysis',state,bundle,catalog,writing).replace('accepted report','draft report')
-            model=signals.MODEL
+            model=tuple(protocol.get('signal_author_model',signals.MODEL))
+            batch.require(model in (signals.MODEL,signals.DRAFT_MODEL),'Unknown frozen signal author assignment')
         else:
             text=pipe.prompt(role,bundle,writing,artifacts,[],catalog)
             model=pipe.MODELS[role]
