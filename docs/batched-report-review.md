@@ -75,3 +75,40 @@ The private completion verifier replays this pinned route and checks its exact
 HTML and complete artifact inventory before counting a report. Legacy requests
 continue through their original report and signal verifier. Changing the default
 pin or policy does not migrate stopped work or restart paused schedules.
+
+## Mechanical preflight for new editions
+
+The explicitly selected `mechanical-report-review-v2` policy compiles financial
+row labels, dimensions and citations from the existing deterministic display
+registry before drafting signals. Decimal scaling, units and filed dates remain
+source-derived. It does not invent accounting basis or repair ambiguous IDs,
+attribution, omissions or prose. Original authenticated artifacts remain intact.
+A private `mechanical-preflight.json` records candidate, format, catalog and
+source-bundle hashes plus structural diagnostics. Replay checks the same result.
+
+Select this policy only when freezing a new authorized request:
+
+```
+python3 -m research.earnings_passage_pipeline freeze PRIVATE_CASE PRIVATE_OUTPUT PRIVATE_WRITING --deterministic-corrections --batch-review --mechanical-preflight
+```
+
+Advance through `earnings_report_flow.advance`, as for the existing combined
+review controller. This option alone launches no models and changes no schedules.
+Private queue policy/default-pin and completion-verifier rollout is separate.
+Existing frozen editions retain their original policy, receipts and round limits.
+
+Independent review still assesses all substantive criteria against original
+sources and the rendered candidate. A passing decision may use an empty
+`passage_ids` list: its signed reviewer receipt certifies source support, and
+acceptance records the unit's actual source references separately. This avoids
+another model call merely to repeat IDs for already accepted units. Revisions
+and reopened claims still require nonempty exact passage IDs. No rejection is
+converted into acceptance by code. Review asks for all material defects together;
+optional wording preferences do not block acceptance.
+
+Correction review retains complete cited source scopes and both sides of relevant
+Q&A, but omits unrelated Q&A index rows. Moving an unchanged accounting note
+before/after its table reopens only format review. Changes to labels, citations,
+basis text, folds, hidden rows or summaries still invalidate dependent claims and
+signals. Two correction batches remain the maximum. No live token-saving claim
+is established by synthetic lifecycle tests.

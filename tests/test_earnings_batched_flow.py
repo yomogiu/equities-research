@@ -19,10 +19,17 @@ class FlowTests(PassageFixture,unittest.TestCase):
     def test_one_combined_correction_preserves_report_acceptance(self):
         self.exercise(True)
 
-    def exercise(self,correction):
+    def test_mechanical_policy_compiles_before_signal_author_and_retains_acceptance(self):
+        self.exercise(True,mechanical=True)
+
+    def exercise(self,correction,mechanical=False):
         root=self.root/'production';writing=self.root/'writing.txt';writing.write_text('Fictional writing')
-        flow.pipe.freeze(self.casepath,root,writing,deterministic_corrections=True,batch_review=True,qa_grounding=False)
+        flow.pipe.freeze(self.casepath,root,writing,deterministic_corrections=True,batch_review=True,qa_grounding=False,mechanical_preflight=mechanical)
         outputs={'financial':self.financial,'retrieval':self.retrieval,'analysis':self.report,'signal_author':self.pack(self.state())}
+        if mechanical:
+            from research import earnings_mechanical_preflight as preflight
+            state=self.state();state['format']=preflight.formatting(self.financial,self.bundle)
+            outputs['signal_author']=self.pack(state)
         calls=[]
         def run(job,text,model,effort,bindings,timeout):
             job=Path(job);job.mkdir(parents=True);calls.append(str(job))
@@ -33,7 +40,7 @@ class FlowTests(PassageFixture,unittest.TestCase):
             else:
                 data=json.loads(text.split('\nBATCH\n')[1])
                 out={'batch_sha256':data['batch_sha256'],'decisions':[
-                    {'unit_id':k,'verdict':'revise' if correction and data['round']==0 and k=='signal-1' else 'pass','reason':'Fictional original-source check','passage_ids':self.ids[:1]} for k in data['pending']],'reopen':[]}
+                    {'unit_id':k,'verdict':'revise' if correction and data['round']==0 and k=='signal-1' else 'pass','reason':'Fictional original-source check','passage_ids':[] if mechanical and not (correction and data['round']==0 and k=='signal-1') else self.ids[:1]} for k in data['pending']],'reopen':[]}
             (job/'prompt.txt').write_text(text)
             batch.runner.save(job/'request.json',{'model':model,'effort':effort,'bindings':bindings})
             batch.runner.save(job/'output.json',out)
@@ -53,6 +60,9 @@ class FlowTests(PassageFixture,unittest.TestCase):
             self.assertEqual(dispatch.advance(root,False)['report_sha256'],result['report_sha256'])
             self.assertEqual(len(calls),7 if correction else 5)
             self.assertFalse((root/'jobs/review-r0').exists())
+            if mechanical:
+                self.assertEqual(batch.runner.read(root/'mechanical-preflight.json')['status'],'ready_for_independent_review')
+                self.assertTrue(batch.runner.read(root/'batch-review/initial.json')['format']['value']['rows'])
 
     def test_legacy_protocol_does_not_route_to_batch_dispatcher(self):
         root=self.root/'legacy';writing=self.root/'writing.txt';writing.write_text('Fictional writing')
