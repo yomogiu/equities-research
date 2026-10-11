@@ -14,7 +14,8 @@ from . import source_parse, transcript_evidence, financial_evidence
 
 LEGACY_VERSION = 'stockanalysis-market-widget-currentness-v1'
 APP_COUNTER_VERSION = 'stockanalysis-market-and-app-counter-currentness-v2'
-VERSION = 'stockanalysis-market-app-counter-and-country-navigation-currentness-v3'
+COUNTRY_VERSION = 'stockanalysis-market-app-counter-and-country-navigation-currentness-v3'
+VERSION = 'stockanalysis-market-app-counter-country-and-mobile-controls-currentness-v4'
 STATUS = 'scoped_transcript_verified'
 
 
@@ -106,7 +107,26 @@ def country_navigation(html):
     return html[:start] + html[end:]
 
 
-def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False):
+
+def mobile_controls(html):
+    """Mask only the exact redundant mobile signup/login/help controls."""
+    matches = []
+    for match in re.finditer(r'<div\b(?=[^>]*class="[^"]*\bmt-auto\b)[^>]*class="([^"]*)"[^>]*>.*?</div>', html, re.S):
+        classes = set(match.group(1).split())
+        if {'mb-6', 'mt-auto', 'xxl:hidden', 'border-t', 'bg-default'} <= classes:
+            matches.append(match)
+    require(len(matches) <= 1, 'Ambiguous mobile controls')
+    if not matches: return html
+    match = matches[0]; block = match.group()
+    require('transcript-sentence' not in block, 'Mobile controls overlap call evidence')
+    links = re.findall(r'<a\b[^>]*href="([^"]*)"[^>]*>(.*?)</a>', block, re.S)
+    require([url for url, _ in links] == ['/pro/', '/login/', '/help/'], 'Unrecognized mobile control links')
+    labels = [' '.join(source_parse.page(body.encode(), 'https://stockanalysis.com/').text.split()) for _, body in links]
+    require(labels == ['Sign Up', 'Log In', 'Help'], 'Unrecognized mobile control labels')
+    require(''.join(source_parse.page(block.encode(), 'https://stockanalysis.com/').text.split()) == 'SignUpLogInHelp', 'Unexpected mobile control content')
+    return html[:match.start()] + html[match.end():]
+
+def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False):
     require(urlsplit(url).hostname == 'stockanalysis.com' and
             re.fullmatch(r'/stocks/[a-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path),
             'Unsupported transcript publisher URL')
@@ -134,6 +154,8 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
         outside_html = app_counters(outside_html)
     if allow_country_navigation:
         outside_html = country_navigation(outside_html)
+    if allow_mobile_controls:
+        outside_html = mobile_controls(outside_html)
     outside = source_parse.page(outside_html.encode(), url).text
     facts = financial_evidence.extract_inline_xbrl(html, {'document_id': 'scope', 'raw_sha256': sha(raw), 'text_sha256': sha(page.text.encode())})
     facts = {'observations': [{k:v for k,v in o.items() if k not in ('observation_id','source_raw_sha256','support')} for o in facts['observations']],
@@ -145,9 +167,9 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
             'widget_html_span': [a,b], 'widget_sha256': sha(html[a:b].encode())}
 
 
-def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True):
-    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation)
-    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation)
+def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True):
+    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls)
+    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls)
     require(old == new, 'Complete transcript, metadata or non-widget content changed')
     require(old['title'] and old['block_sha256'], 'Transcript metadata missing')
     return {'signature': old, 'archived': old_spans, 'observed': new_spans,
@@ -160,7 +182,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -168,7 +190,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     observed_text = library.load_bytes(root, new['text_path'], new['text_sha256'])
     require(source_parse.page(after,value['source_url']).text.encode() == observed_text, 'Observed extraction mismatch')
     require(source_parse.page(before,value['source_url']).text.encode() == text, 'Archived extraction mismatch')
-    require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] == VERSION) == value['comparison'], 'Scoped comparison changed')
+    require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] == VERSION) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
