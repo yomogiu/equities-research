@@ -79,14 +79,14 @@ def apply(protocol,bundle,catalog):
     rec=protocol['attribution_preparer_recovery'];seed=Path(rec['seed'])
     old,code=original(seed)
     require(r.sha(seed/'protocol.json')==rec['seed_protocol_sha256'] and rec['version']==VERSION and rec['authorization'].strip(), 'Original attribution binding changed')
-    ignored={'code','attribution_preparer_recovery','attribution_code_recovery','qa_grounding_path','qa_grounding_sha256'}
+    ignored={'code','attribution_preparer_recovery','attribution_code_recovery','analysis_schema_recovery','qa_grounding_path','qa_grounding_sha256'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored}, 'Attribution recovery changed original settings')
     if protocol.get('attribution_code_recovery'):
         repair=protocol['attribution_code_recovery'];failed=Path(repair['seed'])
         require(repair.get('authorization','').strip() and repair.get('prior_rounds')==0 and repair.get('new_calls_before_stop')==0, 'Mechanical attribution budget or authorization changed')
         require(r.sha(failed/'protocol.json')==repair['protocol_sha256'] and r.sha(failed.parent/'state.json')==repair['state_sha256'], 'Mechanical attribution source changed')
         prior=r.read(failed/'protocol.json')
-        require({k:v for k,v in protocol.items() if k not in {'code','attribution_code_recovery','qa_grounding_path','qa_grounding_sha256'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256'}}, 'Mechanical recovery changed frozen settings')
+        require({k:v for k,v in protocol.items() if k not in {'code','attribution_code_recovery','analysis_schema_recovery','qa_grounding_path','qa_grounding_sha256'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256'}}, 'Mechanical recovery changed frozen settings')
         require(not (failed/'batch-jobs').exists() and not (failed/'batch-review').exists() and not (failed/'result.json').exists(), 'Mechanical attribution continuation cannot reset executed work')
     refs=rec['responses'];require(set(refs)=={'financial','retrieval'}, 'Both exact preparers required')
     responses={}
@@ -105,6 +105,22 @@ def apply(protocol,bundle,catalog):
     pipe.validate('financial',responses['financial']['content'],derived,catalog)
     pipe.validate('retrieval',out,derived,catalog)
     results={role:{'content':out if role=='retrieval' else value['content'],'receipt':{'session':value['session'],'usage_is_inherited':True}} for role,value in responses.items()}
+    if protocol.get('analysis_schema_recovery'):
+        binding=protocol['analysis_schema_recovery'];parent=Path(binding['seed'])
+        require(binding.get('authorization','').strip() and binding.get('prior_rounds')==0, 'Analysis schema recovery authority or budget changed')
+        require(r.sha(parent/'protocol.json')==binding['protocol_sha256'] and r.sha(parent.parent/'state.json')==binding['state_sha256'], 'Analysis schema parent changed')
+        prior=r.read(parent/'protocol.json')
+        require({k:v for k,v in protocol.items() if k not in {'code','analysis_schema_recovery','qa_grounding_path','qa_grounding_sha256'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256'}}, 'Analysis schema recovery changed frozen settings')
+        require({p.name for p in (parent/'batch-jobs').iterdir()}=={'analysis'} and not (parent/'batch-review').exists() and not (parent/'result.json').exists(), 'Analysis schema recovery cannot reset later work')
+        ref=binding['analysis'];require(ref['job']==str(parent/'batch-jobs/analysis'), 'Analysis schema role reference changed')
+        value=imp.authenticate(ref);request=r.read(parent/'batch-jobs/analysis/request.json')
+        require(request['bindings']=={'protocol_sha256':r.sha(parent/'protocol.json'),'role':'analysis','dependencies_sha256':r.digest({role:results[role]['content'] for role in ('financial','retrieval')})}, 'Analysis schema dependencies changed')
+        require((request['model'],request['effort'])==tuple(protocol['models']['analysis']), 'Original analysis model assignment changed')
+        require((parent/'batch-jobs/analysis/prompt.txt').read_text()==pipe.prompt('analysis',derived,Path(protocol['writing_standard']).read_text(),{role:results[role]['content'] for role in ('financial','retrieval')},[],catalog), 'Original analysis prompt changed')
+        require(value['session']['id'] not in ids | {review['session']['id']}, 'Independent analysis session required')
+        out,derivation=empty_quotes(value['content']);require(derivation==binding['derivation'], 'Analysis schema derivation changed')
+        pipe.validate('analysis',out,derived,catalog)
+        results['analysis']={'content':out,'receipt':{'session':value['session'],'usage_is_inherited':True}}
     return derived,results,review
 
 
@@ -135,6 +151,36 @@ def continue_stopped(seed,output,authorization):
     protocol=copy.deepcopy(old)
     protocol['code']=[{'path':str(p),'sha256':r.sha(p)} for p in sorted(Path(__file__).parent.glob('earnings_*')) if p.suffix in ('.py','.mjs')]
     protocol['attribution_code_recovery']={'seed':str(seed),'protocol_sha256':r.sha(seed/'protocol.json'),'state_sha256':r.sha(seed.parent/'state.json'),'authorization':authorization,'prior_rounds':0,'new_calls_before_stop':0}
+    apply(protocol,pipe.evidence.load_bundle(old['evidence_manifest']),r.read(seed/'passages.json'))
+    output.mkdir(parents=True)
+    for name in ('passages.json','qa-grounding.json'):(output/name).write_bytes((seed/name).read_bytes())
+    protocol['qa_grounding_path']=str(output/'qa-grounding.json');protocol['qa_grounding_sha256']=r.sha(output/'qa-grounding.json')
+    r.save(output/'protocol.json',protocol);pipe.load(output)
+    return protocol
+
+
+def empty_quotes(original):
+    """One omitted empty quote list only; no text, citations or selected quotes change."""
+    require(isinstance(original.get('findings'),list), 'Analysis findings required')
+    missing=[i for i,f in enumerate(original['findings']) if 'quotes' not in f]
+    require(len(missing)==1, 'Exactly one missing empty quotes list required')
+    require(all(isinstance(f.get('quotes',[]),list) and len(f.get('quotes',[]))<=4 for f in original['findings']), 'Other invalid quote lists cannot be normalized')
+    out=copy.deepcopy(original);out['findings'][missing[0]]['quotes']=[]
+    return out,{'version':'missing-empty-finding-quotes-v1','path':f'/findings/{missing[0]}/quotes','value':[],'original_sha256':r.digest(original),'derived_sha256':r.digest(out)}
+
+
+def continue_analysis_schema(seed,output,authorization):
+    from . import earnings_passage_pipeline as pipe
+    seed,output=Path(seed).resolve(),Path(output).resolve()
+    require(not output.exists() and authorization.strip(), 'New authorized analysis schema successor required')
+    old=r.read(seed/'protocol.json');require(old.get('attribution_preparer_recovery') and not old.get('analysis_schema_recovery'), 'Exact attribution analysis source required')
+    state=r.read(seed.parent/'state.json')
+    require(state.get('status')=='validation_blocked' and state.get('reason')=='Each finding requires a quotes list of at most four selections', 'Exact missing-empty-quotes stop required')
+    for c in old['code']:require(r.sha(c['path'])==c['sha256'], 'Original analysis schema code changed')
+    code=Path(next(c['path'] for c in old['code'] if c['path'].endswith('/earnings_mixed_runner.py'))).parent.parent
+    ref=imp.reference(seed/'batch-jobs/analysis',code);_,derivation=empty_quotes(imp.authenticate(ref)['content'])
+    protocol=copy.deepcopy(old);protocol['code']=[{'path':str(p),'sha256':r.sha(p)} for p in sorted(Path(__file__).parent.glob('earnings_*')) if p.suffix in ('.py','.mjs')]
+    protocol['analysis_schema_recovery']={'seed':str(seed),'protocol_sha256':r.sha(seed/'protocol.json'),'state_sha256':r.sha(seed.parent/'state.json'),'authorization':authorization,'prior_rounds':0,'analysis':ref,'derivation':derivation}
     apply(protocol,pipe.evidence.load_bundle(old['evidence_manifest']),r.read(seed/'passages.json'))
     output.mkdir(parents=True)
     for name in ('passages.json','qa-grounding.json'):(output/name).write_bytes((seed/name).read_bytes())

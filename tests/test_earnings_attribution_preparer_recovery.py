@@ -61,3 +61,15 @@ class BatchedInheritedAttributionBoundaryTests(__import__('unittest').TestCase):
                 result=flow._advance(root,False)
             self.assertEqual(result,{'status':'pending','stage':'batch_initialization'})
             self.assertEqual([call.args[1] for call in jobs.call_args_list],['analysis','signal_author'])
+
+class MissingEmptyQuoteDerivationTests(__import__('unittest').TestCase):
+    def test_only_one_absent_empty_list_changes(self):
+        original={'findings':[{'text':'Fake first','citations':['D001'],'quotes':[{'passage_id':'fake'}]},{'text':'Fake second','citations':['D002']}]}
+        derived,receipt=recovery.empty_quotes(original)
+        self.assertNotIn('quotes',original['findings'][1]);self.assertEqual(derived['findings'][0],original['findings'][0]);self.assertEqual(derived['findings'][1],{**original['findings'][1],'quotes':[]});self.assertEqual(receipt['path'],'/findings/1/quotes')
+    def test_no_missing_or_multiple_missing_lists_rejected(self):
+        for findings in ([{'quotes':[]}],[{},{}]):
+            with self.assertRaisesRegex(ValueError,'Exactly one'):recovery.empty_quotes({'findings':findings})
+    def test_other_invalid_or_substantive_list_cannot_be_changed(self):
+        for quotes in ('fake',list(range(5))):
+            with self.assertRaisesRegex(ValueError,'Other invalid'):recovery.empty_quotes({'findings':[{'quotes':quotes},{}]})
