@@ -162,7 +162,8 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
             from .earnings_batch_review import FACTUAL_VERSION
             protocol['batch_review']=FACTUAL_VERSION
         if mechanical_preflight:
-            from .earnings_batch_context import VERSION as CONTEXT_VERSION
+            from .earnings_batch_context import VERSION as LEGACY_CONTEXT_VERSION, CHECKED_VERSION
+            CONTEXT_VERSION = CHECKED_VERSION if split_review else LEGACY_CONTEXT_VERSION
             protocol['review_context']=CONTEXT_VERSION
         from .earnings_signals import DRAFT_MODEL
         protocol['signal_author_model'] = list(DRAFT_MODEL)
