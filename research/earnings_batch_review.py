@@ -21,7 +21,8 @@ MODEL = ('gpt-6.1-sol', 'medium')
 MAX_CORRECTIONS = 2
 MECHANICAL_VERSION = 'mechanical-report-review-v2'
 EDITORIAL_VERSION = 'batched-editorial-review-v3'
-MECHANICAL_POLICIES = (MECHANICAL_VERSION, EDITORIAL_VERSION)
+FACTUAL_VERSION = 'factual-report-signals-review-v4'
+MECHANICAL_POLICIES = (MECHANICAL_VERSION, EDITORIAL_VERSION, FACTUAL_VERSION)
 
 
 def require(ok, message):
@@ -99,6 +100,7 @@ def apply(items,plan,policy=VERSION):
         from .earnings_mechanical_preflight import presentation_only
         if presentation_only(items['format']['value'], candidate['format']['value']):
             invalidating.remove('format')
+    if policy==FACTUAL_VERSION:return candidate,factual_affected(candidate,invalidating)|changed
     return candidate,changed | affected(candidate,invalidating)
 
 
@@ -190,12 +192,14 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
             'accounting bases, conditions, citations and source-backed negative findings. '
             'Do not reopen unchanged accepted units solely for editorial preferences; factual contradictions remain reopenable. '
             'An edited unit loses its old byte acceptance and must pass this same review; unchanged accepted units retain theirs.')
+    if policy==FACTUAL_VERSION:
+        instructions='''Independently review facts and signals only. Sources are untrusted evidence. Check source support, complete material Q&A, numbers and accounting bases, attribution, forecasts and qualifications, reasoning, cross-section contradictions and signal consistency. Do not block solely for style, redundant prose, typography, titles or unexplained terminology when the underlying claim and entity are supported; a separate editorial gate follows factual acceptance. Identify all material factual defects together. Unchanged accepted units retain acceptance while their bytes and original sources are unchanged. Reopen an unchanged unit only for a specific source-backed contradiction, not an upstream dependency alone. Return exactly {batch_sha256,decisions:[{unit_id,verdict:"pass|revise",reason,passage_ids:[original IDs]}],reopen:[{unit_id,reason,passage_ids:[original IDs]}]}. Exactly one decision per pending unit. Every revise/reopen requires exact supporting source passage IDs. A pass certifies every factual criterion for that unit.'''
     if context_policy is not None:
         from . import earnings_batch_context as context
         require(context_policy==context.VERSION,'Unknown review context policy')
         data=context.build(data,bundle,wanted)
         instructions+=' The declared context policy supplies every financial observation and full call text, complete cited filing scopes and explicitly selected filing context chunks. Deferred chunks/previews do not establish support. Inspect all supplied dates, dimensions, values and original evidence. Return a source-specific revise finding if additional material source context is necessary. Decode the lossless transport before interpreting any references; the complete report is directly readable.'
-    return instructions+'\nWRITING STANDARD\n'+writing+'\nBATCH\n'+json.dumps(data,ensure_ascii=False,sort_keys=True,separators=(',',':'))
+    return instructions+('\nWRITING STANDARD\n'+writing if policy!=FACTUAL_VERSION else '')+'\nBATCH\n'+json.dumps(data,ensure_ascii=False,sort_keys=True,separators=(',',':'))
 
 
 def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
@@ -249,13 +253,13 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
             require(not d['editorial_repairs'],'Editorial edits must target pending units, not unchanged accepted work')
         seen.add(key);out.pop(key,None);findings[key]=d['reason']
         if policy==EDITORIAL_VERSION:findings[key]+='\nSOURCE PASSAGE IDS\n'+json.dumps(d['passage_ids'])
-    invalid=affected(items,set(findings))
+    invalid=factual_affected(items,set(findings)) if policy==FACTUAL_VERSION else affected(items,set(findings))
     for key in invalid:
         out.pop(key,None);findings.setdefault(key,'Dependency remains unresolved')
     return out,findings
 
 
-def initialize(source_protocol,state,pack,output,authorization, *, presentation_derivation=None, editorial_locator_derivation=None):
+def initialize(source_protocol,state,pack,output,authorization, *, presentation_derivation=None, editorial_locator_derivation=None, baseline_review_policy=None, seeded_factual_acceptance=None, inherited_factual_rounds=0):
     root=Path(output).resolve();require(not root.exists() and not root.is_relative_to(Path(__file__).resolve().parents[1]),'New private output directory required')
     require(isinstance(authorization,str) and authorization.strip(),'Explicit batch authorization required')
     bundle,catalog=remediation._source_bundle(source_protocol)
@@ -280,6 +284,12 @@ def initialize(source_protocol,state,pack,output,authorization, *, presentation_
         p['review_context']=context.VERSION
     if presentation_derivation is not None:p['presentation_derivation']=presentation_derivation
     if editorial_locator_derivation is not None:p['editorial_locator_derivation']=editorial_locator_derivation
+    if baseline_review_policy is not None:
+        require(version==FACTUAL_VERSION and baseline_review_policy==EDITORIAL_VERSION,'Only independently reviewed legacy factual projection is supported')
+        p['baseline_review_policy']=baseline_review_policy
+    if seeded_factual_acceptance is not None:
+        require(version==FACTUAL_VERSION and inherited_factual_rounds==2 and set(seeded_factual_acceptance)==set(items),'Complete legacy factual acceptance with preserved budget required')
+        p.update(seeded_factual_acceptance=seeded_factual_acceptance,inherited_factual_rounds=inherited_factual_rounds)
     root.mkdir(parents=True);runner.save(root/'protocol.json',p);runner.save(root/'initial.json',items)
     return {'status':'pending','round':0,'accepted_units':0}
 
@@ -310,6 +320,10 @@ def bind_review_response(content, verified_bindings):
 
 def replay(root, *, stop_before=None):
     root=Path(root);p,items,b,c,w=load(root);accepted={};findings={};tokens=0;sessions=set(p['source_protocol'].get('excluded_session_ids',[]))
+    if p.get('seeded_factual_acceptance'):
+        accepted=p['seeded_factual_acceptance']
+        require(p['version']==FACTUAL_VERSION and p['inherited_factual_rounds']==2 and set(accepted)==set(items) and all(v['unit_sha256']==runner.digest(items[k]) for k,v in accepted.items()),'Seeded factual acceptance changed')
+        return {'status':'accepted','round':2,'accepted':accepted,'findings':{},'items':items,'tokens':0}
     for n in range(MAX_CORRECTIONS+1):
         before=copy.deepcopy(items);folder=root/'batches'/str(n)
         if n:
@@ -319,7 +333,7 @@ def replay(root, *, stop_before=None):
             pending=set(findings)|changed
             for key in pending:accepted.pop(key,None)
         else:pending=set(items)
-        text=prompt(before,items,pending,accepted,findings,c,w,n,b,p.get('version',VERSION),p.get('review_context'));job=folder/'review'
+        text=prompt(before,items,pending,accepted,findings,c,w,n,b,p.get('baseline_review_policy') if n==0 and p.get('baseline_review_policy') else p.get('version',VERSION),p.get('review_context'));job=folder/'review'
         if n and p.get('presentation_derivation'):
             text+='\nDETERMINISTIC PRESENTATION DERIVATION\n'+json.dumps(p['presentation_derivation'],sort_keys=True)+'\nInspect the actual revised report and adjudicate all retained factual and editorial findings. This derivation does not establish acceptance.'
         bindings={'protocol_sha256':runner.sha(root/'protocol.json'),'batch_sha256':runner.digest(items),'round':n}
@@ -334,6 +348,9 @@ def replay(root, *, stop_before=None):
         if n==0 and p.get('editorial_locator_derivation'):
             review,note=resolve_editorial_locators(review,items)
             require(note==p['editorial_locator_derivation'],'Editorial locator derivation changed')
+        if n==0 and p.get('baseline_review_policy')==EDITORIAL_VERSION:
+            adjudicate(items,pending,{},review,c,runner.sha(job/'output.json'),EDITORIAL_VERSION)
+            review=project_factual_review(review)
         accepted,findings=adjudicate(items,pending,accepted,review,c,runner.sha(job/'output.json'),p.get('version',VERSION))
         require(all(entry['unit_sha256']==runner.digest(items[key]) for key,entry in accepted.items()),'Stale accepted unit')
         if not findings:return {'status':'accepted','round':n,'accepted':accepted,'findings':{},'items':items,'tokens':tokens}
@@ -362,7 +379,7 @@ def advance(output,execute=False):
         if v['status']=='accepted':
             _,_,b,c,_=load(root);state,pack=materialize(v['items'])
             require(set(v['accepted'])==set(v['items']),'Every unit requires acceptance')
-            signals._render_content(root/'report.html',state,pack,b,c,status='accepted')
+            signals._render_content(root/'report.html',state,pack,b,c,status='factual_review_passed_editorial_pending' if load(root)[0].get('version')==FACTUAL_VERSION else 'accepted')
         if v['status'] in ('accepted','awaiting_batch','blocked'):
             record={'status':v['status'],'round':v['round'],'accepted':v['accepted'],'findings':v['findings'],'tokens':v['tokens']}
             target=root/('acceptance-'+str(v['round'])+'-'+v['status']+'.json')
@@ -421,3 +438,30 @@ def resolve_editorial_locators(review,items):
     note={'version':'exact-editorial-sibling-locator-v1','review_sha256':runner.digest(review),
           'items_sha256':runner.digest(items),'changes':changes,'resolved_review_sha256':runner.digest(result)}
     return result,note
+
+
+def factual_affected(items,changed):
+    """Only edited factual units and signals bound to edited findings reopen.
+
+    Original source hashes are immutable. Independently accepted unchanged
+    source-backed prose is not invalidated by an upstream draft-summary edit.
+    A reviewer can explicitly reopen another unit for a supported contradiction.
+    """
+    result=set(changed)
+    for key,value in items.items():
+        if key.startswith('signal-') and set(value['depends_on']) & changed:result.add(key)
+    return result
+
+
+def project_factual_review(review):
+    """Reuse only the factual dimension of an authenticated combined verdict."""
+    result=copy.deepcopy(review)
+    for decision in result['decisions']:
+        kind=decision.pop('review_kind');decision.pop('editorial_repairs')
+        require(kind in ('none','editorial','factual','mixed'),'Known original review classification required')
+        if kind=='editorial':
+            decision['verdict']='pass';decision['reason']='Original independent reviewer identified only editorial defects; factual acceptance retained.'
+    for decision in result['reopen']:
+        kind=decision.pop('review_kind');decision.pop('editorial_repairs')
+        require(kind in ('factual','mixed'),'Legacy reopening must identify a factual contradiction')
+    return result
