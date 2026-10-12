@@ -65,7 +65,11 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
     grounding=pipe.grounding.build(bundle,catalog,version)
     if resolve_question_ids:
         prior=imp.authenticate(refs['retrieval'])['content']
-        _,derivation=derive_question_ids(prior,catalog,grounding,refs['retrieval'])
+        derived,derivation=derive_question_ids(prior,catalog,grounding,refs['retrieval'])
+        preflight={**bundle,'qa_grounding':grounding}
+        derived,_=pipe.grounding.normalize_courtesy(derived,preflight,catalog)
+        pipe.validate('financial',imp.authenticate(refs['financial'])['content'],preflight,catalog)
+        pipe.validate('retrieval',derived,preflight,catalog)
         protocol['grounding_recovery']['question_id_derivation']=derivation
     if operator_review:
         from .earnings_reviewed_operator import apply
