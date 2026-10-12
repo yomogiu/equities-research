@@ -293,8 +293,11 @@ def validate_retrieval(out, bundle, catalog):
                 if pid not in pids or pid not in allowed or not pids[pid]['text'].strip():
                     raise ValueError('Q&A supporting passage is outside the indexed ' + field + ': ' + eid)
         status = row['grounding_status']
-        if status not in ('bound', 'unresolved', 'courtesy_only', 'reviewed_non_qa') or not isinstance(row['grounding_notes'], str) or not row['grounding_notes'].strip():
+        if status not in ('bound', 'unresolved', 'courtesy_only', 'reviewed_non_qa','continued_answer') or not isinstance(row['grounding_notes'], str) or not row['grounding_notes'].strip():
             raise ValueError('Q&A grounding needs explicit status and review notes: ' + eid)
+        if status=='continued_answer':
+            if e['mechanical_disposition']!='reviewed_answer_continuation' or not e.get('reviewed_continued_from') or row['question_passage_ids'] or row['continuation_exchange_ids'] or not row['answer_passage_ids']:
+                raise ValueError('Continued answer requires authenticated source disposition: '+eid)
         if status == 'reviewed_non_qa':
             if e['mechanical_disposition']!='reviewed_non_qa' or not e.get('reviewed_turn_dispositions') or any(row[k] for k in FIELDS[:3]):
                 raise ValueError('Non-Q&A disposition requires authenticated complete-turn review: '+eid)
@@ -378,7 +381,7 @@ def require_analysis_ready(out, bundle, catalog):
             raise ValueError('Substantive unassigned Q&A turns require source-index repair before analysis: '
                              + ', '.join(unassigned))
         unresolved = [row['exchange_id'] for row in out['exchange_coverage']
-                      if row['grounding_status'] not in ('bound', 'courtesy_only', 'reviewed_non_qa')]
+                      if row['grounding_status'] not in ('bound', 'courtesy_only', 'reviewed_non_qa','continued_answer')]
         if unresolved:
             raise ValueError('Q&A grounding unresolved; repair source attribution before analysis: '
                              + ', '.join(unresolved))
@@ -412,6 +415,14 @@ def normalize_courtesy(out, bundle, catalog):
         e = exchanges.get(row.get('exchange_id'))
         if e is None:
             raise ValueError('Unknown exchange in courtesy normalization')
+        if e['mechanical_disposition']=='reviewed_answer_continuation':
+            before=copy.deepcopy(row)
+            answers=[pid for t in e['turns'] if t['id'] in e['answer_turn_ids'] for pid in t['passage_ids']]
+            row.update(question_passage_ids=[],answer_passage_ids=answers,continuation_exchange_ids=[],
+                       grounding_status='continued_answer',grounding_notes=e['review_reason'])
+            receipt.append({'exchange_id':e['exchange_id'],'before_sha256':base.digest(before),'after_sha256':base.digest(row),
+                            'turns':copy.deepcopy(e['turns']),'continued_from':e['reviewed_continued_from']})
+            continue
         if e['mechanical_disposition']=='reviewed_non_qa':
             before=copy.deepcopy(row)
             row.update(question_passage_ids=[],answer_passage_ids=[],continuation_exchange_ids=[],
