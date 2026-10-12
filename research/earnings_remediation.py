@@ -136,6 +136,24 @@ EXPORT = '''
 import json,sys
 from pathlib import Path
 root=Path(sys.argv[1]);p=json.loads((root/'protocol.json').read_text());uncertainty=None
+if p.get('version') in ('luna6-sol-presentation-v4','luna6-sol-efficient-v5') and p.get('batch_review')=='batched-editorial-review-v3':
+ from research import earnings_passage_pipeline as pipe, earnings_report_flow as flow, earnings_batch_review as b, earnings_mixed_runner as r
+ pipe.load(root)
+ result=flow.advance(root,False);v=b.replay(root/'batch-review')
+ if result['status']!='blocked' or v['status']!='blocked' or v['round']!=2 or p['max_correction_rounds']!=2:
+  raise ValueError('Only a conclusively blocked ordinary batch after two author rounds can be remediated')
+ state,pack=b.materialize(v['items'])
+ state['findings']=[{'id':b.remediation.repair.finding_id({'unit_id':k,'reason':reason}),'finding':{'unit_id':k,'reason':reason}} for k,reason in sorted(v['findings'].items())]
+ if not state['findings']:raise ValueError('Blocked batch must retain unresolved findings')
+ accounting=result.get('token_accounting');prior=result['detail']['tokens']
+ if accounting:
+  from research import earnings_signal_overload_recovery as retry
+  binding=p['signal_provider_recovery'];receipt=retry.inspect(binding['seed'])
+  if {k:v for k,v in binding.items() if k!='authorization'}!=receipt or not accounting['usage_is_unknown'] or accounting['failed_request_reserved_tokens']!=receipt['failed_request_upper_bound_tokens'] or prior!=accounting['known_measured_tokens']+accounting['failed_request_reserved_tokens']:
+   raise ValueError('Audited historical provider accounting differs from original flow')
+  uncertainty={'version':'audited-terminal-signal-overload-reserve-v1',**accounting,'failed_job':receipt['job'],'failed_session':receipt['session_id'],'source_flow_replay_sha256':r.digest(result),'signal_failure_binding_sha256':r.digest(binding),'correction_rounds':2}
+ print(json.dumps({'status':'blocked','snapshot':state,'source_protocol':b.load(root/'batch-review')[0]['source_protocol'],'prior_rounds':2,'prior_tokens':prior,**({'source_usage_uncertainty':uncertainty} if uncertainty else {})}))
+ sys.exit(0)
 if p['version']=='interrupted-report-review-v1':
  from research import earnings_interrupted_review as c
  v=c.verify(root)
@@ -187,12 +205,13 @@ print(json.dumps({'status':v['status'],'snapshot':v['state'],'source_protocol':p
 
 def export_seed(seed):
     p = base.read(seed/'protocol.json')
+    ordinary_batch = p.get('version') in (pipe.VERSION,pipe.EFFICIENT_VERSION) and p.get('batch_review')=='batched-editorial-review-v3' and p.get('max_correction_rounds')==2
     prepared = p.get('version') == pipe.EFFICIENT_VERSION and bool(p.get('prepared_recovery'))
-    if not prepared and p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, corrections.financial_evidence.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION, 'interrupted-report-review-v1'}:
+    if not ordinary_batch and not prepared and p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, corrections.financial_evidence.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION, 'interrupted-report-review-v1'}:
         raise ValueError('A stopped corrections or remediation seed is required')
     for item in p['code']:
         if base.sha(item['path']) != item['sha256']: raise ValueError('Seed verifier code changed')
-    verifier_name = ('earnings_interrupted_review.py' if p['version']=='interrupted-report-review-v1' else
+    verifier_name = ('earnings_passage_pipeline.py' if ordinary_batch else 'earnings_interrupted_review.py' if p['version']=='interrupted-report-review-v1' else
                      'earnings_passage_pipeline.py' if prepared else
                      'earnings_remediation.py' if p['version'].startswith('targeted-remediation-') else 'earnings_corrections.py')
     code = Path(next(x['path'] for x in p['code'] if x['path'].endswith('/' + verifier_name))).parent.parent
@@ -258,10 +277,32 @@ def seed_bindings(seed, old):
         if base.sha(name) != digest:
             raise ValueError('Prepared ancestry source changed')
         bindings[name] = digest
+    if old.get('attribution_preparer_recovery'):
+        from . import earnings_role_import as imported
+        recovery=old['attribution_preparer_recovery']
+        refs=[*recovery['responses'].values(),recovery['review']]
+        if old.get('analysis_schema_recovery'):refs.append(old['analysis_schema_recovery']['analysis'])
+        for ref in refs:
+            imported.authenticate(ref)
+            for name,digest in ref['files'].items():
+                path=str(Path(ref['job'])/name)
+                if base.sha(path)!=digest:raise ValueError('Inherited attribution role changed')
+                bindings[path]=digest
+        candidate=Path(recovery['candidate_path'])
+        if base.sha(candidate)!=recovery['candidate_sha256']:raise ValueError('Inherited attribution candidate changed')
+        bindings[str(candidate)]=base.sha(candidate)
+        for path,digest in base.read(candidate)['input_sha256'].items():
+            if base.sha(path)!=digest:raise ValueError('Inherited attribution input changed')
+            bindings[path]=digest
+        for path,digest in old.get('signal_provider_recovery',{}).get('input_sha256',{}).items():
+            if base.sha(path)!=digest:raise ValueError('Inherited failed provider receipt changed')
+            bindings[path]=digest
     for p in seed.rglob('*'):
         if p.is_symlink(): raise ValueError('Seed symlinks are forbidden')
         if p.is_file() and not p.name.startswith('.'): bindings[str(p)] = base.sha(p)
     prior_sessions = list(old.get('excluded_session_ids', [])) if old.get('version')=='interrupted-report-review-v1' or old.get('source_usage_uncertainty') is not None else []
+    if old.get('batch_review')=='batched-editorial-review-v3' and (seed/'batch-review/protocol.json').exists():
+        prior_sessions += base.read(seed/'batch-review/protocol.json')['source_protocol'].get('excluded_session_ids',[])
     for name in bindings:
         if Path(name).name == 'execution.json':
             sid = base.read(name).get('session', {}).get('id')
@@ -315,6 +356,22 @@ def validate_remaining_reviews(old, exported, authorization):
         raise ValueError('Remaining review migration must preserve context and token policy')
 
 
+def bounded_history_authorization(uncertainty,exported,authorization):
+    """Allow a bounded new review only for an audited historical upper-bound reserve."""
+    return (isinstance(uncertainty,dict) and uncertainty.get('version')=='audited-terminal-signal-overload-reserve-v1'
+                       and uncertainty.get('usage_is_unknown') is True and uncertainty.get('correction_rounds')==2
+                       and type(uncertainty.get('known_measured_tokens')) is int and uncertainty['known_measured_tokens']>=0
+                       and type(uncertainty.get('total_tokens_upper_bound')) is int
+                       and isinstance(uncertainty.get('source_flow_replay_sha256'),str) and len(uncertainty['source_flow_replay_sha256'])==64
+                       and uncertainty.get('failed_job')==exported['source_protocol'].get('signal_provider_recovery',{}).get('job')
+                       and uncertainty.get('failed_session')==exported['source_protocol'].get('signal_provider_recovery',{}).get('session_id')
+                       and uncertainty.get('failed_request_reserved_tokens')==272000
+                       and uncertainty.get('total_tokens_upper_bound')==uncertainty.get('known_measured_tokens',0)+272000
+                       and uncertainty.get('total_tokens_upper_bound')==exported['prior_tokens']
+                       and uncertainty.get('signal_failure_binding_sha256')==base.digest(exported['source_protocol'].get('signal_provider_recovery',{}))
+                       and authorization['max_tokens']==200000 and authorization['max_review_attempts']==1)
+
+
 def initialize(seed, output, plan, authorization):
     seed = Path(seed).resolve(); root = Path(output).resolve()
     if root == seed or root.is_relative_to(seed) or root.is_relative_to(Path(__file__).resolve().parents[1]):
@@ -324,7 +381,8 @@ def initialize(seed, output, plan, authorization):
     validate_remaining_reviews(old, exported, authorization)
     snapshot = exported['snapshot']
     uncertainty=exported.get('source_usage_uncertainty')
-    if uncertainty is not None and (authorization['max_tokens'] is not None or authorization['max_review_attempts']!=1):
+    bounded_history = bounded_history_authorization(uncertainty,exported,authorization)
+    if uncertainty is not None and not bounded_history and (authorization['max_tokens'] is not None or authorization['max_review_attempts']!=1):
         raise ValueError('Unknown historical usage requires explicit uncapped authority and one targeted review')
     if set(snapshot['artifacts']) != {'financial', 'retrieval', 'analysis'} or not snapshot['findings']:
         raise ValueError('Complete stopped candidate and unresolved findings required')
@@ -393,7 +451,8 @@ def load(output):
         raise ValueError('Derived seed provenance differs from original authenticated replay')
     if p.get('source_usage_uncertainty')!=exported.get('source_usage_uncertainty'):
         raise ValueError('Original unknown usage changed')
-    if p.get('source_usage_uncertainty') is not None and (p['max_tokens'] is not None or p['max_review_attempts']!=1):
+    if (p.get('source_usage_uncertainty') is not None and not bounded_history_authorization(p['source_usage_uncertainty'],exported,auth)
+            and (p['max_tokens'] is not None or p['max_review_attempts']!=1)):
         raise ValueError('Unknown usage targeted review policy changed')
     sp = p['source_protocol']
     for name, h in ((sp['case_path'], sp['case_sha256']), (sp['writing_standard'], sp['writing_sha256']),
