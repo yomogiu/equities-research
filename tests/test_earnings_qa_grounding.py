@@ -268,3 +268,40 @@ class GroundingRunTests(PipelineTests):
         self.assertEqual(result['status'], 'blocked')
         self.assertFalse(any(role in ('analysis', 'review') for role, _ in self.calls))
         self.assertEqual(pipe.verify(self.output), result)
+
+class ProceduralTurnTests(unittest.TestCase):
+    def source(self,body,role='operator',speaker='Operator'):
+        text=speaker+'\n'+body
+        return {'id':'fake-turn','speaker':speaker,'role':role,'start':0,'end':len(text)},[{'start':0,'end':len(text),'text':text}]
+    def test_complete_roster_instruction_is_versioned_and_source_bound(self):
+        body='We will now begin the question-and-answer session. To ask a question, you may press star then one on your touch- tone phone. If you are using a speakerphone, please pick up your handset before pressing the keys. If at any time your question has been addressed and you would like to withdraw the question, please press star then two. At this time, we will pause momentarily to assemble our roster. Our first question comes from Taylor Analyst with Fictional Firm. Please go ahead.'
+        turn,rows=self.source(body);targets=[('Taylor Analyst','Fictional Firm')]
+        self.assertTrue(grounding._routing(turn,rows,targets,grounding.PROCEDURAL_VERSION))
+        self.assertFalse(grounding._routing(turn,rows,targets,grounding.FOLLOWUP_ROUTING_VERSION))
+        self.assertFalse(grounding._routing(turn,rows,[('Other Analyst','Fictional Firm')],grounding.PROCEDURAL_VERSION))
+        bad,parts=self.source(body+' Revenue increased 20%.')
+        self.assertFalse(grounding._routing(bad,parts,targets,grounding.PROCEDURAL_VERSION))
+        self.assertFalse(grounding._routing(turn,[{**rows[0],'start':1}],targets,grounding.PROCEDURAL_VERSION))
+    def test_named_short_greeting_keeps_substantive_appendices(self):
+        peer={'id':'other-turn','role':'analyst','speaker':'Taylor Analyst'}
+        turn,rows=self.source('President and CEO, Fictional Company\nMorning, Taylor.','management','Fictional Manager')
+        self.assertTrue(grounding._greeting(turn,rows,grounding.PROCEDURAL_VERSION,[peer]))
+        self.assertFalse(grounding._greeting(turn,rows,grounding.FOLLOWUP_ROUTING_VERSION,[peer]))
+        self.assertFalse(grounding._greeting(turn,rows,grounding.PROCEDURAL_VERSION,[]))
+        for suffix in (' Revenue increased.',' Is demand improving?'):
+            bad,parts=self.source('President and CEO, Fictional Company\nMorning, Taylor.'+suffix,'management','Fictional Manager')
+            self.assertFalse(grounding._greeting(bad,parts,grounding.PROCEDURAL_VERSION,[peer]))
+
+    def test_delegated_name_requires_complete_explicit_same_firm_source(self):
+        body='We will now begin the question-and-answer session. To ask a question, you may press star then one on your touch- tone phone. If you are using a speakerphone, please pick up your handset before pressing the keys. If at any time your question has been addressed and you would like to withdraw the question, please press star then two. At this time, we will pause momentarily to assemble our roster. Our first question comes from Taylor Analyst with Fictional Firm. Please go ahead.'
+        op,rows=self.source(body);op['id']='operator'
+        delegate,parts=self.source('Analyst, Fictional Firm\nHello. This is Andrew Substitute on for Taylor. Thanks.','analyst','Andrew Substitute');delegate['id']='delegate'
+        offset=op['end'];delegate['start']+=offset;delegate['end']+=offset
+        for row in parts:row['start']+=offset;row['end']+=offset
+        turns={'operator':op,'delegate':delegate};scopes={'operator':rows,'delegate':parts}
+        targets=[('Andrew Substitute','Fictional Firm')]
+        value=grounding._delegations(turns,scopes,targets)
+        self.assertEqual(value[0]['addressed_name'],'Taylor Analyst');self.assertEqual(value[0]['actual_speaker'],'Andrew Substitute')
+        self.assertFalse(grounding._delegations(turns,scopes,[('Andrew Substitute','Other Firm')]))
+        broken=copy.deepcopy(scopes);broken['delegate'][0]['text']=broken['delegate'][0]['text'].replace('on for Taylor','calling directly')
+        self.assertFalse(grounding._delegations(turns,broken,targets))
