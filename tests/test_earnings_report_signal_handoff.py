@@ -7,6 +7,25 @@ from research import earnings_report_signal_handoff as h
 
 
 class HandoffTests(unittest.TestCase):
+    def test_presentation_removes_only_exact_expanded_sections(self):
+        pack={'signals':[{'id':'signal-1','comparison':'repeat comparison','rationale':'repeat rationale'}]}
+        original='<html><p>compact summary</p><p>repeat comparison</p><p>repeat rationale</p><p>period and source links</p></html>'
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'candidate.html'
+            with patch.object(h.s,'_render_content',side_effect=lambda path,*a,**kw:path.write_text(original)):
+                h.render_candidate(target,{},pack,{}, {},'pending_review',True)
+            self.assertEqual(target.read_text(),original.replace('<p>repeat comparison</p>','').replace('<p>repeat rationale</p>',''))
+            self.assertEqual(pack['signals'][0]['comparison'],'repeat comparison')
+            self.assertEqual(pack['signals'][0]['rationale'],'repeat rationale')
+
+    def test_presentation_pass_requires_new_finding_closed(self):
+        p={'version':h.PRESENTATION_VERSION,'candidate_sha256':'c','plan_sha256':'p'};value=self.review()
+        value['presentation_resolution']={'status':'closed','reason':'removed repetitions','citations':['D187'],'passage_ids':['P1']}
+        with patch.object(h.s,'validate_review',return_value=True),patch.object(h.m.corrections,'claim'):
+            self.assertTrue(h.validate_review(value,p,{}, {},{},{}))
+            value['presentation_resolution']['status']='open'
+            with self.assertRaises(ValueError):h.validate_review(value,p,{}, {},{}, {})
+
     def test_mutated_full_candidate_html_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'candidate.html').write_text('exact rendered report')
