@@ -27,3 +27,32 @@ class AuthenticatedSeedTests(unittest.TestCase):
   self.assertIn(('artifacts','financial','rows',0,'label'),targets)
   self.assertNotIn(('artifacts','financial','rows',0,'fact_ids'),targets)
   self.assertNotIn(('artifacts','financial','rows'),targets)
+
+ def test_zero_call_admission_recovery_keeps_exact_allowance_plan(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'attempts/0').mkdir(parents=True)
+   plan={'fictional':'exact'};auth={'max_review_attempts':1,'max_tokens':200000,'admission_recovery_authorization':'Explicit fixture authority','budget_reference_jobs':['/fictional/review']}
+   (root/'authorization.json').write_text(json.dumps({'max_review_attempts':1,'max_tokens':200000}))
+   (root/'attempts/0/plan.json').write_text(json.dumps(plan))
+   old={'version':m.VERSION,'history':{'prior_rounds':2,'prior_tokens':12345},'max_review_attempts':1,'max_tokens':200000}
+   exported={'status':'budget_exhausted','prior_rounds':2,'prior_tokens':12345}
+   m.validate_admission_recovery(root,old,exported,plan,auth)
+   for altered in [dict(auth,max_tokens=200001),dict(auth,max_review_attempts=2)]:
+    with self.assertRaises(ValueError):m.validate_admission_recovery(root,old,exported,plan,altered)
+   for altered in [dict(exported,prior_tokens=12346),dict(exported,prior_rounds=3),dict(exported,status='blocked')]:
+    with self.assertRaises(ValueError):m.validate_admission_recovery(root,old,altered,plan,auth)
+   with self.assertRaises(ValueError):m.validate_admission_recovery(root,old,exported,{'changed':True},auth)
+   (root/'attempts/0/review').mkdir()
+   with self.assertRaisesRegex(ValueError,'launched'):m.validate_admission_recovery(root,old,exported,plan,auth)
+ def test_original_batch_reference_requires_exact_bound_review_shape(self):
+  from research import earnings_budget as budget,earnings_experiment as base
+  with tempfile.TemporaryDirectory() as d:
+   job=Path(d).resolve()/'batch-review/batches/2/review';job.mkdir(parents=True)
+   request={'model':'gpt-6.1-sol','effort':'medium','bindings':{'protocol_sha256':'a'*64,'batch_sha256':'b'*64,'round':2}}
+   (job/'request.json').write_text(json.dumps(request));(job/'prompt.txt').write_text('Fictional source review ' * 100)
+   for name in ['output.json','execution.json']:(job/name).write_text('{}')
+   def refs():return {str(p):base.sha(p) for p in job.rglob('*') if p.is_file()}
+   value={'receipt':{'session':{'id':'fictional-session','model':'gpt-6.1-sol','effort':'medium','provider':'openai-codex','usage':{'input':100,'cacheRead':0,'cacheWrite':0,'output':10,'totalTokens':110}}}}
+   self.assertEqual(len(budget.review_calibration([str(job)],refs(),('gpt-6.1-sol','medium'),lambda p:value)),1)
+   request['bindings']['role']='analysis';(job/'request.json').write_text(json.dumps(request))
+   with self.assertRaisesRegex(ValueError,'same-model'):budget.review_calibration([str(job)],refs(),('gpt-6.1-sol','medium'),lambda p:value)

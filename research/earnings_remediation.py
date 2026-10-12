@@ -250,6 +250,9 @@ def _authorization(value, seed, plan, output):
             raise ValueError('Distinct absolute source review budget references required')
     if isinstance(value, dict) and 'review_context_policy' in value:
         names += ('review_context_policy',)
+    if isinstance(value, dict) and 'admission_recovery_authorization' in value:
+        names += ('admission_recovery_authorization',)
+        legacy.check_text(value['admission_recovery_authorization'], 'zero-call admission recovery authority')
     if isinstance(value, dict) and 'remaining_review_authorization' in value:
         names += ('remaining_review_authorization',)
         legacy.check_text(value['remaining_review_authorization'], 'remaining review authority')
@@ -307,6 +310,32 @@ def _source_bundle(source_protocol):
     return bundle, catalog
 
 
+def validate_admission_recovery(seed, old, exported, plan, authorization):
+    """Only a proved zero-call admission failure may retain its sole review attempt."""
+    marker = authorization.get('admission_recovery_authorization')
+    if marker is None:
+        if old.get('version') == VERSION and exported['status'] == 'budget_exhausted':
+            raise ValueError('Zero-call admission recovery requires explicit bound authority')
+        return
+    if (old.get('version') != VERSION or exported['status'] != 'budget_exhausted'
+            or exported['prior_rounds'] != old['history']['prior_rounds']
+            or exported['prior_tokens'] != old['history']['prior_tokens']
+            or old['max_review_attempts'] != authorization['max_review_attempts']
+            or old['max_review_attempts'] != 1
+            or old['max_tokens'] != authorization['max_tokens']
+            or old['max_tokens'] != 200000
+            or not authorization.get('budget_reference_jobs')):
+        raise ValueError('Admission recovery cannot change usage, attempts or token allowance')
+    seed = Path(seed)
+    previous = base.read(seed/'authorization.json')
+    if (previous['max_review_attempts'] != 1 or previous['max_tokens'] != 200000
+            or base.read(seed/'attempts/0/plan.json') != plan):
+        raise ValueError('Admission recovery must preserve exact plan and source authority')
+    # Even a launch intent or empty job directory excludes this recovery route.
+    if any(p.name in ('review', 'decision.json') for p in (seed/'attempts').rglob('*')):
+        raise ValueError('Admission recovery requires no launched or reviewed attempt')
+
+
 def validate_remaining_reviews(old, exported, authorization):
     """A new renderer may spend only the old edition's unspent review attempts."""
     marker = authorization.get('remaining_review_authorization')
@@ -336,6 +365,7 @@ def initialize(seed, output, plan, authorization):
     _authorization(authorization, seed, plan, root)
     old, exported = export_seed(seed)
     validate_remaining_reviews(old, exported, authorization)
+    validate_admission_recovery(seed, old, exported, plan, authorization)
     snapshot = exported['snapshot']
     uncertainty=exported.get('source_usage_uncertainty')
     if uncertainty is not None and (authorization['max_tokens'] is not None or authorization['max_review_attempts']!=1):
@@ -364,6 +394,8 @@ def initialize(seed, output, plan, authorization):
     # Validate the plan against original evidence before creating any edition.
     sp = protocol['source_protocol']; bundle, catalog = _source_bundle(sp)
     candidate = apply(snapshot, plan, bundle, catalog)
+    if authorization.get('admission_recovery_authorization') and candidate != base.read(seed/'attempts/0/candidate.json'):
+        raise ValueError('Admission recovery candidate differs from the original zero-call reservation')
     root.mkdir(parents=True, exist_ok=True)
     repair.write(root/'authorization.json', authorization); repair.write(root/'initial.json', snapshot)
     repair.write(root/'protocol.json', protocol)
@@ -378,6 +410,8 @@ def load(output):
     if base.digest(auth) != p['authorization_sha256'] or base.digest(base.read(root/'initial.json')) != p['initial_sha256']:
         raise ValueError('Remediation authorization or initial snapshot changed')
     _authorization(auth, Path(p['seed']), base.read(root/'attempts/0/plan.json'), root)
+    if auth.get('admission_recovery_authorization') and base.read(root/'attempts/0/candidate.json') != base.read(Path(p['seed'])/'attempts/0/candidate.json'):
+        raise ValueError('Admission recovery candidate changed')
     if p.get('review_context_policy') != context_policy(auth):
         raise ValueError('Remediation review context authority changed')
     if p['max_tokens'] != auth['max_tokens'] or p['max_review_attempts'] != auth['max_review_attempts']:
@@ -398,6 +432,7 @@ def load(output):
         raise ValueError('Unapproved review budget calibration')
     old, exported = export_seed(Path(p['seed']))
     validate_remaining_reviews(old, exported, auth)
+    validate_admission_recovery(Path(p['seed']), old, exported, base.read(root/'attempts/0/plan.json'), auth)
     expected_bindings, expected_sessions = seed_bindings(Path(p['seed']), old)
     if (p['source_bindings'] != expected_bindings or p['excluded_session_ids'] != expected_sessions
             or p['source_code'] != old['code'] + old.get('source_code', [])
