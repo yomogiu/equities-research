@@ -73,3 +73,17 @@ class MissingEmptyQuoteDerivationTests(__import__('unittest').TestCase):
     def test_other_invalid_or_substantive_list_cannot_be_changed(self):
         for quotes in ('fake',list(range(5))):
             with self.assertRaisesRegex(ValueError,'Other invalid'):recovery.empty_quotes({'findings':[{'quotes':quotes},{}]})
+
+class DownstreamSourceBundleTests(__import__('unittest').TestCase):
+    def test_batch_source_replays_authenticated_attribution_and_frozen_grounding(self):
+        import tempfile
+        from pathlib import Path
+        from research import earnings_remediation as remediation
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'qa.json';r.save(path,{'synthetic':'grounding'})
+            bundle={'manifest':{},'qa_grounding':{'synthetic':'grounding'}};catalog={'passages':[]}
+            protocol={'evidence_manifest':'fake','attribution_preparer_recovery':{'fake':True},'qa_grounding_path':str(path),'qa_grounding_sha256':r.sha(path)}
+            with patch.object(remediation.evidence,'load_bundle',return_value=bundle),patch.object(remediation.passages,'catalog',return_value=catalog),patch.object(recovery,'apply',return_value=(bundle,{},{})),patch.object(remediation.corrections.qa_grounding,'attach',side_effect=AssertionError('Plain attach must not replace reviewed source')):
+                self.assertEqual(remediation._source_bundle(protocol),(bundle,catalog))
+                path.write_text('{}')
+                with self.assertRaisesRegex(ValueError,'grounding changed'):remediation._source_bundle(protocol)

@@ -280,7 +280,13 @@ def _source_bundle(source_protocol):
         from .earnings_role_import import authenticate
         bundle, _, _ = apply(recovery['reviewed_boundary'], bundle,
                              authenticate(recovery['responses']['retrieval'])['content'])
-    corrections.qa_grounding.attach(None, source_protocol, bundle, catalog)
+    if source_protocol.get('attribution_preparer_recovery'):
+        from .earnings_attribution_preparer_recovery import apply
+        bundle, _, _ = apply(source_protocol, bundle, catalog)
+        if (bundle['qa_grounding']!=base.read(source_protocol['qa_grounding_path']) or base.sha(source_protocol['qa_grounding_path'])!=source_protocol['qa_grounding_sha256']):
+            raise ValueError('Reviewed attribution grounding changed')
+    else:
+        corrections.qa_grounding.attach(None, source_protocol, bundle, catalog)
     if source_protocol.get('prepared_recovery'):
         from research import earnings_prepared_recovery
         bundle, _, _, _ = earnings_prepared_recovery.apply(source_protocol, bundle, catalog)

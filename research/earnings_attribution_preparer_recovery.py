@@ -79,15 +79,22 @@ def apply(protocol,bundle,catalog):
     rec=protocol['attribution_preparer_recovery'];seed=Path(rec['seed'])
     old,code=original(seed)
     require(r.sha(seed/'protocol.json')==rec['seed_protocol_sha256'] and rec['version']==VERSION and rec['authorization'].strip(), 'Original attribution binding changed')
-    ignored={'code','attribution_preparer_recovery','attribution_code_recovery','analysis_schema_recovery','qa_grounding_path','qa_grounding_sha256'}
+    ignored={'code','attribution_preparer_recovery','attribution_code_recovery','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored}, 'Attribution recovery changed original settings')
     if protocol.get('attribution_code_recovery'):
         repair=protocol['attribution_code_recovery'];failed=Path(repair['seed'])
         require(repair.get('authorization','').strip() and repair.get('prior_rounds')==0 and repair.get('new_calls_before_stop')==0, 'Mechanical attribution budget or authorization changed')
         require(r.sha(failed/'protocol.json')==repair['protocol_sha256'] and r.sha(failed.parent/'state.json')==repair['state_sha256'], 'Mechanical attribution source changed')
         prior=r.read(failed/'protocol.json')
-        require({k:v for k,v in protocol.items() if k not in {'code','attribution_code_recovery','analysis_schema_recovery','qa_grounding_path','qa_grounding_sha256'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256'}}, 'Mechanical recovery changed frozen settings')
+        require({k:v for k,v in protocol.items() if k not in {'code','attribution_code_recovery','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}, 'Mechanical recovery changed frozen settings')
         require(not (failed/'batch-jobs').exists() and not (failed/'batch-review').exists() and not (failed/'result.json').exists(), 'Mechanical attribution continuation cannot reset executed work')
+    if protocol.get('attribution_transport_recovery'):
+        repair=protocol['attribution_transport_recovery'];parent=Path(repair['seed'])
+        require(repair.get('authorization','').strip() and repair.get('new_calls_before_stop')==0 and repair.get('prior_rounds')==0, 'Attribution transport authority or budget changed')
+        require(r.sha(parent/'protocol.json')==repair['protocol_sha256'] and r.sha(parent.parent/'state.json')==repair['state_sha256'], 'Attribution transport parent changed')
+        prior=r.read(parent/'protocol.json')
+        require({k:v for k,v in protocol.items() if k not in {'code','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}, 'Attribution transport changed frozen settings')
+        require(not (parent/'batch-jobs').exists() and not (parent/'batch-review').exists() and not (parent/'result.json').exists(), 'Attribution transport cannot reset executed work')
     refs=rec['responses'];require(set(refs)=={'financial','retrieval'}, 'Both exact preparers required')
     responses={}
     for role,ref in refs.items():
@@ -110,7 +117,7 @@ def apply(protocol,bundle,catalog):
         require(binding.get('authorization','').strip() and binding.get('prior_rounds')==0, 'Analysis schema recovery authority or budget changed')
         require(r.sha(parent/'protocol.json')==binding['protocol_sha256'] and r.sha(parent.parent/'state.json')==binding['state_sha256'], 'Analysis schema parent changed')
         prior=r.read(parent/'protocol.json')
-        require({k:v for k,v in protocol.items() if k not in {'code','analysis_schema_recovery','qa_grounding_path','qa_grounding_sha256'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256'}}, 'Analysis schema recovery changed frozen settings')
+        require({k:v for k,v in protocol.items() if k not in {'code','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}, 'Analysis schema recovery changed frozen settings')
         require({p.name for p in (parent/'batch-jobs').iterdir()}=={'analysis'} and not (parent/'batch-review').exists() and not (parent/'result.json').exists(), 'Analysis schema recovery cannot reset later work')
         ref=binding['analysis'];require(ref['job']==str(parent/'batch-jobs/analysis'), 'Analysis schema role reference changed')
         value=imp.authenticate(ref);request=r.read(parent/'batch-jobs/analysis/request.json')
@@ -121,6 +128,8 @@ def apply(protocol,bundle,catalog):
         out,derivation=empty_quotes(value['content']);require(derivation==binding['derivation'], 'Analysis schema derivation changed')
         pipe.validate('analysis',out,derived,catalog)
         results['analysis']={'content':out,'receipt':{'session':value['session'],'usage_is_inherited':True}}
+    derived['source_attribution_derivation']={'candidate_sha256':rec['candidate_sha256'],'review_output_sha256':r.sha(Path(rec['review']['job'])/'output.json'),'review_session':review['session']['id'],'scope':'Source attribution only; full report and signals require independent review.'}
+    if protocol.get('analysis_schema_recovery'):derived['analysis_schema_derivation']=protocol['analysis_schema_recovery']['derivation']
     return derived,results,review
 
 
@@ -181,6 +190,23 @@ def continue_analysis_schema(seed,output,authorization):
     ref=imp.reference(seed/'batch-jobs/analysis',code);_,derivation=empty_quotes(imp.authenticate(ref)['content'])
     protocol=copy.deepcopy(old);protocol['code']=[{'path':str(p),'sha256':r.sha(p)} for p in sorted(Path(__file__).parent.glob('earnings_*')) if p.suffix in ('.py','.mjs')]
     protocol['analysis_schema_recovery']={'seed':str(seed),'protocol_sha256':r.sha(seed/'protocol.json'),'state_sha256':r.sha(seed.parent/'state.json'),'authorization':authorization,'prior_rounds':0,'analysis':ref,'derivation':derivation}
+    apply(protocol,pipe.evidence.load_bundle(old['evidence_manifest']),r.read(seed/'passages.json'))
+    output.mkdir(parents=True)
+    for name in ('passages.json','qa-grounding.json'):(output/name).write_bytes((seed/name).read_bytes())
+    protocol['qa_grounding_path']=str(output/'qa-grounding.json');protocol['qa_grounding_sha256']=r.sha(output/'qa-grounding.json')
+    r.save(output/'protocol.json',protocol);pipe.load(output)
+    return protocol
+
+
+def continue_unexecuted_transport(seed,output,authorization):
+    from . import earnings_passage_pipeline as pipe
+    seed,output=Path(seed).resolve(),Path(output).resolve()
+    require(not output.exists() and authorization.strip(), 'New authorized unexecuted transport successor required')
+    old=r.read(seed/'protocol.json');require(old.get('analysis_schema_recovery') and not old.get('attribution_transport_recovery'), 'Unexecuted inherited analysis source required')
+    state=r.read(seed.parent/'state.json');require(state.get('status')=='pending' and state.get('stage')=='reused_analysis', 'Only unexecuted inherited-analysis source allowed')
+    for c in old['code']:require(r.sha(c['path'])==c['sha256'], 'Original transport code changed')
+    protocol=copy.deepcopy(old);protocol['code']=[{'path':str(p),'sha256':r.sha(p)} for p in sorted(Path(__file__).parent.glob('earnings_*')) if p.suffix in ('.py','.mjs')]
+    protocol['attribution_transport_recovery']={'seed':str(seed),'protocol_sha256':r.sha(seed/'protocol.json'),'state_sha256':r.sha(seed.parent/'state.json'),'authorization':authorization,'prior_rounds':0,'new_calls_before_stop':0}
     apply(protocol,pipe.evidence.load_bundle(old['evidence_manifest']),r.read(seed/'passages.json'))
     output.mkdir(parents=True)
     for name in ('passages.json','qa-grounding.json'):(output/name).write_bytes((seed/name).read_bytes())
