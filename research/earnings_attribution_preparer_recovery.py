@@ -22,7 +22,9 @@ def span_check(turn, span, text):
 
 def review_prompt(candidate_path):
     candidate_path=Path(candidate_path);candidate=r.read(candidate_path)
-    payload={'candidate':candidate,'overlay_proposal':r.read(candidate['proposal']),
+    catalog=r.read(candidate['catalog_path'])
+    source_passages=[p for p in catalog['passages'] if p['document_id']==candidate['source']['document_id']]
+    payload={'source_support_passages':source_passages,'candidate':candidate,'overlay_proposal':r.read(candidate['proposal']),
              'overlay_candidate':r.read(candidate['overlay_review']),
              'complete_original_transcript':Path(candidate['source']['path']).read_text(),
              'original_retrieval':r.read(candidate['original_retrieval_path'])['content']}
@@ -57,6 +59,7 @@ def adjudicate(binding, bundle, catalog, preparer_sessions):
     require(source==r.read(ov)['source']==r.read(proposal)['source'], 'Attribution candidate source differs')
     require(source['sha256']==index_source['text_sha256'] and source['document_id']==index_source['document_id'], 'Attribution source differs from frozen index')
     require(source['path']==bundle['manifest']['transcript_path'] and source['sha256']==bundle['manifest']['transcript_sha256'], 'Full source path differs from frozen evidence')
+    require(r.read(candidate['catalog_path'])==catalog, 'Attribution source catalogue differs')
     derived,receipt=overlay.apply(bundle,catalog,proposal,ov)
     # Each unassigned source turn is retained, with an exact complete-turn review.
     unassigned={t['id']:t for t in bundle['transcript_index']['turns'] if t['id'] in bundle['transcript_index']['coverage']['unassigned_qa_turn_ids']}

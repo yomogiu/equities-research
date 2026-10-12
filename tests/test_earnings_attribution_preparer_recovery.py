@@ -12,9 +12,10 @@ class PreparedAttributionTests(OverlayTests):
         self.run_overlay()
         self.bundle['manifest']={'transcript_path':str(self.source),'transcript_sha256':r.sha(self.source)}
         self.original=self.root/'retrieval.json';r.save(self.original,{'content':{'quotes':[]}})
+        self.catalog_path=self.root/'catalog.json';r.save(self.catalog_path,self.catalog)
         self.bundle['transcript_index'].setdefault('coverage',{})['unassigned_qa_turn_ids']=[]
         self.candidate=self.root/'candidate.json';self.job=self.root/'job';self.job.mkdir()
-        r.save(self.candidate,{'source':self.value['source'],'proposal':str(self.proposal),'overlay_review':str(self.review),'input_sha256':{str(self.proposal):r.sha(self.proposal),str(self.review):r.sha(self.review),str(self.source):r.sha(self.source)},'unassigned_turns':[],'original_retrieval_path':str(self.original)})
+        r.save(self.candidate,{'source':self.value['source'],'proposal':str(self.proposal),'overlay_review':str(self.review),'input_sha256':{str(self.proposal):r.sha(self.proposal),str(self.review):r.sha(self.review),str(self.source):r.sha(self.source)},'unassigned_turns':[],'original_retrieval_path':str(self.original),'catalog_path':str(self.catalog_path)})
         self.binding={'candidate_path':str(self.candidate),'candidate_sha256':r.sha(self.candidate),'review':{'job':str(self.job)}}
         r.save(self.job/'request.json',{'bindings':{'candidate_sha256':r.sha(self.candidate),'scope':recovery.VERSION},'model':'gpt-6.1-sol','effort':'medium'})
         (self.job/'prompt.txt').write_text(recovery.review_prompt(self.candidate))
