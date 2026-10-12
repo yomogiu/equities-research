@@ -5,13 +5,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from test_earnings_passages import PassageFixture
-from test_earnings_signals import SignalTests
+import test_earnings_signals as test_earnings_signals_fixtures
 from research import earnings_signal_field_repair as m
 
 class SignalLabelRepairTests(PassageFixture,unittest.TestCase):
-    state=SignalTests.state
-    pack=SignalTests.pack
-    review=SignalTests.review
+    state=test_earnings_signals_fixtures.SignalTests.state
+    pack=test_earnings_signals_fixtures.SignalTests.pack
+    review=test_earnings_signals_fixtures.SignalTests.review
     def setUp(self):
         super().setUp();self.root=self.root.resolve();self.seed=self.root/'seed';self.seed.mkdir();self.out=self.root/'edition'
         state=self.state();pack=self.pack(state);review=self.review(pack);review['verdict']='blocked';review['decisions'][2]['approved']=False

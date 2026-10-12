@@ -5,10 +5,10 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch
 import unittest
-from test_earnings_review_evidence_resume import BindingTests
+import test_earnings_review_evidence_resume as test_earnings_review_evidence_resume_fixtures
 from research import earnings_corrections as c, earnings_experiment as b
 
-class EvidencePolicyTests(BindingTests):
+class EvidencePolicyTests(test_earnings_review_evidence_resume_fixtures.BindingTests):
  def setUp(self):
   super().setUp();(self.root/'protocol.json').write_text(json.dumps({'prior_rounds':1,'max_tokens':600000,'code':[]}))
  def bind(self):

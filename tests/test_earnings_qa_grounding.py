@@ -3,7 +3,8 @@ import copy
 from pathlib import Path
 import unittest
 from unittest.mock import patch
-from test_earnings_passages import PassageFixture, PipelineTests
+from test_earnings_passages import PassageFixture
+import test_earnings_passages as passage_fixtures
 from test_earnings_compact_evidence import refreeze, write
 from research import earnings_qa_grounding as grounding
 from research import earnings_passage_pipeline as pipe
@@ -261,7 +262,7 @@ class GroundingTests(PassageFixture, unittest.TestCase):
             pipe.load(root)
 
 
-class GroundingRunTests(PipelineTests):
+class GroundingRunTests(passage_fixtures.PipelineTests):
     def test_mismatched_exchange_membership_stops_analysis_and_replays_block(self):
         self.retrieval['exchange_coverage'][0]['answer_passage_ids'] = self.retrieval['exchange_coverage'][1]['answer_passage_ids']
         result = pipe.run(self.output)
