@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 import unittest
 from research import earnings_provider_recovery as p, earnings_mixed_runner as r, earnings_role_import as imp
-from tests.test_earnings_mixed_runner import RunnerTests
+import tests.test_earnings_mixed_runner as test_earnings_mixed_runner_fixtures
 
 class FailureTests(unittest.TestCase):
     def setUp(self):
-        self.f=RunnerTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=test_earnings_mixed_runner_fixtures.RunnerTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
         self.f.complete();self.job=self.f.job;self.code=Path(r.__file__).parent.parent
         for name in ('stdout.txt','output.json','runtime-finish.json'):(self.job/name).unlink()
         self.f.entries[-1]['message'].update(content=[],stopReason='error',usage={k:0 for k in ('input','output','cacheRead','cacheWrite','totalTokens')},

@@ -2,11 +2,11 @@
 import copy
 import hashlib
 import unittest
-from test_earnings_compact_layout import CompactLayoutTests
+import test_earnings_compact_layout as test_earnings_compact_layout_fixtures
 from research import earnings_report_repair as repair
 
 
-class MixedUnitLayoutTests(CompactLayoutTests):
+class MixedUnitLayoutTests(test_earnings_compact_layout_fixtures.CompactLayoutTests):
     def mixed(self):
         spec=copy.deepcopy(self.spec)
         spec['layout'].update(version='compact-financial-mixed-units-v2',fold=[],detail_rows=[],summaries=[])

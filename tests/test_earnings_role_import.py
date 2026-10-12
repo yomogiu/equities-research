@@ -2,12 +2,12 @@
 from pathlib import Path
 import unittest
 from unittest.mock import patch
-from tests.test_earnings_mixed_runner import RunnerTests
+import tests.test_earnings_mixed_runner as test_earnings_mixed_runner_fixtures
 from research import earnings_role_import as imp, earnings_mixed_runner as r
 
 class ImportTests(unittest.TestCase):
     def setUp(self):
-        self.fixture=RunnerTests();self.fixture.setUp();self.addCleanup(self.fixture.doCleanups)
+        self.fixture=test_earnings_mixed_runner_fixtures.RunnerTests();self.fixture.setUp();self.addCleanup(self.fixture.doCleanups)
         self.fixture.complete();self.job=self.fixture.job;self.code=Path(r.__file__).parent.parent
     def missing_wrapper(self):
         (self.job/'execution.json').unlink();(self.job/'output.json').unlink()

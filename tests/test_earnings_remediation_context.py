@@ -2,11 +2,11 @@
 import copy
 from pathlib import Path
 from unittest.mock import patch
-from test_earnings_remediation import RemediationTests
+import test_earnings_remediation as test_earnings_remediation_fixtures
 from research import earnings_remediation as m, earnings_review_policy as rp
 from research import earnings_experiment as b
 
-class ContextEditionTests(RemediationTests):
+class ContextEditionTests(test_earnings_remediation_fixtures.RemediationTests):
     def policy(self):
         return {'version':rp.VERSION,**rp.LIMITS,'authorization':'Explicit synthetic complete-source edition',
                 'token_authorization':'Explicit synthetic uncapped token authority'}

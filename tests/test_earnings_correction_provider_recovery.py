@@ -7,11 +7,11 @@ import unittest
 from unittest.mock import patch
 from research import earnings_correction_provider_recovery as c
 from research import earnings_provider_recovery as p, earnings_mixed_runner as r
-from tests.test_earnings_provider_recovery import FailureTests
+import tests.test_earnings_provider_recovery as test_earnings_provider_recovery_fixtures
 
 class ServerFailureTests(unittest.TestCase):
     def setUp(self):
-        self.fx=FailureTests();self.fx.setUp();self.addCleanup(self.fx.doCleanups)
+        self.fx=test_earnings_provider_recovery_fixtures.FailureTests();self.fx.setUp();self.addCleanup(self.fx.doCleanups)
         self.fx.f.entries[-1]['message']['diagnostics'][0]['error']['code']='server_error'
         self.fx.f.write_journal()
     def test_explicit_server_error_does_not_expand_default_overload_contract(self):
