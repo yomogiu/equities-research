@@ -1,6 +1,7 @@
 """Reuse two authenticated preparers after a versioned mechanical grounding fix."""
 import copy
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -38,7 +39,7 @@ def original(seed):
     return old,code
 
 
-def initialize(seed, output, authorization, reviewed_boundary=None, selection_repair=None, grounding_version=None, operator_review=None, batch_attribution_review=None, model_policy=None):
+def initialize(seed, output, authorization, reviewed_boundary=None, selection_repair=None, grounding_version=None, operator_review=None, batch_attribution_review=None, model_policy=None, resolve_question_ids=False):
     from . import earnings_passage_pipeline as pipe
     seed,output=Path(seed).resolve(),Path(output).resolve()
     require(authorization.strip() and not output.exists(),'New authorized continuation required')
@@ -60,16 +61,31 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
         protocol['grounding_recovery']['reviewed_boundary']=reviewed_boundary
         bundle,_,_=apply(reviewed_boundary,bundle,imp.authenticate(refs['retrieval'])['content'])
     version=grounding_version or pipe.grounding.NAMED_GREETING_VERSION
-    require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION,pipe.grounding.FOLLOWUP_QUESTION_VERSION,pipe.grounding.FOLLOWUP_ROUTING_VERSION},'Unsupported recovery grounding')
+    require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION,pipe.grounding.FOLLOWUP_QUESTION_VERSION,pipe.grounding.FOLLOWUP_ROUTING_VERSION,pipe.grounding.EXPLICIT_LINE_ROUTING_VERSION},'Unsupported recovery grounding')
     grounding=pipe.grounding.build(bundle,catalog,version)
     if operator_review:
         from .earnings_reviewed_operator import apply
         protocol['grounding_recovery']['operator_review']=operator_review
         grounding,_=apply(operator_review,grounding,bundle,catalog)
+        bundle['operator_review_binding']=operator_review
     if batch_attribution_review:
         from .earnings_reviewed_attribution_batch import apply
         protocol['grounding_recovery']['batch_attribution_review']=batch_attribution_review
         grounding,_=apply(batch_attribution_review,grounding,bundle,catalog)
+        bundle['batch_attribution_review_binding']=batch_attribution_review
+    if resolve_question_ids:
+        prior=imp.authenticate(refs['retrieval'])['content']
+        derived,derivation=derive_question_ids(prior,catalog,grounding,refs['retrieval'])
+        preflight={**bundle,'qa_grounding':grounding}
+        derived,_=pipe.grounding.normalize_courtesy(derived,preflight,catalog)
+        pipe.validate('financial',imp.authenticate(refs['financial'])['content'],preflight,catalog)
+        pipe.validate('retrieval',derived,preflight,catalog)
+        protocol['grounding_recovery']['question_id_derivation']=derivation
+    if batch_attribution_review and not resolve_question_ids:
+        prior=imp.authenticate(refs['retrieval'])['content']
+        derived,receipt=pipe.grounding.normalize_courtesy(prior,{**bundle,'qa_grounding':grounding},catalog)
+        pipe.validate('retrieval',derived,{**bundle,'qa_grounding':grounding},catalog)
+        protocol['grounding_recovery']['normalization_sha256']=r.digest({'content':derived,'receipt':receipt})
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
     r.save(output/'qa-grounding.json',grounding)
@@ -92,7 +108,7 @@ def validate(protocol,bundle,catalog):
                 and protocol['signal_author_model']==list(signals.DRAFT_MODEL),'Requested model policy changed')
         ignored|={'models','batch_review','signal_author_model'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored},'Recovery changed original settings or evidence')
-    require(protocol['qa_grounding'] in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION,pipe.grounding.FOLLOWUP_QUESTION_VERSION,pipe.grounding.FOLLOWUP_ROUTING_VERSION},'Recovery requires new grounding version')
+    require(protocol['qa_grounding'] in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION,pipe.grounding.FOLLOWUP_QUESTION_VERSION,pipe.grounding.FOLLOWUP_ROUTING_VERSION,pipe.grounding.EXPLICIT_LINE_ROUTING_VERSION},'Recovery requires new grounding version')
     require(set(recovery['responses'])=={'financial','retrieval'},'Both original preparers required')
     results={}
     for role,ref in recovery['responses'].items():
@@ -100,6 +116,10 @@ def validate(protocol,bundle,catalog):
         value=imp.authenticate(ref)
         results[role]={'content':value['content'],'receipt':{'session':value['session'],'usage_is_inherited':True}}
         out=value['content']
+        if role=='retrieval' and recovery.get('question_id_derivation'):
+            out,derivation=derive_question_ids(out,catalog,bundle['qa_grounding'],ref)
+            require(derivation==recovery['question_id_derivation'],'Question ID derivation changed')
+            results[role]['content']=out
         if role=='retrieval' and recovery.get('selection_repair'):
             out,selection=apply_selection(recovery['selection_repair'],out,catalog,ref)
             require(selection['session']['id'] not in {imp.authenticate(x)['session']['id'] for x in recovery['responses'].values()},'Selection repair reused preparer session')
@@ -111,9 +131,16 @@ def validate(protocol,bundle,catalog):
             require(derived['transcript_index']==bundle['transcript_index'],'Reviewed index differs')
             require(review['session']['id'] not in {v['receipt']['session']['id'] for v in results.values()},'Boundary reviewer reused preparer session')
             results[role]['content']=out
-        if role=='retrieval':out,_=pipe.grounding.normalize_courtesy(out,bundle,catalog)
+        if role=='retrieval':
+            out,normalization=pipe.grounding.normalize_courtesy(out,bundle,catalog)
+            if recovery.get('normalization_sha256'):
+                require(r.digest({'content':out,'receipt':normalization})==recovery['normalization_sha256'],'Source normalization derivation changed')
         pipe.validate(role,out,bundle,catalog)
-    require(len({v['receipt']['session']['id'] for v in results.values()})==2,'Distinct preparer sessions required')
+    preparer_sessions={v['receipt']['session']['id'] for v in results.values()}
+    require(len(preparer_sessions)==2,'Distinct preparer sessions required')
+    for key in ('operator_review','batch_attribution_review'):
+        if recovery.get(key):
+            require(imp.authenticate(recovery[key]['review'])['session']['id'] not in preparer_sessions,'Independent source reviewer reused preparer session')
     return results
 
 
@@ -136,3 +163,43 @@ def apply_selection(binding, prior, catalog, original_ref):
     require(index<len(prior['quotes']) and payload['invalid_selection']==prior['quotes'][index] and payload['other_quotes']==prior['quotes'],'Selection scope changed')
     patch=value['content'];require(set(patch)=={'replacements'} and len(patch['replacements'])==1 and patch['replacements'][0]['path']==payload['path'],'Selection patch scope changed')
     return pipe.bounded_patch('retrieval',prior,patch,catalog),value
+
+
+def derive_question_ids(prior, catalog, grounding, original_ref):
+    """Complete one missing terminal hex digit only within an indexed question.
+
+    No semantic selections, aliases, answers, quotes or source text are changed.
+    The full catalog must identify exactly one candidate BEFORE scope filtering.
+    Independent report review remains mandatory after this transport derivation.
+    """
+    passages=catalog['passages']
+    ids=[p['passage_id'] for p in passages]
+    require(len(ids)==len(set(ids)), 'Duplicate catalog passage IDs')
+    groups={e['exchange_id']:e for e in grounding['exchanges']}
+    out=copy.deepcopy(prior);changes=[]
+    for i,row in enumerate(out['exchange_coverage']):
+        require(row['exchange_id'] in groups,'Unknown exchange for ID derivation')
+        group=groups[row['exchange_id']]
+        # Restrict repair to the original indexed question, not a followup alias.
+        allowed={pid for t in group['turns'] if t['id'] in group['question_turn_ids']
+                 and not t['courtesy_only'] for pid in t['passage_ids']}
+        for j,pid in enumerate(row['question_passage_ids']):
+            if pid in ids:continue
+            require(isinstance(pid,str) and re.fullmatch(r'P[0-9a-f]{11}',pid),'Only one missing terminal question-ID digit is repairable')
+            candidates=[p for p in passages if re.fullmatch(r'P[0-9a-f]{12}',p['passage_id']) and p['passage_id'].startswith(pid)]
+            require(len(candidates)==1,'Question ID candidate is not globally unique')
+            candidate=candidates[0];canonical=candidate['passage_id']
+            require(canonical in allowed and candidate['scope_id'] in group['question_turn_ids']
+                    and candidate['text'].strip(),'Question ID candidate is outside original question scope')
+            require(canonical not in row['question_passage_ids'],'Question ID repair would duplicate selection')
+            row['question_passage_ids'][j]=canonical
+            changes.append({'path':f'/exchange_coverage/{i}/question_passage_ids/{j}',
+                            'from':pid,'to':canonical,'exchange_id':row['exchange_id'],
+                            'scope_id':candidate['scope_id'],'passage_sha256':r.digest(candidate)})
+    require(len(changes)==1,'Exactly one truncated question-ID repair required')
+    derivation={'version':'exact-question-id-transport-v1',
+                'original_output_sha256':original_ref['files']['output.json'],
+                'original_content_sha256':r.digest(prior),'catalog_sha256':r.digest(catalog),
+                'grounding_sha256':r.digest(grounding),'changes':changes,
+                'derived_content_sha256':r.digest(out),'independent_review_required':True}
+    return out,derivation

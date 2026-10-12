@@ -6,6 +6,7 @@ Research artifacts must remain private. No production/schedule changes.
 from __future__ import annotations
 import argparse
 import copy
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,8 @@ def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=No
     if role in ('analysis', 'review') and 'retrieval' in deps:
         grounding.require_analysis_ready(deps['retrieval'], bundle, catalog)
     grounding_prompt = grounding.prompt_contract(role, bundle)
+    if role in ('analysis','review') and bundle.get('question_id_derivation'):
+        grounding_prompt += '\nAuthenticated question-ID transport derivation; independently assess source attribution: '+json.dumps(bundle['question_id_derivation'])
     if efficient and issues is None:
         from research import earnings_efficient_evidence as reuse
         return reuse.prompt(role, bundle, writing, deps, feedback, catalog, extra_scope_ids) + grounding_prompt
@@ -123,7 +126,7 @@ def repair_handoff(root, deps, prior, issues, review, catalog, refusals=None):
     return None
 
 
-def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False, qa_grounding=True, qa_grounding_version=None, batch_review=False, mechanical_preflight=False, editorial_review=False):
+def freeze(case_path, output, writing_path, repair_loop=False, deterministic_corrections=False, signals=True, efficient=False, qa_grounding=True, qa_grounding_version=None, batch_review=False, mechanical_preflight=False, editorial_review=False, split_review=False):
     if repair_loop and deterministic_corrections:
         raise ValueError("Choose one correction strategy")
     root = Path(output).resolve(); root.mkdir(parents=True, exist_ok=True)
@@ -142,6 +145,8 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
                 'writing_standard': str(Path(writing_path).resolve()), 'writing_sha256': base.sha(writing_path),
                 'models': {k: list(v) for k, v in MODELS.items()}, 'max_correction_rounds': 2,
                 'code': [{'path': str(Path(__file__).parent / n), 'sha256': base.sha(Path(__file__).parent / n)} for n in names]}
+    if split_review and (not mechanical_preflight or not batch_review or editorial_review):
+        raise ValueError('Split review requires mechanical preflight and separate factual policy')
     if editorial_review and not mechanical_preflight:
         raise ValueError('Editorial review requires mechanical preflight and batched review')
     if mechanical_preflight and not batch_review:
@@ -153,6 +158,9 @@ def freeze(case_path, output, writing_path, repair_loop=False, deterministic_cor
         if editorial_review:
             from .earnings_batch_review import EDITORIAL_VERSION
             protocol['batch_review']=EDITORIAL_VERSION
+        if split_review:
+            from .earnings_batch_review import FACTUAL_VERSION
+            protocol['batch_review']=FACTUAL_VERSION
         if mechanical_preflight:
             from .earnings_batch_context import VERSION as CONTEXT_VERSION
             protocol['review_context']=CONTEXT_VERSION
@@ -209,6 +217,14 @@ def load(root):
         rec=p['grounding_recovery']
         bundle,_,_=apply(rec['reviewed_boundary'],bundle,authenticate(rec['responses']['retrieval'])['content'])
     grounding.attach(root, p, bundle, catalog)
+    if p.get('grounding_recovery',{}).get('question_id_derivation'):
+        from .earnings_batched_grounding_recovery import derive_question_ids
+        from .earnings_role_import import authenticate
+        rec=p['grounding_recovery'];ref=rec['responses']['retrieval']
+        _,derivation=derive_question_ids(authenticate(ref)['content'],catalog,bundle['qa_grounding'],ref)
+        if derivation!=rec['question_id_derivation']:
+            raise ValueError('Question ID derivation changed')
+        bundle['question_id_derivation']=derivation
     if p.get('prepared_recovery'):
         from .earnings_prepared_recovery import apply
         bundle, prepared, inherited, identities = apply(p, bundle, catalog)

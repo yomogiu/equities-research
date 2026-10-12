@@ -30,6 +30,13 @@ class RecoveryTests(unittest.TestCase):
             altered=copy.deepcopy(p);change(altered)
             with self.assertRaises(ValueError):self.call(old,altered)
 
+    def test_source_reviewer_must_differ_from_both_preparers(self):
+        old,p=self.fixture()
+        p['grounding_recovery']['batch_attribution_review']={'review':{'job':'/fictional/seed/batch-jobs/financial'}}
+        with self.assertRaisesRegex(ValueError,'Independent source reviewer'):self.call(old,p)
+        p['grounding_recovery']['batch_attribution_review']['review']['job']='/fictional/fresh-review'
+        self.assertEqual(set(self.call(old,p)),{'financial','retrieval'})
+
     def test_shared_session_rejected(self):
         old,p=self.fixture()
         with self.assertRaisesRegex(ValueError,'Distinct'):self.call(old,p,'same-session')

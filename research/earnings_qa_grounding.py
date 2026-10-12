@@ -18,7 +18,8 @@ COURTESY_ROUTING_VERSION = 'source-bound-qa-membership-v4'
 NAMED_THANKS_VERSION = 'source-bound-qa-membership-v5'
 FOLLOWUP_QUESTION_VERSION = 'source-bound-qa-membership-v6'
 FOLLOWUP_ROUTING_VERSION = 'source-bound-qa-membership-v7'
-HEADER_VERSIONS = {FOLLOWUP_ROUTING_VERSION, FOLLOWUP_QUESTION_VERSION, HEADER_VERSION, NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION}
+EXPLICIT_LINE_ROUTING_VERSION = 'source-bound-qa-membership-v9'
+HEADER_VERSIONS = {EXPLICIT_LINE_ROUTING_VERSION, FOLLOWUP_ROUTING_VERSION, FOLLOWUP_QUESTION_VERSION, HEADER_VERSION, NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION}
 SUPPORTED_VERSIONS = {VERSION, *HEADER_VERSIONS}
 NOTICE = ('Membership validation checks source offsets and indexed speaker roles, not '
           'whether a question was understood, answered, relevant or summarized correctly. '
@@ -40,7 +41,7 @@ def _header_body(turn, rows, version=HEADER_VERSION):
     lines = body.splitlines()
     patterns = {'analyst': r'Analyst, [^\n]+',
                 'management': r'(?:President and CEO|EVP and CFO|VP of Investor Relations|SVP of Global Sales), [^\n]+'}
-    if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION}:patterns['analyst']=r'(?:Analyst|Managing Director), [^\n]+'
+    if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION}:patterns['analyst']=r'(?:Analyst|Managing Director), [^\n]+'
     pattern = patterns.get(turn['role'])
     if (raw.splitlines()[0] == turn['speaker'] and len(lines) >= 2
             and pattern and re.fullmatch(pattern, lines[0])):
@@ -58,8 +59,8 @@ def _greeting(turn, rows, version=VERSION, peers=()):
     # This deliberately recognizes only complete, simple courtesy turns. Other
     # short statements remain evidence; a greeting followed by a question is not
     # discarded. The source text itself is never removed or rewritten.
-    if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and _complete(turn,rows) and body == 'Great.':return True
-    if version in {NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and turn['role'] in {'analyst', 'management'}:
+    if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION} and _complete(turn,rows) and body == 'Great.':return True
+    if version in {NAMED_GREETING_VERSION, COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION} and turn['role'] in {'analyst', 'management'}:
         # Only another named participant in this exchange can be addressed.
         # Require complete contiguous source coverage before excluding a turn.
         cursor = turn['start']
@@ -74,12 +75,12 @@ def _greeting(turn, rows, version=VERSION, peers=()):
                     or len(name.split()) < 2):
                 continue
             for address in (name, name.split()[0]):
-                if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and re.fullmatch(r'(?:Makes sense\. )?Thanks,?\s+'+re.escape(address)+r'[.!]?',body,re.I):
+                if version in {NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION} and re.fullmatch(r'(?:Makes sense\. )?Thanks,?\s+'+re.escape(address)+r'[.!]?',body,re.I):
                     return True
                 if re.fullmatch(r'(?:Hi|Hello|Hey|Good morning|Good afternoon|Good evening),?\s+'
                                 + re.escape(address) + r'[.!]?', body, re.I):
                     return True
-    if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and _complete(turn,rows) and body in {'Thank you. Thanks for the questions.', 'Got it. That makes a lot of sense. Thank you.', 'Perfect. Thank you.'}:
+    if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION} and _complete(turn,rows) and body in {'Thank you. Thanks for the questions.', 'Got it. That makes a lot of sense. Thank you.', 'Perfect. Thank you.'}:
         return True
     return bool(body and (GREETING.fullmatch(body) or version in HEADER_VERSIONS and re.fullmatch(
         r'(?:Great|Okay|Got it|I appreciate that)\. (?:Thank you\.|That[’\']s helpful\. Thank you\.)', body)))
@@ -99,9 +100,12 @@ def _routing(turn, rows, targets, version=HEADER_VERSION):
     body = _header_body(turn, rows, version)
     normalize = lambda text: re.sub(r'\s+', '', text)
     for name, firm in targets:
-        if version == FOLLOWUP_ROUTING_VERSION and _complete(turn, rows) and normalize(body) == normalize(f'Your next question comes from the line of {name} from {firm}. Please go ahead.'):
+        if version == EXPLICIT_LINE_ROUTING_VERSION and _complete(turn,rows) and len(name.split())>=2:
+            exact=f'Your next question comes from the line of {name} with {firm}. {name.split()[0]}, your line is open. Please go ahead.'
+            if normalize(body)==normalize(exact):return True
+        if version in {FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION} and _complete(turn, rows) and normalize(body) == normalize(f'Your next question comes from the line of {name} from {firm}. Please go ahead.'):
             return True
-        if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} and _complete(turn,rows) and normalize(body)==normalize(f'The next question comes from {name} with {firm}. Please go ahead.'):
+        if version in {COURTESY_ROUTING_VERSION, NAMED_THANKS_VERSION, FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION} and _complete(turn,rows) and normalize(body)==normalize(f'The next question comes from {name} with {firm}. Please go ahead.'):
             return True
         for prefix in ('', 'Thank you for your question. '):
             for ordinal in ('next', 'final'):
@@ -279,7 +283,7 @@ def validate_retrieval(out, bundle, catalog):
         continuations = row['continuation_exchange_ids']
         if not set(continuations) <= set(e['allowed_continuation_exchange_ids']):
             raise ValueError('Q&A continuation must use an explicit indexed followup link: ' + eid)
-        groups = {'question_passage_ids': question_contexts(e, exchanges) if grounding['version'] in {FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION} else [e], 'answer_passage_ids': [e] + [exchanges[x] for x in continuations]}
+        groups = {'question_passage_ids': question_contexts(e, exchanges) if grounding['version'] in {FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION} else [e], 'answer_passage_ids': [e] + [exchanges[x] for x in continuations]}
         for field, contexts in groups.items():
             turn_field = 'question_turn_ids' if field == 'question_passage_ids' else 'answer_turn_ids'
             allowed = {pid for context in contexts for turn in context['turns']
@@ -289,8 +293,11 @@ def validate_retrieval(out, bundle, catalog):
                 if pid not in pids or pid not in allowed or not pids[pid]['text'].strip():
                     raise ValueError('Q&A supporting passage is outside the indexed ' + field + ': ' + eid)
         status = row['grounding_status']
-        if status not in ('bound', 'unresolved', 'courtesy_only', 'reviewed_non_qa') or not isinstance(row['grounding_notes'], str) or not row['grounding_notes'].strip():
+        if status not in ('bound', 'unresolved', 'courtesy_only', 'reviewed_non_qa','continued_answer') or not isinstance(row['grounding_notes'], str) or not row['grounding_notes'].strip():
             raise ValueError('Q&A grounding needs explicit status and review notes: ' + eid)
+        if status=='continued_answer':
+            if e['mechanical_disposition']!='reviewed_answer_continuation' or not e.get('reviewed_continued_from') or row['question_passage_ids'] or row['continuation_exchange_ids'] or not row['answer_passage_ids']:
+                raise ValueError('Continued answer requires authenticated source disposition: '+eid)
         if status == 'reviewed_non_qa':
             if e['mechanical_disposition']!='reviewed_non_qa' or not e.get('reviewed_turn_dispositions') or any(row[k] for k in FIELDS[:3]):
                 raise ValueError('Non-Q&A disposition requires authenticated complete-turn review: '+eid)
@@ -330,7 +337,7 @@ def prompt_contract(role, bundle):
                  'a management answer from a coverage paraphrase alone. Provisional roles and '
                  'followup links require semantic verification. Independently compare selected '
                  'question/answer passages with the full turns before using their claims.\n')
-    if index['version'] in {FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION}:
+    if index['version'] in {FOLLOWUP_QUESTION_VERSION, FOLLOWUP_ROUTING_VERSION, EXPLICIT_LINE_ROUTING_VERSION}:
         text += ('Exact earlier question support is permitted only through the indexed ordered same-speaker followup chain. No unrelated or merely adjacent question is authorized. Independently verify the question and response against full original turns.\n')
     if bundle.get('batch_attribution_review_binding'):
         text += 'Authenticated reviewed_non_qa rows are not substantive Q&A. All original turns remain evidence: management_closing may contain business assertions and must be considered independently of an analyst acknowledgment. Do not classify closing content as courtesy or attribute it as an answer.\n'
@@ -374,7 +381,7 @@ def require_analysis_ready(out, bundle, catalog):
             raise ValueError('Substantive unassigned Q&A turns require source-index repair before analysis: '
                              + ', '.join(unassigned))
         unresolved = [row['exchange_id'] for row in out['exchange_coverage']
-                      if row['grounding_status'] not in ('bound', 'courtesy_only', 'reviewed_non_qa')]
+                      if row['grounding_status'] not in ('bound', 'courtesy_only', 'reviewed_non_qa','continued_answer')]
         if unresolved:
             raise ValueError('Q&A grounding unresolved; repair source attribution before analysis: '
                              + ', '.join(unresolved))
@@ -408,6 +415,14 @@ def normalize_courtesy(out, bundle, catalog):
         e = exchanges.get(row.get('exchange_id'))
         if e is None:
             raise ValueError('Unknown exchange in courtesy normalization')
+        if e['mechanical_disposition']=='reviewed_answer_continuation':
+            before=copy.deepcopy(row)
+            answers=[pid for t in e['turns'] if t['id'] in e['answer_turn_ids'] for pid in t['passage_ids']]
+            row.update(question_passage_ids=[],answer_passage_ids=answers,continuation_exchange_ids=[],
+                       grounding_status='continued_answer',grounding_notes=e['review_reason'])
+            receipt.append({'exchange_id':e['exchange_id'],'before_sha256':base.digest(before),'after_sha256':base.digest(row),
+                            'turns':copy.deepcopy(e['turns']),'continued_from':e['reviewed_continued_from']})
+            continue
         if e['mechanical_disposition']=='reviewed_non_qa':
             before=copy.deepcopy(row)
             row.update(question_passage_ids=[],answer_passage_ids=[],continuation_exchange_ids=[],
@@ -430,4 +445,34 @@ def normalize_courtesy(out, bundle, catalog):
         receipt.append({'exchange_id': e['exchange_id'], 'before_sha256': base.digest(before),
                         'after_sha256': base.digest(row), 'source': copy.deepcopy(grounding['source']),
                         'turns': copy.deepcopy(e['turns']), 'reason': 'exact_header_aware_courtesy_only'})
+    if bundle.get('batch_attribution_review_binding'):
+        binding=bundle['batch_attribution_review_binding']
+        if base.read(binding['reservation'])['bindings'].get('scope')=='complete-source-disposition-v2':
+            derived,links=prune_unused_continuations(derived,grounding)
+            receipt.extend(links)
     return derived, receipt
+
+
+def prune_unused_continuations(out,grounding):
+    """Remove only unused links to independently retained complete answer rows."""
+    derived=copy.deepcopy(out);audit=[]
+    rows={r['exchange_id']:r for r in derived['exchange_coverage']}
+    groups={e['exchange_id']:e for e in grounding['exchanges']}
+    for row in derived['exchange_coverage']:
+        group=groups[row['exchange_id']]
+        for linked in list(row['continuation_exchange_ids']):
+            child=groups.get(linked);other=rows.get(linked)
+            if not child or not other or linked not in group['allowed_continuation_exchange_ids'] or child['followup_of']!=row['exchange_id']:continue
+            allowed={pid for t in child['turns'] if t['id'] in child['answer_turn_ids'] for pid in t['passage_ids']}
+            if allowed.intersection(row['answer_passage_ids']):continue
+            # No source answer is removed: the separate row must retain its own
+            # valid answer support and have no unresolved source flags.
+            if (not allowed or child['flags'] or other['grounding_status'] not in ('bound','continued_answer')
+                    or not other['answer_passage_ids'] or not set(other['answer_passage_ids'])<=allowed):continue
+            before=base.digest(row);row['continuation_exchange_ids'].remove(linked)
+            audit.append({'exchange_id':row['exchange_id'],'removed_unused_link':linked,
+                          'before_sha256':before,'after_sha256':base.digest(row),
+                          'retained_answer_row_sha256':base.digest(other),
+                          'retained_answer_passage_ids':copy.deepcopy(other['answer_passage_ids']),
+                          'reason':'Link selects no continuation answer passages; unchanged separate answer row retains source support.'})
+    return derived,audit
