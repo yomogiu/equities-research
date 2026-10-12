@@ -39,6 +39,9 @@ def targets(snapshot, bundle):
         for name in names:
             add(prefix + [name], 'citations' if name.endswith('citations') else 'text', value[name])
     art = snapshot['artifacts']
+    # Selected labels are presentation metadata; fact IDs and row membership stay fixed.
+    for i, row in enumerate(art['financial']['rows']):
+        add(['artifacts', 'financial', 'rows', i, 'label'], 'text', row['label'])
     for i, row in enumerate(art['financial']['context']):
         fields_at(['artifacts', 'financial', 'context', i], row, ('text', 'citations'))
     for i, text in enumerate(art['financial']['gaps']):
@@ -136,6 +139,19 @@ EXPORT = '''
 import json,sys
 from pathlib import Path
 root=Path(sys.argv[1]);p=json.loads((root/'protocol.json').read_text());uncertainty=None
+if p['version']=='authenticated-final-review-handoff-v1':
+ from research import earnings_review_attempt_recovery as c, earnings_batch_review as b
+ p,bundle,catalog,writing=c.load(root)
+ v=b.replay(root/'batch-review')
+ if v['status']!='blocked' or v['round']!=2 or p['max_correction_rounds']!=2 or p['review_attempt_recovery']['used_correction_rounds']!=2:
+  raise ValueError('Authenticated final review must be conclusively stopped after two author rounds')
+ state,pack=b.materialize(v['items'])
+ state['findings']=[{'id':b.remediation.repair.finding_id({'unit_id':k,'reason':reason}),
+                    'finding':{'unit_id':k,'reason':reason}} for k,reason in sorted(v['findings'].items())]
+ if not state['findings']:raise ValueError('Stopped review must have unresolved findings')
+ print(json.dumps({'status':'blocked','snapshot':state,'source_protocol':b.load(root/'batch-review')[0]['source_protocol'],
+  'prior_rounds':2,'prior_tokens':p['review_attempt_recovery']['inherited_tokens']+v['tokens']}))
+ sys.exit(0)
 if p['version']=='interrupted-report-review-v1':
  from research import earnings_interrupted_review as c
  v=c.verify(root)
@@ -187,12 +203,16 @@ print(json.dumps({'status':v['status'],'snapshot':v['state'],'source_protocol':p
 
 def export_seed(seed):
     p = base.read(seed/'protocol.json')
+    authenticated = p.get('version') == 'authenticated-final-review-handoff-v1'
+    if authenticated:
+        p = dict(p, code=[{'path':name,'sha256':h} for name,h in p['code'].items()])
     prepared = p.get('version') == pipe.EFFICIENT_VERSION and bool(p.get('prepared_recovery'))
-    if not prepared and p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, corrections.financial_evidence.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION, 'interrupted-report-review-v1'}:
+    if not prepared and not authenticated and p.get('version') not in {'deterministic-corrections-v1', 'deterministic-corrections-v2', corrections.regression.VERSION, corrections.cited_passages.VERSION, corrections.financial_evidence.VERSION, 'targeted-remediation-v1', 'targeted-remediation-v2', VERSION, 'interrupted-report-review-v1'}:
         raise ValueError('A stopped corrections or remediation seed is required')
     for item in p['code']:
         if base.sha(item['path']) != item['sha256']: raise ValueError('Seed verifier code changed')
-    verifier_name = ('earnings_interrupted_review.py' if p['version']=='interrupted-report-review-v1' else
+    verifier_name = ('earnings_review_attempt_recovery.py' if authenticated else
+                     'earnings_interrupted_review.py' if p['version']=='interrupted-report-review-v1' else
                      'earnings_passage_pipeline.py' if prepared else
                      'earnings_remediation.py' if p['version'].startswith('targeted-remediation-') else 'earnings_corrections.py')
     code = Path(next(x['path'] for x in p['code'] if x['path'].endswith('/' + verifier_name))).parent.parent
