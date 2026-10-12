@@ -186,6 +186,7 @@ def _advance(root,execute):
     status = 'pending' if result['status']=='awaiting_batch' else result['status']
     stage = 'batch_correction' if result['status']=='awaiting_batch' else result.get('stage','batch_review')
     return {'status':status,'stage':stage,'detail':result,
+            **({'reason':result['reason']} if 'reason' in result else {}),
             **({'report':str(edition/'report.html'),'report_sha256':runner.sha(edition/'report.html')} if result['status']=='accepted' else {})}
 
 
