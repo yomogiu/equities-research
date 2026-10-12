@@ -157,6 +157,9 @@ def advance(output, execute=True):
     """Replay completed stages and execute at most one new worker; fail closed."""
     root = Path(output).resolve()
     frozen = base.read(root/'protocol.json')
+    if frozen.get('selection_recovery'):
+        from . import earnings_batched_selection_recovery
+        return earnings_batched_selection_recovery.advance(root,execute)
     if frozen.get('layout_recovery'):
         from . import earnings_batched_layout_recovery
         return earnings_batched_layout_recovery.advance(root,execute)
