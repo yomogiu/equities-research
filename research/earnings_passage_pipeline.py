@@ -6,6 +6,7 @@ Research artifacts must remain private. No production/schedule changes.
 from __future__ import annotations
 import argparse
 import copy
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,8 @@ def prompt(role, bundle, writing, deps, feedback, catalog, prior=None, issues=No
     if role in ('analysis', 'review') and 'retrieval' in deps:
         grounding.require_analysis_ready(deps['retrieval'], bundle, catalog)
     grounding_prompt = grounding.prompt_contract(role, bundle)
+    if role in ('analysis','review') and bundle.get('question_id_derivation'):
+        grounding_prompt += '\nAuthenticated question-ID transport derivation; independently assess source attribution: '+json.dumps(bundle['question_id_derivation'])
     if efficient and issues is None:
         from research import earnings_efficient_evidence as reuse
         return reuse.prompt(role, bundle, writing, deps, feedback, catalog, extra_scope_ids) + grounding_prompt
@@ -209,6 +212,14 @@ def load(root):
         rec=p['grounding_recovery']
         bundle,_,_=apply(rec['reviewed_boundary'],bundle,authenticate(rec['responses']['retrieval'])['content'])
     grounding.attach(root, p, bundle, catalog)
+    if p.get('grounding_recovery',{}).get('question_id_derivation'):
+        from .earnings_batched_grounding_recovery import derive_question_ids
+        from .earnings_role_import import authenticate
+        rec=p['grounding_recovery'];ref=rec['responses']['retrieval']
+        _,derivation=derive_question_ids(authenticate(ref)['content'],catalog,bundle['qa_grounding'],ref)
+        if derivation!=rec['question_id_derivation']:
+            raise ValueError('Question ID derivation changed')
+        bundle['question_id_derivation']=derivation
     if p.get('prepared_recovery'):
         from .earnings_prepared_recovery import apply
         bundle, prepared, inherited, identities = apply(p, bundle, catalog)
