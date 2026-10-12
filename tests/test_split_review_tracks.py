@@ -43,15 +43,16 @@ class EditorialTests(unittest.TestCase):
  def test_terminology_comes_from_literal_source_association(self):
   cat={'passages':[{'scope_id':'turn','start':0,'text':'Fictional Fabrication Facility, or FFF, is planned.'}]}
   self.assertEqual(e.terminology(cat,['Track FFF installation.'])[0]['expanded'],'Fictional Fabrication Facility')
- def test_exhausted_factual_budget_prevents_third_meaning_review(self):
+ def test_exhausted_factual_budget_does_not_authorize_third_author_round(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);fact=root/'facts';fact.mkdir();(fact/'protocol.json').write_text('{}')
    items=self.items();frozen={'version':b.FACTUAL_VERSION,'source_protocol':{'excluded_session_ids':[],'writing_sha256':'writing'}}
    result={'status':'accepted','round':2,'items':items,'accepted':{k:{'unit_sha256':b.runner.digest(v)} for k,v in items.items()}}
    response={'content':self.response('wording','Track FFF installation.','FFF is installed.'),'receipt':{'session':{'id':'editor','usage':{'totalTokens':42}}}}
-   with patch.object(b,'load',return_value=(frozen,items,{}, {'passages':[]},'Guide')),patch.object(b,'replay',return_value=result),patch.object(b,'validate'),patch.object(e.flow,'job',return_value=response) as calls:
+   with patch.object(b,'load',return_value=(frozen,items,{}, {'passages':[]},'Guide')),patch.object(b,'replay',return_value=result),patch.object(b,'validate'),patch.object(e,'meaning_prompt',return_value='Verify identical factual meaning only'),patch.object(e.flow,'job',side_effect=[response,{'pending_status':'pending'}]) as calls:
     output=e.advance(fact,root/'editorial',True)
-   self.assertEqual(output['status'],'blocked');self.assertEqual(output['stage'],'editorial_meaning_hold');self.assertEqual(calls.call_count,1)
+   self.assertEqual(output['status'],'pending');self.assertEqual(output['stage'],'editorial_factual_review');self.assertEqual(calls.call_count,2)
+   self.assertEqual(calls.call_args.args[4]['factual_rounds_used'],2);self.assertEqual(result['round'],2)
    self.assertEqual(result['accepted']['analysis:0']['unit_sha256'],b.runner.digest(items['analysis:0']))
 
 class ProjectionTests(unittest.TestCase):

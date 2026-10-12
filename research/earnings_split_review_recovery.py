@@ -145,6 +145,6 @@ def advance(output,execute=True):
         seed_style=None
         if rec['used_correction_rounds']==2:
             seed_style={'response':legacy_copy_response(export['editorial_review'],v['items'],catalog),'review':rec['review']}
-        final=editorial.advance(root/'batch-review',root/'final-editorial',execute,legacy_editorial=seed_style)
+        final=editorial.advance(root/'batch-review',root/'final-editorial',execute and v['status']!='pending',legacy_editorial=seed_style)
         final['tokens']=final.get('tokens',0)+tokens;return final
     return {'status':'pending' if result['status']=='awaiting_batch' else result['status'],'stage':'factual_review','tokens':tokens,'detail':result}

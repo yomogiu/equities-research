@@ -10,8 +10,9 @@ Historical requests retain their original policy and implementation.
 5. After factual acceptance, independently review the visible prose against the guide.
 6. Apply exact editorial replacements directly. Whitespace, adjacent exact duplicate
    removal and unambiguous source-defined acronym expansion retain factual acceptance.
-   Other wording changes require a separate source review of changed units and their
-   linked signals. The original two factual correction rounds still govern.
+   Other wording changes require a separate source fidelity check of edited units and
+   their linked signals. It can certify unchanged meaning only, never authorize new
+   or corrected facts. The original two factual correction rounds remain unchanged.
 7. Import only after both gates pass; private production completion still requires a
    later fresh exact remote-byte proof.
 
