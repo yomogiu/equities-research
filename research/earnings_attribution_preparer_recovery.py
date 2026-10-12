@@ -79,21 +79,21 @@ def apply(protocol,bundle,catalog):
     rec=protocol['attribution_preparer_recovery'];seed=Path(rec['seed'])
     old,code=original(seed)
     require(r.sha(seed/'protocol.json')==rec['seed_protocol_sha256'] and rec['version']==VERSION and rec['authorization'].strip(), 'Original attribution binding changed')
-    ignored={'code','attribution_preparer_recovery','attribution_code_recovery','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}
+    ignored={'code','attribution_preparer_recovery','attribution_code_recovery','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids','signal_provider_recovery'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored}, 'Attribution recovery changed original settings')
     if protocol.get('attribution_code_recovery'):
         repair=protocol['attribution_code_recovery'];failed=Path(repair['seed'])
         require(repair.get('authorization','').strip() and repair.get('prior_rounds')==0 and repair.get('new_calls_before_stop')==0, 'Mechanical attribution budget or authorization changed')
         require(r.sha(failed/'protocol.json')==repair['protocol_sha256'] and r.sha(failed.parent/'state.json')==repair['state_sha256'], 'Mechanical attribution source changed')
         prior=r.read(failed/'protocol.json')
-        require({k:v for k,v in protocol.items() if k not in {'code','attribution_code_recovery','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}, 'Mechanical recovery changed frozen settings')
+        require({k:v for k,v in protocol.items() if k not in {'code','attribution_code_recovery','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids','signal_provider_recovery'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids','signal_provider_recovery'}}, 'Mechanical recovery changed frozen settings')
         require(not (failed/'batch-jobs').exists() and not (failed/'batch-review').exists() and not (failed/'result.json').exists(), 'Mechanical attribution continuation cannot reset executed work')
     if protocol.get('attribution_transport_recovery'):
         repair=protocol['attribution_transport_recovery'];parent=Path(repair['seed'])
         require(repair.get('authorization','').strip() and repair.get('new_calls_before_stop')==0 and repair.get('prior_rounds')==0, 'Attribution transport authority or budget changed')
         require(r.sha(parent/'protocol.json')==repair['protocol_sha256'] and r.sha(parent.parent/'state.json')==repair['state_sha256'], 'Attribution transport parent changed')
         prior=r.read(parent/'protocol.json')
-        require({k:v for k,v in protocol.items() if k not in {'code','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}, 'Attribution transport changed frozen settings')
+        require({k:v for k,v in protocol.items() if k not in {'code','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids','signal_provider_recovery'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids','signal_provider_recovery'}}, 'Attribution transport changed frozen settings')
         require(not (parent/'batch-jobs').exists() and not (parent/'batch-review').exists() and not (parent/'result.json').exists(), 'Attribution transport cannot reset executed work')
     refs=rec['responses'];require(set(refs)=={'financial','retrieval'}, 'Both exact preparers required')
     responses={}
@@ -117,7 +117,7 @@ def apply(protocol,bundle,catalog):
         require(binding.get('authorization','').strip() and binding.get('prior_rounds')==0, 'Analysis schema recovery authority or budget changed')
         require(r.sha(parent/'protocol.json')==binding['protocol_sha256'] and r.sha(parent.parent/'state.json')==binding['state_sha256'], 'Analysis schema parent changed')
         prior=r.read(parent/'protocol.json')
-        require({k:v for k,v in protocol.items() if k not in {'code','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids'}}, 'Analysis schema recovery changed frozen settings')
+        require({k:v for k,v in protocol.items() if k not in {'code','analysis_schema_recovery','attribution_transport_recovery','qa_grounding_path','qa_grounding_sha256','excluded_session_ids','signal_provider_recovery'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256','excluded_session_ids','signal_provider_recovery'}}, 'Analysis schema recovery changed frozen settings')
         require({p.name for p in (parent/'batch-jobs').iterdir()}=={'analysis'} and not (parent/'batch-review').exists() and not (parent/'result.json').exists(), 'Analysis schema recovery cannot reset later work')
         ref=binding['analysis'];require(ref['job']==str(parent/'batch-jobs/analysis'), 'Analysis schema role reference changed')
         value=imp.authenticate(ref);request=r.read(parent/'batch-jobs/analysis/request.json')
