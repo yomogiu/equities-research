@@ -81,6 +81,11 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
         pipe.validate('financial',imp.authenticate(refs['financial'])['content'],preflight,catalog)
         pipe.validate('retrieval',derived,preflight,catalog)
         protocol['grounding_recovery']['question_id_derivation']=derivation
+    if batch_attribution_review and not resolve_question_ids:
+        prior=imp.authenticate(refs['retrieval'])['content']
+        derived,receipt=pipe.grounding.normalize_courtesy(prior,{**bundle,'qa_grounding':grounding},catalog)
+        pipe.validate('retrieval',derived,{**bundle,'qa_grounding':grounding},catalog)
+        protocol['grounding_recovery']['normalization_sha256']=r.digest({'content':derived,'receipt':receipt})
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
     r.save(output/'qa-grounding.json',grounding)
@@ -126,7 +131,10 @@ def validate(protocol,bundle,catalog):
             require(derived['transcript_index']==bundle['transcript_index'],'Reviewed index differs')
             require(review['session']['id'] not in {v['receipt']['session']['id'] for v in results.values()},'Boundary reviewer reused preparer session')
             results[role]['content']=out
-        if role=='retrieval':out,_=pipe.grounding.normalize_courtesy(out,bundle,catalog)
+        if role=='retrieval':
+            out,normalization=pipe.grounding.normalize_courtesy(out,bundle,catalog)
+            if recovery.get('normalization_sha256'):
+                require(r.digest({'content':out,'receipt':normalization})==recovery['normalization_sha256'],'Source normalization derivation changed')
         pipe.validate(role,out,bundle,catalog)
     preparer_sessions={v['receipt']['session']['id'] for v in results.values()}
     require(len(preparer_sessions)==2,'Distinct preparer sessions required')

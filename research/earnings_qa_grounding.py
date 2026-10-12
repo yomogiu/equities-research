@@ -445,4 +445,34 @@ def normalize_courtesy(out, bundle, catalog):
         receipt.append({'exchange_id': e['exchange_id'], 'before_sha256': base.digest(before),
                         'after_sha256': base.digest(row), 'source': copy.deepcopy(grounding['source']),
                         'turns': copy.deepcopy(e['turns']), 'reason': 'exact_header_aware_courtesy_only'})
+    if bundle.get('batch_attribution_review_binding'):
+        binding=bundle['batch_attribution_review_binding']
+        if base.read(binding['reservation'])['bindings'].get('scope')=='complete-source-disposition-v2':
+            derived,links=prune_unused_continuations(derived,grounding)
+            receipt.extend(links)
     return derived, receipt
+
+
+def prune_unused_continuations(out,grounding):
+    """Remove only unused links to independently retained complete answer rows."""
+    derived=copy.deepcopy(out);audit=[]
+    rows={r['exchange_id']:r for r in derived['exchange_coverage']}
+    groups={e['exchange_id']:e for e in grounding['exchanges']}
+    for row in derived['exchange_coverage']:
+        group=groups[row['exchange_id']]
+        for linked in list(row['continuation_exchange_ids']):
+            child=groups.get(linked);other=rows.get(linked)
+            if not child or not other or linked not in group['allowed_continuation_exchange_ids'] or child['followup_of']!=row['exchange_id']:continue
+            allowed={pid for t in child['turns'] if t['id'] in child['answer_turn_ids'] for pid in t['passage_ids']}
+            if allowed.intersection(row['answer_passage_ids']):continue
+            # No source answer is removed: the separate row must retain its own
+            # valid answer support and have no unresolved source flags.
+            if (not allowed or child['flags'] or other['grounding_status'] not in ('bound','continued_answer')
+                    or not other['answer_passage_ids'] or not set(other['answer_passage_ids'])<=allowed):continue
+            before=base.digest(row);row['continuation_exchange_ids'].remove(linked)
+            audit.append({'exchange_id':row['exchange_id'],'removed_unused_link':linked,
+                          'before_sha256':before,'after_sha256':base.digest(row),
+                          'retained_answer_row_sha256':base.digest(other),
+                          'retained_answer_passage_ids':copy.deepcopy(other['answer_passage_ids']),
+                          'reason':'Link selects no continuation answer passages; unchanged separate answer row retains source support.'})
+    return derived,audit
