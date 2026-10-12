@@ -255,7 +255,7 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION):
     return out,findings
 
 
-def initialize(source_protocol,state,pack,output,authorization, *, presentation_derivation=None):
+def initialize(source_protocol,state,pack,output,authorization, *, presentation_derivation=None, editorial_locator_derivation=None):
     root=Path(output).resolve();require(not root.exists() and not root.is_relative_to(Path(__file__).resolve().parents[1]),'New private output directory required')
     require(isinstance(authorization,str) and authorization.strip(),'Explicit batch authorization required')
     bundle,catalog=remediation._source_bundle(source_protocol)
@@ -279,6 +279,7 @@ def initialize(source_protocol,state,pack,output,authorization, *, presentation_
         require(source_protocol['review_context']==context.VERSION,'Unknown review context policy')
         p['review_context']=context.VERSION
     if presentation_derivation is not None:p['presentation_derivation']=presentation_derivation
+    if editorial_locator_derivation is not None:p['editorial_locator_derivation']=editorial_locator_derivation
     root.mkdir(parents=True);runner.save(root/'protocol.json',p);runner.save(root/'initial.json',items)
     return {'status':'pending','round':0,'accepted_units':0}
 
@@ -330,6 +331,9 @@ def replay(root, *, stop_before=None):
         require(session['id'] not in sessions,'Fresh independent batch reviewer required');sessions.add(session['id'])
         tokens+=session['usage']['totalTokens']
         review=bind_review_response(result['content'],bindings)
+        if n==0 and p.get('editorial_locator_derivation'):
+            review,note=resolve_editorial_locators(review,items)
+            require(note==p['editorial_locator_derivation'],'Editorial locator derivation changed')
         accepted,findings=adjudicate(items,pending,accepted,review,c,runner.sha(job/'output.json'),p.get('version',VERSION))
         require(all(entry['unit_sha256']==runner.digest(items[key]) for key,entry in accepted.items()),'Stale accepted unit')
         if not findings:return {'status':'accepted','round':n,'accepted':accepted,'findings':{},'items':items,'tokens':tokens}
@@ -382,3 +386,38 @@ def main():
     print(json.dumps(v,indent=2))
 
 if __name__=='__main__':main()
+
+
+def resolve_editorial_locators(review,items):
+    """Rebind a wrong list index only to a unique exact before-text sibling."""
+    result=copy.deepcopy(review);changes=[];targets={}
+    def at(value,path):
+        for part in path:value=value[part]
+        return value
+    for decision in result['decisions']:
+        for edit in decision.get('editorial_repairs',[]):
+            key=decision['unit_id'];require(key in items,'Unknown editorial unit')
+            path=edit['field_path'];before=edit['before'];value=items[key]['value']
+            require(isinstance(path,list) and isinstance(before,str),'Exact editorial path and text required')
+            try:current=at(value,path)
+            except (KeyError,IndexError,TypeError):raise ValueError('Editorial path does not exist')
+            if current==before=='' or isinstance(current,str) and current.count(before)==1:continue
+            require(before and isinstance(current,str) and current.count(before)==0,'Ambiguous editorial source text')
+            positions=[i for i,x in enumerate(path) if type(x) is int]
+            require(len(positions)==1,'Only one sibling list index may be rebound')
+            i=positions[0];siblings=at(value,path[:i]);require(isinstance(siblings,list),'Editorial sibling collection required')
+            candidates=[]
+            for index,sibling in enumerate(siblings):
+                try:text=at(sibling,path[i+1:])
+                except (KeyError,IndexError,TypeError):continue
+                if isinstance(text,str) and text.count(before)==1:candidates.append(index)
+            require(len(candidates)==1,'Editorial before-text must identify exactly one sibling')
+            canonical=candidates[0];group=(key,tuple(path[:i+1]))
+            require(group not in targets or targets[group]==canonical,'Editorial edits disagree about sibling identity')
+            targets[group]=canonical;fixed=path[:];fixed[i]=canonical;edit['field_path']=fixed
+            changes.append({'unit_id':key,'original_path':path,'resolved_path':fixed,'before_sha256':runner.digest(before),
+                            'resolved_value_sha256':runner.digest(at(value,fixed))})
+    require(changes,'At least one invalid exact editorial locator required')
+    note={'version':'exact-editorial-sibling-locator-v1','review_sha256':runner.digest(review),
+          'items_sha256':runner.digest(items),'changes':changes,'resolved_review_sha256':runner.digest(result)}
+    return result,note

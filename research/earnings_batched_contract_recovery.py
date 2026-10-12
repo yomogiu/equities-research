@@ -47,17 +47,23 @@ def original(seed):
     return old,code,__import__('json').loads(result.stdout)
 
 
-def initialize(seed,output,authorization):
+def initialize(seed,output,authorization,resolve_editorial_locators=False):
     root=Path(output).resolve();b.require(not root.exists() and authorization.strip(),'New authorized contract edition required')
     old,code,export=original(seed)
+    note=None
+    if resolve_editorial_locators:
+        original_review=r.verify_job(Path(export['review_job']))['content']
+        bound=b.bind_review_response(original_review,{'batch_sha256':r.digest(b.units(export['state'],export['pack']))})
+        _,note=b.resolve_editorial_locators(bound,b.units(export['state'],export['pack']))
     root.mkdir(parents=True)
-    b.initialize(export['source_protocol'],export['state'],export['pack'],root/'batch-review',authorization)
+    b.initialize(export['source_protocol'],export['state'],export['pack'],root/'batch-review',authorization,editorial_locator_derivation=note)
     protocol={'version':VERSION,'batch_review':old['batch_review'],'contract_recovery':{
         'seed':str(Path(seed).resolve()),'seed_protocol_sha256':r.sha(Path(seed)/'protocol.json'),
         'seed_initial_sha256':r.sha(Path(seed)/'batch-review/initial.json'),
         'authorization':authorization,'inherited_tokens':export['inherited_tokens'],'used_correction_rounds':0,
         'review':imp.reference(export['review_job'],code)},
         'review_context':old.get('review_context'),'max_correction_rounds':2,'code':{str(p):r.sha(p) for p in Path(__file__).parent.glob('earnings_*') if p.suffix in ('.py','.mjs')}}
+    if note:protocol['contract_recovery']['editorial_locator_derivation']=note
     r.save(root/'protocol.json',protocol)
     pending=b.replay(root/'batch-review');ref=protocol['contract_recovery']['review']
     imp.create(Path(pending['job']),pending['prompt'],*b.MODEL,pending['bindings'],1200,ref)
@@ -72,6 +78,12 @@ def load(root):
     b.require(rec['used_correction_rounds']==0 and rec['inherited_tokens']==export['inherited_tokens'],'Inherited correction budget/usage changed')
     frozen,items,bundle,catalog,writing=b.load(root/'batch-review')
     b.require(frozen['source_protocol']==export['source_protocol'] and items==b.units(export['state'],export['pack']),'Saved factual work changed')
+    require_note=rec.get('editorial_locator_derivation')
+    b.require(frozen.get('editorial_locator_derivation')==require_note,'Editorial locator binding differs')
+    if require_note:
+        raw=imp.authenticate(rec['review'])['content'];bound=b.bind_review_response(raw,{'batch_sha256':r.digest(items)})
+        _,computed=b.resolve_editorial_locators(bound,items)
+        b.require(computed==require_note,'Original editorial locator derivation changed')
     imp.verify(root/'batch-review/batches/0/review')
     return p,bundle,catalog,writing
 
