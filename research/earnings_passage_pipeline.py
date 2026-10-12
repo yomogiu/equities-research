@@ -217,7 +217,13 @@ def load(root):
         from .earnings_role_import import authenticate
         rec=p['grounding_recovery']
         bundle,_,_=apply(rec['reviewed_boundary'],bundle,authenticate(rec['responses']['retrieval'])['content'])
-    grounding.attach(root, p, bundle, catalog)
+    if p.get("attribution_preparer_recovery"):
+        from .earnings_attribution_preparer_recovery import apply
+        bundle, _, _ = apply(p, bundle, catalog)
+        if bundle["qa_grounding"] != base.read(root / "qa-grounding.json"):
+            raise ValueError("Reviewed attribution grounding changed")
+    else:
+        grounding.attach(root, p, bundle, catalog)
     if p.get('grounding_recovery',{}).get('question_id_derivation'):
         from .earnings_batched_grounding_recovery import derive_question_ids
         from .earnings_role_import import authenticate

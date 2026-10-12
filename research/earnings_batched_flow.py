@@ -98,6 +98,10 @@ def _advance(root,execute):
             from .earnings_role_import import authenticate
             boundary=authenticate(protocol['grounding_recovery']['reviewed_boundary']['review'])
             tokens+=inherited_review_tokens(boundary,sessions)
+    if protocol.get('attribution_preparer_recovery'):
+        from .earnings_attribution_preparer_recovery import apply
+        _, inherited, attribution = apply(protocol, pipe.evidence.load_bundle(protocol['evidence_manifest']), catalog)
+        tokens += inherited_review_tokens(attribution, sessions)
     for role in ('financial','retrieval','analysis','signal_author'):
         if role=='signal_author':
             state={'artifacts':copy.deepcopy(artifacts),'format':{'rows':{},'basis':{'text':'','citations':[]}}}
