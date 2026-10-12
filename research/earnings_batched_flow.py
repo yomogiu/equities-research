@@ -157,7 +157,7 @@ def _advance(root,execute):
             sessions.add(sid);tokens+=original['receipt']['session']['usage']['totalTokens']
             plan=edition/'batches'/str(n)/'plan.json'
             if plan.exists():batch.require(runner.read(plan)==original['content'],'Applied plan differs from authenticated author')
-    for review in edition.glob('batches/*/review/output.json'):
+    for review in list(edition.glob('batches/*/review/output.json'))+list(edition.glob('batches/*/source-handoff-review/output.json')):
         receipt=runner.verify_job(review.parent)['receipt']['session']
         batch.require(receipt['id'] not in sessions,'Reviewer reused an author session')
     if result['status']=='awaiting_batch':
