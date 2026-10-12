@@ -134,7 +134,7 @@ def _advance(root,execute):
             **({'execution':result['execution']} if 'execution' in result else {})}
         tokens+=result['receipt']['session']['usage']['totalTokens']
         out=result['content']
-        if role=='retrieval' and protocol.get('qa_grounding') in pipe.grounding.HEADER_VERSIONS:
+        if role=='retrieval' and protocol.get('qa_grounding') in pipe.grounding.HEADER_VERSIONS and not protocol.get('attribution_preparer_recovery'):
             out,_=pipe.grounding.normalize_courtesy(out,bundle,catalog)
         if role=='signal_author':signals.validate(out,state,bundle,catalog);pack=out
         else:pipe.validate(role,out,bundle,catalog);artifacts[role]=out

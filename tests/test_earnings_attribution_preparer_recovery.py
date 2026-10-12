@@ -43,3 +43,21 @@ class PreparedAttributionTests(OverlayTests):
     def test_changed_complete_review_prompt_rejected(self):
         (self.job/'prompt.txt').write_text('Partial source review')
         with self.assertRaisesRegex(ValueError,'source review prompt changed'):self.adjudicate()
+
+class BatchedInheritedAttributionBoundaryTests(__import__('unittest').TestCase):
+    def test_authenticated_candidate_reaches_independent_review_boundary_without_duplicate_normalization(self):
+        import tempfile
+        from pathlib import Path
+        from research import earnings_batched_flow as flow, earnings_qa_grounding as qa
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);writing=root/'writing.txt';writing.write_text('Fictitious writing standard')
+            protocol={'batch_review':'batched-report-review-v1','writing_standard':str(writing),'attribution_preparer_recovery':{'fake':True},'evidence_manifest':'fake','qa_grounding':qa.HEADER_VERSION}
+            (root/'protocol.json').write_text(__import__('json').dumps(protocol))
+            inherited={role:{'content':{},'receipt':{'session':{'id':role,'usage':{'totalTokens':1}}}} for role in ('financial','retrieval')}
+            review={'session':{'id':'source-review','usage':{'totalTokens':1}}}
+            def role_job(root,role,*args):
+                return {'content':{},'receipt':{'session':{'id':role,'usage':{'totalTokens':1}}}}
+            with patch.object(flow.pipe,'load',return_value=(protocol,{},{})), patch.object(flow.pipe.evidence,'load_bundle',return_value={}), patch.object(recovery,'apply',return_value=({},inherited,review)), patch.object(flow.pipe,'prompt',return_value='fictitious'), patch.object(flow.pipe,'validate'), patch.object(flow.signals,'prompt',return_value='fictitious'), patch.object(flow.signals,'validate'), patch.object(flow,'job',side_effect=role_job) as jobs, patch.object(flow.pipe.grounding,'normalize_courtesy',side_effect=AssertionError('Duplicate normalizer must not run')):
+                result=flow._advance(root,False)
+            self.assertEqual(result,{'status':'pending','stage':'batch_initialization'})
+            self.assertEqual([call.args[1] for call in jobs.call_args_list],['analysis','signal_author'])

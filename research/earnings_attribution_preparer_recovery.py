@@ -79,8 +79,15 @@ def apply(protocol,bundle,catalog):
     rec=protocol['attribution_preparer_recovery'];seed=Path(rec['seed'])
     old,code=original(seed)
     require(r.sha(seed/'protocol.json')==rec['seed_protocol_sha256'] and rec['version']==VERSION and rec['authorization'].strip(), 'Original attribution binding changed')
-    ignored={'code','attribution_preparer_recovery','qa_grounding_path','qa_grounding_sha256'}
+    ignored={'code','attribution_preparer_recovery','attribution_code_recovery','qa_grounding_path','qa_grounding_sha256'}
     require({k:v for k,v in protocol.items() if k not in ignored}=={k:v for k,v in old.items() if k not in ignored}, 'Attribution recovery changed original settings')
+    if protocol.get('attribution_code_recovery'):
+        repair=protocol['attribution_code_recovery'];failed=Path(repair['seed'])
+        require(repair.get('authorization','').strip() and repair.get('prior_rounds')==0 and repair.get('new_calls_before_stop')==0, 'Mechanical attribution budget or authorization changed')
+        require(r.sha(failed/'protocol.json')==repair['protocol_sha256'] and r.sha(failed.parent/'state.json')==repair['state_sha256'], 'Mechanical attribution source changed')
+        prior=r.read(failed/'protocol.json')
+        require({k:v for k,v in protocol.items() if k not in {'code','attribution_code_recovery','qa_grounding_path','qa_grounding_sha256'}}=={k:v for k,v in prior.items() if k not in {'code','qa_grounding_path','qa_grounding_sha256'}}, 'Mechanical recovery changed frozen settings')
+        require(not (failed/'batch-jobs').exists() and not (failed/'batch-review').exists() and not (failed/'result.json').exists(), 'Mechanical attribution continuation cannot reset executed work')
     refs=rec['responses'];require(set(refs)=={'financial','retrieval'}, 'Both exact preparers required')
     responses={}
     for role,ref in refs.items():
@@ -112,5 +119,25 @@ def initialize(seed,output,candidate_path,review,authorization):
     derived,_,_=apply(protocol,bundle,catalog)
     output.mkdir(parents=True);(output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
     r.save(output/'qa-grounding.json',derived['qa_grounding']);protocol['qa_grounding_path']=str(output/'qa-grounding.json');protocol['qa_grounding_sha256']=r.sha(output/'qa-grounding.json')
+    r.save(output/'protocol.json',protocol);pipe.load(output)
+    return protocol
+
+
+def continue_stopped(seed,output,authorization):
+    """Rebind one no-call normalization stop; no preparers/reviewer are relaunched."""
+    from . import earnings_passage_pipeline as pipe
+    seed,output=Path(seed).resolve(),Path(output).resolve()
+    require(not output.exists() and authorization.strip(), 'New authorized mechanical successor required')
+    old=r.read(seed/'protocol.json');require(old.get('attribution_preparer_recovery') and not old.get('attribution_code_recovery'), 'Exact attribution source successor required')
+    state=r.read(seed.parent/'state.json')
+    require(state.get('status')=='validation_blocked' and state.get('reason')=='Courtesy normalization requires replayable grounding', 'Exact zero-call normalization stop required')
+    for c in old['code']:require(r.sha(c['path'])==c['sha256'], 'Mechanical source code changed')
+    protocol=copy.deepcopy(old)
+    protocol['code']=[{'path':str(p),'sha256':r.sha(p)} for p in sorted(Path(__file__).parent.glob('earnings_*')) if p.suffix in ('.py','.mjs')]
+    protocol['attribution_code_recovery']={'seed':str(seed),'protocol_sha256':r.sha(seed/'protocol.json'),'state_sha256':r.sha(seed.parent/'state.json'),'authorization':authorization,'prior_rounds':0,'new_calls_before_stop':0}
+    apply(protocol,pipe.evidence.load_bundle(old['evidence_manifest']),r.read(seed/'passages.json'))
+    output.mkdir(parents=True)
+    for name in ('passages.json','qa-grounding.json'):(output/name).write_bytes((seed/name).read_bytes())
+    protocol['qa_grounding_path']=str(output/'qa-grounding.json');protocol['qa_grounding_sha256']=r.sha(output/'qa-grounding.json')
     r.save(output/'protocol.json',protocol);pipe.load(output)
     return protocol
