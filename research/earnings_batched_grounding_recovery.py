@@ -63,6 +63,16 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
     version=grounding_version or pipe.grounding.NAMED_GREETING_VERSION
     require(version in {pipe.grounding.NAMED_GREETING_VERSION,pipe.grounding.COURTESY_ROUTING_VERSION,pipe.grounding.NAMED_THANKS_VERSION,pipe.grounding.FOLLOWUP_QUESTION_VERSION,pipe.grounding.FOLLOWUP_ROUTING_VERSION,pipe.grounding.EXPLICIT_LINE_ROUTING_VERSION},'Unsupported recovery grounding')
     grounding=pipe.grounding.build(bundle,catalog,version)
+    if operator_review:
+        from .earnings_reviewed_operator import apply
+        protocol['grounding_recovery']['operator_review']=operator_review
+        grounding,_=apply(operator_review,grounding,bundle,catalog)
+        bundle['operator_review_binding']=operator_review
+    if batch_attribution_review:
+        from .earnings_reviewed_attribution_batch import apply
+        protocol['grounding_recovery']['batch_attribution_review']=batch_attribution_review
+        grounding,_=apply(batch_attribution_review,grounding,bundle,catalog)
+        bundle['batch_attribution_review_binding']=batch_attribution_review
     if resolve_question_ids:
         prior=imp.authenticate(refs['retrieval'])['content']
         derived,derivation=derive_question_ids(prior,catalog,grounding,refs['retrieval'])
@@ -71,14 +81,6 @@ def initialize(seed, output, authorization, reviewed_boundary=None, selection_re
         pipe.validate('financial',imp.authenticate(refs['financial'])['content'],preflight,catalog)
         pipe.validate('retrieval',derived,preflight,catalog)
         protocol['grounding_recovery']['question_id_derivation']=derivation
-    if operator_review:
-        from .earnings_reviewed_operator import apply
-        protocol['grounding_recovery']['operator_review']=operator_review
-        grounding,_=apply(operator_review,grounding,bundle,catalog)
-    if batch_attribution_review:
-        from .earnings_reviewed_attribution_batch import apply
-        protocol['grounding_recovery']['batch_attribution_review']=batch_attribution_review
-        grounding,_=apply(batch_attribution_review,grounding,bundle,catalog)
     output.mkdir(parents=True)
     (output/'passages.json').write_bytes((seed/'passages.json').read_bytes())
     r.save(output/'qa-grounding.json',grounding)
@@ -126,7 +128,11 @@ def validate(protocol,bundle,catalog):
             results[role]['content']=out
         if role=='retrieval':out,_=pipe.grounding.normalize_courtesy(out,bundle,catalog)
         pipe.validate(role,out,bundle,catalog)
-    require(len({v['receipt']['session']['id'] for v in results.values()})==2,'Distinct preparer sessions required')
+    preparer_sessions={v['receipt']['session']['id'] for v in results.values()}
+    require(len(preparer_sessions)==2,'Distinct preparer sessions required')
+    for key in ('operator_review','batch_attribution_review'):
+        if recovery.get(key):
+            require(imp.authenticate(recovery[key]['review'])['session']['id'] not in preparer_sessions,'Independent source reviewer reused preparer session')
     return results
 
 
