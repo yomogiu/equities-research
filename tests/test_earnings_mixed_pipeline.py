@@ -34,6 +34,19 @@ class MixedPipelineTests(unittest.TestCase):
         self.financial['rows'][0]['fact_ids']=[proposed]
         with self.assertRaisesRegex(ValueError,'Unresolved'):pipe.validate_output('financial',self.financial,self.bundle)
 
+    def test_document_selection_has_no_count_cap_but_rejects_unknown_or_duplicate_ids(self):
+        template=self.bundle['documents']['chunks'][0]
+        for n in range(32):
+            self.bundle['documents']['chunks'].append({**copy.deepcopy(template),'id':'Dextra'+str(n)})
+        selected=[c['id'] for c in self.bundle['documents']['chunks']]
+        retrieval={'selected_document_ids':selected,
+            'exchange_coverage':[{'exchange_id':e['id'],'question':'Fictional question','answer':'Fictional answer','consequence':'Fictional consequence'} for e in self.bundle['transcript_index']['exchanges']],
+            'document_findings':[], 'quotes':[{'scope_id':'D001','text':text} for text in ('Fictitious café guidance is provisional.','Fictitious supporting row 000.','Fictitious supporting row 001.','Fictitious supporting row 002.')]}
+        pipe.validate_output('retrieval',retrieval,self.bundle)
+        for bad in (selected+['unknown'],selected+[selected[0]]):
+            with self.assertRaisesRegex(ValueError,'Invalid/duplicate/unknown document selection'):
+                pipe.validate_output('retrieval',{**retrieval,'selected_document_ids':bad},self.bundle)
+
     def test_missing_exchange_and_fake_quote_are_rejected(self):
         retrieval={'selected_document_ids':['D001'],'exchange_coverage':[], 'document_findings':[], 'quotes':[]}
         with self.assertRaisesRegex(ValueError,'Every Q&A'):pipe.validate_output('retrieval',retrieval,self.bundle)
