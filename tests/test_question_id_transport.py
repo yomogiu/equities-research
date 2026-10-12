@@ -37,3 +37,17 @@ class QuestionIDTransportTests(unittest.TestCase):
             with self.assertRaises(ValueError):derive_question_ids(p,c,g,r)
         p,c,g,r=self.fixture();p['exchange_coverage'][0]['question_passage_ids'].append('P123456789abc')
         with self.assertRaisesRegex(ValueError,'duplicate'):derive_question_ids(p,c,g,r)
+
+class NamedLineRoutingTests(unittest.TestCase):
+    def test_complete_named_routing_only_and_older_versions_unchanged(self):
+        from research import earnings_qa_grounding as g
+        text='Operator\nYour next question comes from the line of Fictional Analyst with Fictional Bank. Fictional , your line is open. Please go ahead.'
+        turn={'speaker':'Operator','role':'operator','start':0,'end':len(text)}
+        rows=[{'text':text,'start':0,'end':len(text)}]
+        targets=[('Fictional Analyst','Fictional Bank')]
+        self.assertTrue(g._routing(turn,rows,targets,g.EXPLICIT_LINE_ROUTING_VERSION))
+        self.assertFalse(g._routing(turn,rows,targets,g.FOLLOWUP_ROUTING_VERSION))
+        self.assertFalse(g._routing(turn,rows,[('Different Person','Fictional Bank')],g.EXPLICIT_LINE_ROUTING_VERSION))
+        more=text+' Guidance is increasing.'
+        self.assertFalse(g._routing({**turn,'end':len(more)},[{'text':more,'start':0,'end':len(more)}],targets,g.EXPLICIT_LINE_ROUTING_VERSION))
+        self.assertFalse(g._routing({**turn,'end':len(text)+1},rows,targets,g.EXPLICIT_LINE_ROUTING_VERSION))
