@@ -9,9 +9,11 @@ from . import earnings_repair_context as transport
 from . import earnings_mixed_runner as r
 
 VERSION = 'complete-facts-cited-filing-full-call-v1'
+CHECKED_VERSION = 'checked-facts-cited-filing-full-call-v2'
+VERSIONS = (VERSION, CHECKED_VERSION)
 
 
-def build(data, bundle, wanted):
+def build(data, bundle, wanted, version=VERSION):
     value=copy.deepcopy(data)
     sources=value['sources']
     turns={t['id'] for t in bundle['transcript_index']['turns']}
@@ -32,7 +34,7 @@ def build(data, bundle, wanted):
         value['financial_source_context']=inventory
     # Protect the readable complete rendered report from string/table factoring.
     value['report']=value.pop('rendered_report')
-    value['review_context_policy']=VERSION
+    value['review_context_policy']=version
     packed=transport.compact_context(value)
     if transport.expand_context(packed)!=value:raise ValueError('Review transport changed evidence')
     return packed

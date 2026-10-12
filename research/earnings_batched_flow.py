@@ -114,6 +114,10 @@ def _advance(root,execute):
         else:
             text=pipe.prompt(role,bundle,writing,artifacts,[],catalog)
             model=pipe.MODELS[role]
+        from . import earnings_batch_context as context_contract
+        if protocol.get('review_context')==context_contract.CHECKED_VERSION:
+            from . import earnings_evidence_handoff as transport
+            text=transport.append_prompt(text,bundle,catalog,artifacts)
         bindings={'protocol_sha256':runner.sha(root/'protocol.json'),'role':role,'dependencies_sha256':runner.digest(artifacts)}
         if role in inherited:
             result=inherited[role]
@@ -180,7 +184,7 @@ def _advance(root,execute):
     # host worker continues only on pending; exposing the internal replay state
     # here used to stop every company needing its first correction.
     status = 'pending' if result['status']=='awaiting_batch' else result['status']
-    stage = 'batch_correction' if result['status']=='awaiting_batch' else 'batch_review'
+    stage = 'batch_correction' if result['status']=='awaiting_batch' else result.get('stage','batch_review')
     return {'status':status,'stage':stage,'detail':result,
             **({'report':str(edition/'report.html'),'report_sha256':runner.sha(edition/'report.html')} if result['status']=='accepted' else {})}
 

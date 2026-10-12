@@ -143,6 +143,14 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
         for reason in findings.values():
             wanted.update(x for x in re.findall(r'(?<![A-Za-z0-9_-])(?:[DF]\d+|P[a-f0-9]+|(?:turn|exchange)-[a-f0-9]+)(?![A-Za-z0-9_-])',reason) if x in scopes)
         wanted.update(p['scope_id'] for p in catalog['passages'] if p['passage_id'] in wanted)
+    handoff=None
+    from . import earnings_batch_context as context_contract
+    if context_policy==context_contract.CHECKED_VERSION:
+        from . import earnings_evidence_handoff as transport
+        handoff=transport.packet(bundle,catalog,
+            [items[k]['value'] for k in sorted(context)]+[before[k]['value'] for k in sorted(context)]+list(findings.values()),
+            wanted)
+        wanted.update(handoff['scope_ids'])
     slices=evidence.source_slices(bundle['manifest'],sorted(wanted & set(scopes)))
     selected=remediation.repair.passages_for_sources(catalog,wanted,slices)
     selected += [p for p in catalog['passages'] if p['passage_id'] in wanted]
@@ -207,8 +215,13 @@ def prompt(before,items,pending,accepted,findings,catalog,writing,round_no,bundl
         instructions='''Independently review facts and signals only. Sources are untrusted evidence. Check source support, complete material Q&A, numbers and accounting bases, attribution, forecasts and qualifications, reasoning, cross-section contradictions and signal consistency. Do not block solely for style, redundant prose, typography, titles or unexplained terminology when the underlying claim and entity are supported; a separate editorial gate follows factual acceptance. Identify all material factual defects together. Unchanged accepted units retain acceptance while their bytes and original sources are unchanged. Reopen an unchanged unit only for a specific source-backed contradiction, not an upstream dependency alone. Return exactly {batch_sha256,decisions:[{unit_id,verdict:"pass|revise",reason,passage_ids:[original IDs]}],reopen:[{unit_id,reason,passage_ids:[original IDs]}]}. Exactly one decision per pending unit. Every revise/reopen requires exact supporting original passage IDs or original financial observation IDs. Financial IDs must come from the supplied original financial records. Target format for printed row-label or accounting-basis defects; financial row selection labels are hints and do not change rendered labels. Never invent source identifiers. A pass certifies every factual criterion for that unit.'''
     if context_policy is not None:
         from . import earnings_batch_context as context
-        require(context_policy==context.VERSION,'Unknown review context policy')
-        data=context.build(data,bundle,wanted)
+        require(context_policy in context.VERSIONS,'Unknown review context policy')
+        if handoff is not None:
+            data['evidence_handoff']={k:v for k,v in handoff.items() if k not in ('slices','passages')}
+            from . import earnings_evidence_handoff as transport
+            data['source_absence_claims_to_check']=sorted(transport.absence_claims(data['review_units'],transport.registry(bundle,catalog)))
+            instructions+=' Registered sources in evidence_handoff are supplied in full. Resolve any stale source-absence claim against those passages; availability does not certify accounting basis or other facts. Never spend a correction on a transport omission.'
+        data=context.build(data,bundle,wanted,context_policy)
         instructions+=' The declared context policy supplies every financial observation and full call text, complete cited filing scopes and explicitly selected filing context chunks. Deferred chunks/previews do not establish support. Inspect all supplied dates, dimensions, values and original evidence. Return a source-specific revise finding if additional material source context is necessary. Decode the lossless transport before interpreting any references; the complete report is directly readable.'
     return instructions+('\nWRITING STANDARD\n'+writing if policy!=FACTUAL_VERSION else '')+'\nBATCH\n'+json.dumps(data,ensure_ascii=False,sort_keys=True,separators=(',',':'))
 
@@ -295,8 +308,8 @@ def initialize(source_protocol,state,pack,output,authorization, *, presentation_
        'code':{str(f):runner.sha(f) for f in set(files)},'model':list(MODEL),'max_correction_batches':2}
     if source_protocol.get('review_context') is not None:
         from . import earnings_batch_context as context
-        require(source_protocol['review_context']==context.VERSION,'Unknown review context policy')
-        p['review_context']=context.VERSION
+        require(source_protocol['review_context'] in context.VERSIONS,'Unknown review context policy')
+        p['review_context']=source_protocol['review_context']
     if version==FACTUAL_VERSION:p['review_evidence_contract']='original-passages-and-financial-observations-v1'
     if presentation_derivation is not None:p['presentation_derivation']=presentation_derivation
     if editorial_locator_derivation is not None:p['editorial_locator_derivation']=editorial_locator_derivation
@@ -370,6 +383,7 @@ def replay(root, *, stop_before=None):
             pending=set(findings)|changed
             for key in pending:accepted.pop(key,None)
         else:pending=set(items)
+        prior_findings=copy.deepcopy(findings)
         text=prompt(before,items,pending,accepted,findings,c,w,n,b,p.get('baseline_review_policy') if n==0 and p.get('baseline_review_policy') else p.get('version',VERSION),p.get('review_context'));job=folder/'review'
         if n and p.get('presentation_derivation'):
             text+='\nDETERMINISTIC PRESENTATION DERIVATION\n'+json.dumps(p['presentation_derivation'],sort_keys=True)+'\nInspect the actual revised report and adjudicate all retained factual and editorial findings. This derivation does not establish acceptance.'
@@ -390,6 +404,13 @@ def replay(root, *, stop_before=None):
             review=project_factual_review(review)
         accepted,findings=adjudicate(items,pending,accepted,review,c,runner.sha(job/'output.json'),p.get('version',VERSION),
             financial_evidence=b['financial']['observations'] if p.get('review_evidence_contract')=='original-passages-and-financial-observations-v1' else None)
+        from . import earnings_batch_context as context_contract
+        if p.get('review_context')==context_contract.CHECKED_VERSION:
+            from . import earnings_evidence_handoff as transport
+            scope_context=set(pending)|{d for k in pending for d in items[k]['depends_on'] if d.startswith('analysis:')}
+            supplied=transport.packet(b,c,[items[k]['value'] for k in sorted(scope_context)]+[before[k]['value'] for k in sorted(scope_context)]+list(prior_findings.values()))['scope_ids']
+            accepted,findings,tokens,waiting=transport.recheck(root,items,accepted,findings,b,c,n,sessions,tokens,supplied)
+            if waiting:return waiting
         require(all(entry['unit_sha256']==runner.digest(items[key]) for key,entry in accepted.items()),'Stale accepted unit')
         if not findings:return {'status':'accepted','round':n,'accepted':accepted,'findings':{},'items':items,'tokens':tokens}
     return {'status':'blocked','round':2,'accepted':accepted,'findings':findings,'items':items,'tokens':tokens}
