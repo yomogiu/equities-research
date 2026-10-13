@@ -157,6 +157,9 @@ def advance(output, execute=True):
     """Replay completed stages and execute at most one new worker; fail closed."""
     root = Path(output).resolve()
     frozen = base.read(root/'protocol.json')
+    if frozen.get('version')=='file-backed-markdown-review-v1':
+        from . import earnings_file_pipeline
+        return earnings_file_pipeline.advance(root,execute)
     if frozen.get('review_attempt_recovery'):
         from . import earnings_review_attempt_recovery
         return earnings_review_attempt_recovery.advance(root,execute)

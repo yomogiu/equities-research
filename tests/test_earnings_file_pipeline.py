@@ -1,0 +1,142 @@
+"""Fictional file/Markdown pipeline and real receipt verification; no providers."""
+import copy
+import json
+from pathlib import Path
+import unittest
+from unittest.mock import patch
+from test_earnings_passages import PassageFixture
+import test_earnings_signals as fixture_signals
+from research import earnings_file_context as c, earnings_file_pipeline as p
+from research import earnings_file_runner as r, earnings_markdown as md
+from research import earnings_mixed_runner as base, earnings_signals as signals
+
+
+class FilePipelineTests(PassageFixture,unittest.TestCase):
+    pack=fixture_signals.SignalTests.pack
+
+    def assemble(self):return c.assemble(self.root/'evidence/manifest.json',self.catalog,self.root/'context',artifacts={'report':self.report},markdown='# Fictional report\n',metadata={'batch_sha256':'fake'})
+
+    def drain(self,reader,method,name):
+        at=0
+        while True:
+            value=getattr(reader,method)(name,at)
+            if value['next_start'] is None:return
+            at=value['next_start']
+
+    def test_context_pages_hashes_unknown_ids_and_search_coverage(self):
+        index=self.assemble();log=self.root/'read.jsonl';reader=c.Evidence(index,log)
+        preview=reader.search('Fictitious');self.assertTrue(preview)
+        entries=c.audit(index,log);self.assertFalse(c.complete_ranges(entries,'scope','id'))
+        self.drain(reader,'scope','D001');self.assertIn('D001',c.complete_ranges(c.audit(index,log),'scope','id'))
+        with self.assertRaises(ValueError):reader.scope('../../secrets')
+        with self.assertRaises(ValueError):reader.file('../../secrets')
+        with self.assertRaises(ValueError):reader.scope('D001',0,100000)
+        (self.root/'context/sources.json').write_text('{}')
+        with self.assertRaises(ValueError):c.Evidence(index,log)
+
+    def test_original_source_and_forged_retrieval_receipt_rejected(self):
+        index=self.assemble();log=self.root/'read.jsonl';reader=c.Evidence(index,log);reader.scope('D001')
+        events=[json.loads(x) for x in log.read_text().splitlines()];events[0]['result_sha256']='forged';log.write_text(json.dumps(events[0])+'\n')
+        with self.assertRaises(ValueError):c.audit(index,log)
+        (self.root/'filing.txt').write_text('changed original')
+        with self.assertRaises(ValueError):c.Evidence(index,self.root/'other.jsonl')
+
+    def test_partial_source_page_does_not_satisfy_inspection(self):
+        index=self.assemble();log=self.root/'read.jsonl';reader=c.Evidence(index,log);reader.scope('D001',0,1)
+        self.assertNotIn('D001',c.complete_ranges(c.audit(index,log),'scope','id'))
+
+    def test_markdown_uses_exact_compiler_numbers_and_escapes_html(self):
+        state={'artifacts':{'financial':self.financial,'retrieval':self.retrieval,'analysis':copy.deepcopy(self.report)},'format':{'rows':{},'basis':{'text':'','citations':[]}}}
+        state['artifacts']['analysis']['findings'][0]['text']='<script>danger()</script>'
+        state['artifacts']['analysis']['findings'][0]['heading']='Fictional | finding'
+        text=md.report(state,self.bundle,self.catalog,self.pack(state));page=md.render(text,status='accepted')
+        self.assertIn('F002',text);self.assertIn('<table>',page);self.assertNotIn('<script>',page);self.assertIn('&lt;script&gt;',page)
+        for line in text.splitlines():
+            if line.startswith('| '):self.assertIn(' |',line)
+        with self.assertRaises(ValueError):md.render('# Bad\n\nMissing [^D999]\n')
+        target=self.root/'render.md';md.write(target,state,self.bundle,self.catalog,self.pack(state),status='accepted')
+        self.assertEqual((self.root/'render.html').read_text(),md.render(target.read_text(),status='accepted'))
+
+    def fake_run(self,job,prompt,model,effort,bindings,index,*,max_tokens,max_tool_calls,timeout=1200):
+        job=Path(job);q=r.request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout);job.mkdir(parents=True)
+        base.save(job/'request.json',q);(job/'prompt.md').write_text(prompt)
+        reader=c.Evidence(index,job/'retrieval.jsonl');reader.inventory()
+        # Fake provider inspects the complete frozen inventory using the same API.
+        for identifier in reader.index['source_ids']:self.drain(reader,'scope',identifier)
+        if 'report.md' in reader.index['files']:self.drain(reader,'file','report.md')
+        self.drain(reader,'file','transcript.md')
+        role=bindings['role'];meta=base.read(Path(index).parent/'metadata.json');art=base.read(Path(index).parent/'artifacts.json')
+        if role=='financial':content=copy.deepcopy(self.financial)
+        elif role=='retrieval':content=copy.deepcopy(self.retrieval)
+        elif role=='analysis':content=copy.deepcopy(self.report)
+        elif role=='signal_author':content=self.pack(art['state'])
+        elif role=='correction':
+            items=art['units'];key='analysis:0';value=copy.deepcopy(items[key]['value']);value['text']='Fictional corrected distinct finding '+str(meta['round'])
+            content={'before_sha256':meta['before_sha256'],'changes':[{'unit_id':key,'before_sha256':base.digest(items[key]['value']),'value':value,'reason':'Fictional supported correction'}]}
+        else:
+            fail=getattr(self,'fail_reviews',0)>0
+            if fail:self.fail_reviews-=1
+            content={'batch_sha256':meta['batch_sha256'],'report_sha256':meta['report_sha256'],
+                'report_criteria':{k:{'status':'pass','evidence':'Fictional exact source check'} for k in p.legacy.CRITERIA},
+                'signal_criteria':{k:{'status':'pass','evidence':'Fictional exact source check'} for k in signals.CRITERIA},
+                'decisions':[], 'reopen':[]}
+            for key in art['units']:
+                failed=fail and key=='analysis:0'
+                content['decisions'].append({'unit_id':key,'verdict':'revise' if failed else 'pass','reason':'Fictional source check',
+                    'passage_ids':[self.ids[0]],'review_kind':'factual' if failed else 'none','editorial_repairs':[]})
+        response='# Role result\n\n```json\n'+json.dumps(content)+'\n```\n';(job/'response.md').write_text(response)
+        sid='fictional-'+job.name;launch={'id':'fictional-launch','request_sha256':base.digest(q)};base.save(job/'launch.json',launch)
+        for name in ('runtime-start.json','runtime-finish.json'):base.save(job/name,{'launch_id':launch['id'],'session_id':sid,'model':model,'effort':effort,'oauth':True})
+        base.save(job/'wire.json',[{'model':model,'effort':effort,'tools':['ipython']}]*2)
+        usage={'input':10,'output':10,'cacheRead':0,'cacheWrite':0,'totalTokens':20}
+        assistant={'role':'assistant','provider':'openai-codex','api':'openai-codex-responses','model':model,'usage':usage}
+        messages=[{'role':'user','content':prompt},{**assistant,'stopReason':'toolUse','content':[{'type':'toolCall','id':'inspect','name':'ipython','arguments':{'code':'# Fictional complete API inspection'}}]},
+                  {'role':'toolResult','toolName':'ipython','toolCallId':'inspect','content':[{'type':'text','text':'Fictional source inspection'}]},
+                  {**assistant,'stopReason':'stop','content':[{'type':'text','text':response}]}]
+        events=[{'type':'session','id':sid,'cwd':str(job)},{'type':'model_change','provider':'openai-codex','modelId':model},{'type':'thinking_level_change','thinkingLevel':effort}]+[{'type':'message','message':x} for x in messages]
+        (job/'sessions').mkdir();(job/'sessions/fake.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in events))
+        execution={'request_sha256':base.digest(q),'launch_sha256':base.sha(job/'launch.json'),'exit_code':0,'status':'completed',
+            'session':r.receipt(job,q),'artifact_sha256':{n:base.sha(job/n) for n in ('runtime-start.json','runtime-finish.json','wire.json','response.md','retrieval.jsonl')}}
+        base.save(job/'execution.json',execution);base.save(job/'output.json',{'request_sha256':base.digest(q),'execution_sha256':base.sha(job/'execution.json'),'content':content})
+        return r.verify_job(job)
+
+    def lifecycle(self,fail=0):
+        root=self.root/'pipeline';writing=self.root/'writing.md';writing.write_text('Fictional concise source-grounded prose.\n')
+        p.initialize(self.casepath,root,writing);self.fail_reviews=fail
+        with patch.object(r,'run_role',side_effect=self.fake_run) as run:
+            pending=p.advance(root,False);self.assertEqual(pending['status'],'pending');run.assert_not_called()
+            for _ in range(12):
+                before=run.call_count;value=p.advance(root,True);self.assertLessEqual(run.call_count-before,1)
+                if value['status'] in ('accepted','blocked'):break
+            else:self.fail('Lifecycle did not stop')
+        return root,value
+
+    def test_complete_lifecycle_short_markdown_prompts_replay_and_mutation(self):
+        root,value=self.lifecycle();self.assertEqual(value['status'],'accepted');self.assertEqual(value['tokens'],200)
+        self.assertEqual(p.verify(root),value)
+        for prompt in root.glob('jobs/*/prompt.md'):
+            self.assertLess(len(prompt.read_text()),12000);self.assertNotIn('<html',prompt.read_text());self.assertNotIn(self.text,prompt.read_text())
+        self.assertTrue((root/'report.md').exists());self.assertEqual((root/'report.html').read_text(),md.render((root/'report.md').read_text(),status='accepted'))
+        with patch.object(r,'run_role') as launch:p.verify(root);launch.assert_not_called()
+        (root/'jobs/review-0/retrieval.jsonl').write_text('')
+        with self.assertRaises(ValueError):p.verify(root)
+
+    def test_two_round_limit_and_edited_candidate_needs_fresh_review(self):
+        root,value=self.lifecycle(fail=1);self.assertEqual(value['status'],'accepted');self.assertEqual(value['correction_rounds'],1)
+        self.assertIn('fictional-review-1',value['session_ids']);self.assertIn('fictional-correction-1',value['session_ids'])
+        self.assertNotEqual(base.read(root/'contexts/review-0/metadata.json')['batch_sha256'],base.read(root/'contexts/review-1/metadata.json')['batch_sha256'])
+
+    def test_exhausted_two_rounds_do_not_get_a_third_author(self):
+        root,value=self.lifecycle(fail=3);self.assertEqual(value['status'],'blocked');self.assertEqual(value['correction_rounds'],2)
+        self.assertFalse((root/'jobs/correction-3').exists());self.assertFalse((root/'report.html').exists())
+
+    def test_review_needs_full_markdown_and_call_not_search_previews(self):
+        index=self.assemble();job=self.root/'job';job.mkdir();reader=c.Evidence(index,job/'retrieval.jsonl');reader.search('Fictitious')
+        with self.assertRaises(ValueError):p.coverage('review',index,job,{},self.catalog,{})
+
+    def test_markdown_result_requires_one_metadata_block(self):
+        self.assertEqual(r.parse('# Role result\n```json\n{"x":1}\n```\n'),{'x':1})
+        for text in ('{"x":1}','```json\n{"x":1}\n```\n```json\n{"x":2}\n```'):
+            with self.assertRaises(ValueError):r.parse(text)
+
+if __name__=='__main__':unittest.main()

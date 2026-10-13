@@ -1,0 +1,5 @@
+# Financial preparation
+
+Inspect `financial.json`, the source inventory and relevant original source scopes. Select 4–12 meaningful rows of original observation IDs, at most four IDs per row. Include cash conversion and material balance-sheet or commitment context when supported. Preserve comparable periods and dimensions; keep quarterly and year-to-date cash flows distinct. Inspect unmapped observations and extraction gaps rather than limiting selection to canonical metrics.
+
+Return metadata with `rows: [{label, fact_ids}]`, `context: [{text, citations}]` (0–8), and `gaps: [specific unresolved items]`. Select IDs only; do not invent values. Code owns source-derived labels, units, scales, periods and numeric rendering. Selection labels are hints. Put source-backed comparability, accounting basis and payment-horizon qualifications in context with exact citations; tagged dates alone do not establish them. Every selected original fact must be retrieved through `ctx.scope("F...")` before returning.
