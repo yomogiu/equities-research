@@ -61,6 +61,38 @@ class PublishedQuarterTests(unittest.TestCase):
         published.run(self.root, '2026-09-21')
         return first, second, other, cat
 
+    def test_batch_catalog_change_preserves_absent_other_evidence(self):
+        first, second, other, cat = self.two_issuer_baseline()
+        before = library.read_json(self.root / 'published/latest.json')
+        for key in ('raw_path', 'text_path'):
+            (self.root / second[key]).unlink()
+        new = self.add('Fictitious Example Reports Q3 FY2026 Results.', report_date='2026-09-20')
+        for field in ('raw_path', 'text_path'):
+            target = 'sources/new-' + Path(new[field]).name
+            (self.root / new[field]).rename(self.root / target)
+            new[field] = target
+        library.save(self.root / 'audit.json', {'results': self.owners})
+        updated = library.build_catalog(self.root, 'audit.json', issuer_ids={self.iid})
+        self.assertNotEqual(updated['catalog_id'], cat['catalog_id'])
+        receipt = published.run(self.root, '2026-09-22', issuer_ids={self.iid}, require_incremental=True)
+        after = library.read_json(self.root / 'published/latest.json')
+        self.assertEqual(receipt['rebuilt_issuer_ids'], [self.iid])
+        self.assertEqual(after['issuers'][other], before['issuers'][other])
+        self.assertEqual(after['issuer_as_of'][other], before['issuer_as_of'][other])
+        queue = library.read_json(self.root / 'published/review-queue.json')
+        self.assertTrue(all(x['catalog_id'] == updated['catalog_id'] for x in queue))
+
+    def test_batch_rejects_changes_outside_scope_and_missing_baseline(self):
+        first, second, other, cat = self.two_issuer_baseline()
+        cat['issuers'][other]['monitoring_eligible'] = False
+        cat['catalog_id'] = library.digest({k:v for k,v in cat.items() if k != 'catalog_id'})
+        library.save(self.root / 'library/catalog.json', cat)
+        with self.assertRaisesRegex(ValueError, 'Compatible publication baseline'):
+            published.run(self.root, issuer_ids={self.iid}, require_incremental=True)
+        (self.root / 'published/latest.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'Compatible publication baseline'):
+            published.run(self.root, issuer_ids={self.iid}, require_incremental=True)
+
     def test_incremental_skips_other_sources_and_preserves_rows_and_queue(self):
         from unittest.mock import patch
         first, second, other, cat = self.two_issuer_baseline()
