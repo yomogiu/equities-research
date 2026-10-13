@@ -123,7 +123,7 @@ def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessi
     index=context.assemble(p['evidence_manifest'],catalog,root/'contexts'/name,artifacts=artifacts,markdown=report,metadata=metadata)
     job=root/'jobs'/name;text=instruction(role,index,job,p)
     require(len(text.encode())<=24000,'Instruction prompt exceeds 24KB; sources belong in files')
-    remaining=p['max_tokens']-tokens;cap=min(400000,remaining)
+    remaining=p['max_tokens']-tokens;cap=remaining
     bindings={'protocol_sha256':base.sha(root/'protocol.json'),'role':role,'context_sha256':base.sha(index),'artifact_sha256':base.digest(artifacts),'metadata_sha256':base.digest(metadata)}
     if not (job/'output.json').exists():
         if (job/'request.json').exists():return {'status':'launch_uncertain','stage':name},tokens
@@ -158,6 +158,9 @@ def _advance(root,execute):
     for role in ('financial','retrieval','analysis','signal_author'):
         state=None;report=None;dependencies={**artifacts,'qa_grounding':base.read(root/'qa-grounding.json')}
         metadata={'role':role,'case':base.read(p['case_path'])['scope_notes'],'period':base.read(p['case_path']).get('period')}
+        if role=='financial':
+            from . import earnings_financial_outline
+            dependencies['financial_outline']=earnings_financial_outline.build(bundle['financial'])
         if role=='signal_author':
             state={'artifacts':copy.deepcopy(artifacts),'format':mechanical.formatting(artifacts['financial'],bundle)}
             mechanical.check(state,bundle,catalog)
