@@ -105,3 +105,19 @@ Validation uses fictional provider transcripts and a local installed Prime/IPyth
 kernel smoke test. No live model call is part of the code test suite. A subsequent
 explicitly budgeted live pilot is needed to evaluate actual retrieval choices,
 provider compatibility and token savings; synthetic checks do not establish those.
+
+## Closed preparation recovery
+
+Financial roles use paged `financial_metrics()` and `financial_facts(query)` to
+select original observation IDs. The complete extraction stays available in the
+kernel; printing megabytes of repeated support is unnecessary. Selected original
+scopes still require full retrieval and audit.
+
+A coordinator may create one new source-bound recovery descendant for a proven
+local `role_budget` stop at the first financial role, or a pre-model sidecar hold
+with a new independent coverage receipt. Unknown provider failures cannot take
+this route. Every completed provider turn and matched tool result is replayed;
+original attempts remain immutable. The new protocol binds the recovery manifest,
+starts accounting at the inherited measured spend, and retains the original
+1.2-million-token company cap and two correction rounds. A failed role gets a
+new recorded attempt; its old request is never launched again.

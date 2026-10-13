@@ -25,7 +25,7 @@ def require(ok,message):
     if not ok:raise ValueError(message)
 
 
-def initialize(case, output, writing, *, max_tokens=1200000):
+def initialize(case, output, writing, *, max_tokens=1200000, recovery=None):
     root=Path(output).resolve();case=Path(case).resolve();writing=Path(writing).resolve()
     require(type(max_tokens) is int and 1<=max_tokens<=1200000,'Explicit bounded lifecycle budget required')
     require(not root.exists() or not any(root.iterdir()),'New pipeline directory required')
@@ -42,6 +42,11 @@ def initialize(case, output, writing, *, max_tokens=1200000):
         'code':[{'path':str(q),'sha256':base.sha(q)} for q in sorted(code)],
         'qa_grounding_sha256':base.sha(root/'qa-grounding.json'),'report_signals':True,'deterministic_corrections':True,
         'transport':'file-evidence-ipython-markdown-v1'}
+    if recovery is not None:
+        from . import earnings_file_recovery
+        lineage=earnings_file_recovery.verify(recovery)
+        require(max_tokens==lineage['original_max_tokens'],'Recovery must retain original cap')
+        p.update(recovery_path=str(Path(recovery).resolve()),recovery_sha256=base.sha(recovery),inherited_tokens=lineage['inherited_tokens'])
     context.write(root/'protocol.json',p);return p
 
 
@@ -54,6 +59,12 @@ def load(root):
                    (p['writing_standard'],p['writing_sha256']),(root/'passages.json',p['passages_sha256']),
                    (root/'qa-grounding.json',p['qa_grounding_sha256']),*((x['path'],x['sha256']) for x in p['code'])]:
         require(base.sha(name)==h,'Frozen pipeline input or code changed')
+    if p.get('recovery_path'):
+        from . import earnings_file_recovery
+        require(base.sha(p['recovery_path'])==p['recovery_sha256'],'Recovery manifest changed')
+        lineage=earnings_file_recovery.verify(p['recovery_path'])
+        require(p['inherited_tokens']==lineage['inherited_tokens'] and p['max_tokens']==lineage['original_max_tokens'],'Recovery usage changed')
+    else:require(p.get('inherited_tokens',0)==0,'Unbound inherited usage')
     bundle=evidence.load_bundle(p['evidence_manifest']);catalog=passages.catalog(p['evidence_manifest'])
     require(catalog==base.read(root/'passages.json'),'Source passage catalogue changed')
     return p,bundle,catalog
@@ -143,7 +154,7 @@ def review_result(value,items,state,pack,catalog,job):
 
 
 def _advance(root,execute):
-    p,bundle,catalog=load(root);artifacts={};sessions=set();tokens=0;launched=False
+    p,bundle,catalog=load(root);artifacts={};sessions=set();tokens=p.get('inherited_tokens',0);launched=False
     for role in ('financial','retrieval','analysis','signal_author'):
         state=None;report=None;dependencies={**artifacts,'qa_grounding':base.read(root/'qa-grounding.json')}
         metadata={'role':role,'case':base.read(p['case_path'])['scope_notes'],'period':base.read(p['case_path']).get('period')}

@@ -12,6 +12,7 @@ if (request.version !== 'file-prime-role-v1' || JSON.stringify(request.tool_name
 const save = (name, value) => fs.writeFileSync(path.join(job, name), JSON.stringify(value, null, 2)+'\n', {flag:'wx', mode:0o600});
 let session;
 let stage = 'auth';
+let localFailure;
 try {
   const auth = AuthStorage.create();
   stage = 'auth_storage';
@@ -68,7 +69,7 @@ try {
     const calls=session.agent.state.messages.filter(x=>x.role==='assistant').flatMap(x=>x.content.filter(b=>b.type==='toolCall'));
     const reserve=Buffer.byteLength(JSON.stringify(payload),'utf8');
     const remaining=request.max_tokens-used-reserve;
-    if (!Number.isInteger(model.maxTokens) || model.maxTokens<=0 || calls.length>=request.max_tool_calls || remaining<model.maxTokens) throw Error('role_budget');
+    if (!Number.isInteger(model.maxTokens) || model.maxTokens<=0 || calls.length>=request.max_tool_calls || remaining<model.maxTokens) { localFailure='role_budget'; throw Error('role_budget'); }
     // Codex subscription requests omit max_output_tokens. Reserve the registered
     // model output maximum before every turn; never add an unsupported field.
     wires.push({model:payload.model, effort:payload.reasoning.effort, tools:['ipython']});
@@ -80,7 +81,7 @@ try {
   save('wire.json', wires);
   const messages = session.agent.state.messages;
   const last = messages.at(-1);
-  if (!last || last.role !== 'assistant' || last.stopReason !== 'stop') throw Error('incomplete_output');
+  if (!last || last.role !== 'assistant' || last.stopReason !== 'stop') { if(last?.errorMessage==='role_budget') localFailure='role_budget'; throw Error('incomplete_output'); }
   const answer = last.content.filter(x=>x.type==='text').map(x=>x.text).join('');
   save('runtime-finish.json', {session_id:session.sessionId, model:session.model.id,
     effort:session.thinkingLevel, oauth:registry.isUsingOAuth(model)});
@@ -88,7 +89,7 @@ try {
   await session.disposeAsync({kernelSnapshot:false});
 } catch (_) {
   // Provider errors may contain account details; never print or persist them.
-  try { save('runtime-failure.json', {stage}); } catch (_) {}
+  try { save('runtime-failure.json', {stage:localFailure==='role_budget'?'budget_guard':stage, ...(localFailure?{code:localFailure}:{} )}); } catch (_) {}
   if (session) { try { await session.disposeAsync({kernelSnapshot:false}); } catch (_) {} }
   process.stderr.write('Prime role failed at '+stage+'; inspect private session status.\n');
   process.exitCode = 1;

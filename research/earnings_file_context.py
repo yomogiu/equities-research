@@ -96,6 +96,32 @@ class Evidence:
             if not value['table_row_complete']:value['table_row_next_start']=PAGE_CHARACTERS
         return self._record({'method':'scope','id':identifier,'start':start,'end':end,'total':len(text)},value)
 
+    def financial_metrics(self, start=0, limit=12):
+        """Paged concept inventory, including unmapped extraction and gaps."""
+        from collections import Counter
+        data=base.read(self.root/'financial.json')
+        counts=Counter((o.get('canonical_metric') or '',o.get('concept') or '') for o in data['observations'])
+        rows=[{'metric':metric or None,'concept':concept,'count':count} for (metric,concept),count in sorted(counts.items())]
+        require(type(start) is int and 0<=start<=len(rows) and type(limit) is int and 1<=limit<=12,'Bounded metric inventory required')
+        end=min(len(rows),start+limit)
+        value={'metrics':rows[start:end],'total':len(rows),'next_start':end if end<len(rows) else None,
+               'observation_count':len(data['observations']),'gap_count':len(data.get('gaps',[]))}
+        return self._record({'method':'financial_metrics','start':start,'limit':limit},value)
+
+    def financial_facts(self, query, start=0, limit=8):
+        """Select original IDs and comparables without printing raw support HTML."""
+        require(isinstance(query,str) and 2<=len(query)<=120,'Metric or concept query required')
+        require(type(start) is int and start>=0 and type(limit) is int and 1<=limit<=8,'Bounded facts required')
+        data=base.read(self.root/'financial.json');rows=[]
+        for o in data['observations']:
+            if query.casefold() not in ((o.get('canonical_metric') or '')+' '+o.get('concept','')).casefold():continue
+            row={k:o.get(k) for k in ('id','canonical_metric','concept','value','scale','unit_id','status','nil','source_document_id')}
+            row['context']=data['contexts'].get(o.get('context_id'),{}) if isinstance(data['contexts'],dict) else next((x for x in data['contexts'] if x.get('id')==o.get('context_id')), {})
+            rows.append(row)
+        end=min(len(rows),start+limit);require(start<=len(rows),'Fact page outside inventory')
+        value={'facts':rows[start:end],'total':len(rows),'next_start':end if end<len(rows) else None}
+        return self._record({'method':'financial_facts','query':query,'start':start,'limit':limit},value)
+
     def financial_row(self, identifier, start=0, limit=PAGE_CHARACTERS):
         require(identifier in self.records and 'table_row' in self.records[identifier],'No original table row for this fact')
         return self._page('financial_row',identifier,self.records[identifier]['table_row']['text'],start,limit)
@@ -142,6 +168,8 @@ def audit(index, log):
         for e in entries:
             method=e['method']
             if method=='inventory':reader.inventory()
+            elif method=='financial_metrics':reader.financial_metrics(e['start'],e['limit'])
+            elif method=='financial_facts':reader.financial_facts(e['query'],e['start'],e['limit'])
             elif method=='scope':reader.scope(e['id'],e['start'],e['end']-e['start'] or 1)
             elif method=='search':reader.search(e['query'],e.get('limit',12))
             elif method=='passage':

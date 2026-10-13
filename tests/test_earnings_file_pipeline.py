@@ -45,6 +45,19 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         index=self.assemble();log=self.root/'read.jsonl';reader=c.Evidence(index,log);reader.scope('D001',0,1)
         self.assertNotIn('D001',c.complete_ranges(c.audit(index,log),'scope','id'))
 
+    def test_financial_lookup_is_paged_and_replayable(self):
+        index=self.assemble();log=self.root/'facts-read.jsonl';reader=c.Evidence(index,log)
+        metrics=reader.financial_metrics(limit=1)
+        self.assertLessEqual(len(metrics['metrics']),1)
+        financial=base.read(Path(index).parent/'financial.json')
+        query=financial['observations'][0]['concept']
+        facts=reader.financial_facts(query,limit=1)
+        self.assertEqual(len(facts['facts']),1)
+        self.assertNotIn('support',facts['facts'][0])
+        self.assertEqual(facts['facts'][0]['id'],financial['observations'][0]['id'])
+        self.assertEqual(len(c.audit(index,log)),2)
+        with self.assertRaises(ValueError):reader.financial_facts(query,limit=100)
+
     def test_markdown_uses_exact_compiler_numbers_and_escapes_html(self):
         state={'artifacts':{'financial':self.financial,'retrieval':self.retrieval,'analysis':copy.deepcopy(self.report)},'format':{'rows':{},'basis':{'text':'','citations':[]}}}
         state['artifacts']['analysis']['findings'][0]['text']='<script>danger()</script>'
