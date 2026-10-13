@@ -77,7 +77,7 @@ exact model/effort, OAuth receipt, prompt, result, source retrieval and artifact
 hash is validated. Tokens are summed across all model turns, including tool-loop
 turns and cached tokens, with a bounded lifecycle total (maximum 1.2 million) and
 maximum 48 tool calls per job. Before each provider request, the helper reserves
-the serialized request byte bound plus the registered model output maximum.
+a metered unchanged-prefix bound plus newly serialized input bytes and the registered model output maximum. A changed prefix falls back to the full serialized byte bound.
 It does not add unsupported API budget fields. An incomplete launch is preserved
 and cannot be retried in place. Exceeded or unknown usage never grants acceptance.
 
@@ -121,3 +121,14 @@ original attempts remain immutable. The new protocol binds the recovery manifest
 starts accounting at the inherited measured spend, and retains the original
 1.2-million-token company cap and two correction rounds. A failed role gets a
 new recorded attempt; its old request is never launched again.
+
+
+New defaults compile a draft financial table from consolidated original
+observations with no financial selector model call. Source-derived number/scale
+formatting and independent semantic review remain mandatory; the compiler cannot
+grant acceptance. Fewer than four supported rows fails closed and requires an
+explicit source profile. The prior model selector remains an explicitly frozen
+alternative, never an in-place fallback that silently repeats a failed role.
+Known local budget stops are reported as budget exhaustion; unknown execution
+still requires reconciliation. Each new role uses the remaining company allowance,
+not a separate allocation that can reset the cumulative cap.

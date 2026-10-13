@@ -22,3 +22,11 @@ def build(data):
                      'source_context':[{'id':x[0]['id'],'concept':x[0]['concept'],'start':x[3],'end_or_instant':x[2],'value':x[0]['value'],'scale':x[0]['scale'],'unit_id':x[0]['unit_id']} for x in facts]})
     return {'status':'mechanical_unreviewed_outline','rows':rows,'must_verify_original_scopes':True,'gap_count':len(data.get('gaps',[])),
             'scope':'Consolidated original candidates only. Author must verify and may change selection; no acceptance or comparability conclusion is implied.'}
+
+
+def artifact(data):
+    """Compile a draft financial handoff; independent semantic review stays mandatory."""
+    outline=build(data)
+    if len(outline['rows'])<4:raise ValueError('Fewer than four supported consolidated rows; explicit financial profile required')
+    return {'rows':[{'label':r['label'],'fact_ids':r['fact_ids']} for r in outline['rows']], 'context':[],
+            'gaps':['Original extraction gap: '+str(g.get('reason') or g.get('kind') or g.get('status') or g) for g in data.get('gaps',[])[:8]]}

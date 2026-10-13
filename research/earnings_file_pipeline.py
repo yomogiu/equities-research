@@ -25,8 +25,9 @@ def require(ok,message):
     if not ok:raise ValueError(message)
 
 
-def initialize(case, output, writing, *, max_tokens=1200000, recovery=None):
+def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1"):
     root=Path(output).resolve();case=Path(case).resolve();writing=Path(writing).resolve()
+    require(financial_mode in ('deterministic-original-facts-v1','model-original-selector-v1'),'Known financial preparation mode required')
     require(type(max_tokens) is int and 1<=max_tokens<=1200000,'Explicit bounded lifecycle budget required')
     require(not root.exists() or not any(root.iterdir()),'New pipeline directory required')
     root.mkdir(parents=True,exist_ok=True)
@@ -41,7 +42,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None):
         'max_tokens':max_tokens,'max_correction_rounds':2,'max_tool_calls_per_job':48,
         'code':[{'path':str(q),'sha256':base.sha(q)} for q in sorted(code)],
         'qa_grounding_sha256':base.sha(root/'qa-grounding.json'),'report_signals':True,'deterministic_corrections':True,
-        'transport':'file-evidence-ipython-markdown-v1'}
+        'transport':'file-evidence-ipython-markdown-v1','financial_mode':financial_mode}
     if recovery is not None:
         from . import earnings_file_recovery
         lineage=earnings_file_recovery.verify(recovery)
@@ -55,6 +56,7 @@ def load(root):
     require(p['version']==VERSION and p['models']=={k:list(v) for k,v in MODELS.items()} and p['max_correction_rounds']==2
         and type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000 and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
+    require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
     for name,h in [(p['case_path'],p['case_sha256']),(p['evidence_manifest'],p['evidence_sha256']),
                    (p['writing_standard'],p['writing_sha256']),(root/'passages.json',p['passages_sha256']),
                    (root/'qa-grounding.json',p['qa_grounding_sha256']),*((x['path'],x['sha256']) for x in p['code'])]:
@@ -126,7 +128,13 @@ def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessi
     remaining=p['max_tokens']-tokens;cap=remaining
     bindings={'protocol_sha256':base.sha(root/'protocol.json'),'role':role,'context_sha256':base.sha(index),'artifact_sha256':base.digest(artifacts),'metadata_sha256':base.digest(metadata)}
     if not (job/'output.json').exists():
-        if (job/'request.json').exists():return {'status':'launch_uncertain','stage':name},tokens
+        if (job/'request.json').exists():
+            failure=base.read(job/'runtime-failure.json') if (job/'runtime-failure.json').exists() else {}
+            if failure.get('code')=='role_budget':
+                from . import earnings_file_recovery
+                spent=earnings_file_recovery.failed_usage(job)
+                return {'status':'budget_exhausted','stage':name,'tokens':tokens+spent,'reason':'Known local budget stop; original attempt and usage retained'},tokens+spent
+            return {'status':'launch_uncertain','stage':name},tokens
         if cap<1024:return {'status':'budget_exhausted','stage':name},tokens
         if not execute:return {'status':'pending','stage':name,'prompt_characters':len(text),'context_index':str(index)},tokens
         runner.run_role(job,text,*MODELS[role],bindings,index,max_tokens=cap,max_tool_calls=p['max_tool_calls_per_job'])
@@ -156,6 +164,13 @@ def review_result(value,items,state,pack,catalog,job):
 def _advance(root,execute):
     p,bundle,catalog=load(root);artifacts={};sessions=set();tokens=p.get('inherited_tokens',0);launched=False
     for role in ('financial','retrieval','analysis','signal_author'):
+        if role=='financial' and p.get('financial_mode')=='deterministic-original-facts-v1':
+            from . import earnings_financial_outline
+            artifacts[role]=earnings_financial_outline.artifact(bundle['financial'])
+            pipe.validate(role,artifacts[role],bundle,catalog)
+            context.write(root/'financial-compiled.json',{'status':'source_bound_draft_pending_independent_review','content':artifacts[role],
+                'financial_source_sha256':base.sha(root/'evidence/financial.json')})
+            continue
         state=None;report=None;dependencies={**artifacts,'qa_grounding':base.read(root/'qa-grounding.json')}
         metadata={'role':role,'case':base.read(p['case_path'])['scope_notes'],'period':base.read(p['case_path']).get('period')}
         if role=='financial':

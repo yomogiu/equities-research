@@ -115,7 +115,7 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
 
     def lifecycle(self,fail=0):
         root=self.root/'pipeline';writing=self.root/'writing.md';writing.write_text('Fictional concise source-grounded prose.\n')
-        p.initialize(self.casepath,root,writing);self.fail_reviews=fail
+        p.initialize(self.casepath,root,writing,financial_mode="model-original-selector-v1");self.fail_reviews=fail
         with patch.object(r,'run_role',side_effect=self.fake_run) as run:
             pending=p.advance(root,False);self.assertEqual(pending['status'],'pending');run.assert_not_called()
             for _ in range(12):
@@ -123,6 +123,18 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
                 if value['status'] in ('accepted','blocked'):break
             else:self.fail('Lifecycle did not stop')
         return root,value
+
+    def test_compiled_financial_draft_requires_no_financial_model_call(self):
+        from research import earnings_financial_outline
+        root=self.root/'compiled-pipeline';writing=self.root/'writing.md';writing.write_text('Fictional source-bound writing.\n')
+        p.initialize(self.casepath,root,writing)
+        with patch.object(earnings_financial_outline,'artifact',return_value=copy.deepcopy(self.financial)), patch.object(r,'run_role',side_effect=self.fake_run) as run:
+            value=p.advance(root,True)
+        self.assertEqual(run.call_count,1)
+        self.assertEqual(run.call_args.args[4]['role'],'retrieval')
+        self.assertFalse((root/'jobs/financial').exists())
+        self.assertEqual(base.read(root/'financial-compiled.json')['status'],'source_bound_draft_pending_independent_review')
+        self.assertEqual(value['status'],'pending')
 
     def test_complete_lifecycle_short_markdown_prompts_replay_and_mutation(self):
         root,value=self.lifecycle();self.assertEqual(value['status'],'accepted');self.assertEqual(value['tokens'],200)
