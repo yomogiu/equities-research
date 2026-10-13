@@ -34,12 +34,18 @@ export async function createAgentSession(opts){
 
 @unittest.skipUnless(shutil.which('node'),'Local Node runtime required')
 class PrimeHelperTests(unittest.TestCase):
-    def run_helper(self,cap=200000,tool_calls=48):
+    def run_helper(self,cap=200000,tool_calls=48,large_prefix=False,changed_prefix=False):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);sdk=root/'sdk';job=root/'job';job.mkdir();(sdk/'dist').mkdir(parents=True)
             oauth=sdk/'node_modules/@earendil-works/pi-ai/dist';oauth.mkdir(parents=True)
             (sdk/'package.json').write_text('{"type":"module","version":"fictional-test"}')
-            (sdk/'dist/index.js').write_text(SDK);(oauth/'oauth.js').write_text('export const getOAuthProvider=()=>({});')
+            source=SDK
+            if large_prefix:
+                source=source.replace('usage:{totalTokens:20}', 'usage:{input:10,output:7,cacheRead:3,cacheWrite:0,totalTokens:20}')
+                head="(payloadRound===0?'x':'z')" if changed_prefix else "'x'"
+                source=source.replace("const payload=()=>({model:q.model,reasoning:{effort:q.effort},tools:[{name:'ipython'}],input:[]});",
+                    "let payloadRound=0; const payload=()=>({model:q.model,reasoning:{effort:q.effort},tools:[{name:'ipython'}],input:[{role:'user',content:"+head+".repeat(100000)}, ...(payloadRound++?[{role:'tool',content:'y'.repeat(120000)}]:[])]});")
+            (sdk/'dist/index.js').write_text(source);(oauth/'oauth.js').write_text('export const getOAuthProvider=()=>({});')
             (job/'request.json').write_text(json.dumps({'version':runner.VERSION,'tool_names':['ipython'],'model':'gpt-6.1-sol','effort':'low','max_tokens':cap,'max_tool_calls':tool_calls}))
             (job/'launch.json').write_text('{"id":"fake-launch"}');(job/'prompt.md').write_text('# Fictional role assignment')
             result=subprocess.run([shutil.which('node'),str(runner.HELPER),str(sdk),str(job)],capture_output=True,text=True,timeout=15)
@@ -52,6 +58,14 @@ class PrimeHelperTests(unittest.TestCase):
 
     def test_budget_guard_prevents_unreserved_provider_turn(self):
         code,files=self.run_helper(cap=1000);self.assertNotEqual(code,0);self.assertNotIn('response.md',files);self.assertIn('runtime-failure.json',files)
+
+    def test_metered_stable_prefix_avoids_recounting_it_as_bytes(self):
+        code,files=self.run_helper(cap=300000,large_prefix=True)
+        self.assertEqual(code,0);self.assertIn('response.md',files)
+
+    def test_changed_prefix_keeps_conservative_full_byte_reserve(self):
+        code,files=self.run_helper(cap=300000,large_prefix=True,changed_prefix=True)
+        self.assertNotEqual(code,0);self.assertNotIn('response.md',files)
 
     def test_tool_call_limit_stops_followup(self):
         code,files=self.run_helper(tool_calls=1);self.assertNotEqual(code,0);self.assertNotIn('response.md',files)

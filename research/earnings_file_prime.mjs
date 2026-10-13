@@ -62,17 +62,30 @@ try {
     model:session.model.id, effort:session.thinkingLevel, provider:session.model.provider,
     oauth:true, sdk_version:JSON.parse(fs.readFileSync(path.join(sdkRoot,'package.json'),'utf8')).version});
   const wires = [];
+  let previousInput;
   session.agent.onPayload = payload => {
     if (payload.model !== request.model || payload.reasoning?.effort !== request.effort ||
         JSON.stringify((payload.tools ?? []).map(t=>t.name)) !== JSON.stringify(['ipython'])) throw Error('wire_mismatch');
     const used=session.agent.state.messages.filter(x=>x.role==='assistant').reduce((n,x)=>n+(x.usage?.totalTokens ?? 0),0);
     const calls=session.agent.state.messages.filter(x=>x.role==='assistant').flatMap(x=>x.content.filter(b=>b.type==='toolCall'));
-    const reserve=Buffer.byteLength(JSON.stringify(payload),'utf8');
+    let reserve=Buffer.byteLength(JSON.stringify(payload),'utf8');
+    const previous=session.agent.state.messages.filter(x=>x.role==='assistant' && x.stopReason!=='error').at(-1);
+    const u=previous?.usage;
+    // A stable prefix has already been metered by the provider. Bound only
+    // newly serialized input and the complete envelope by UTF-8 bytes. If the
+    // prefix changes or measured usage is missing, retain the full-byte bound.
+    const stable=previousInput && Array.isArray(payload.input) && payload.input.length>=previousInput.length &&
+      previousInput.every((item,i)=>item===JSON.stringify(payload.input[i]));
+    if(stable && ['input','cacheRead','cacheWrite'].every(k=>Number.isInteger(u?.[k]) && u[k]>=0)) {
+      reserve=u.input+u.cacheRead+u.cacheWrite+Buffer.byteLength(JSON.stringify(payload.input.slice(previousInput.length)),'utf8')+
+        Buffer.byteLength(JSON.stringify({...payload,input:[]}),'utf8');
+    }
     const remaining=request.max_tokens-used-reserve;
-    if (!Number.isInteger(model.maxTokens) || model.maxTokens<=0 || calls.length>=request.max_tool_calls || remaining<model.maxTokens) { localFailure='role_budget'; throw Error('role_budget'); }
+    if (!Number.isInteger(model.maxTokens) || model.maxTokens<=0 || calls.length>=request.max_tool_calls || remaining<model.maxTokens) { save('budget-stop.json',{used_tokens:used,input_token_upper_bound:reserve,reserved_output_tokens:model.maxTokens,job_cap:request.max_tokens,stable_metered_prefix:Boolean(stable && ['input','cacheRead','cacheWrite'].every(k=>Number.isInteger(u?.[k]))),completed_turns:wires.length,tool_calls:calls.length}); localFailure='role_budget'; throw Error('role_budget'); }
     // Codex subscription requests omit max_output_tokens. Reserve the registered
     // model output maximum before every turn; never add an unsupported field.
     wires.push({model:payload.model, effort:payload.reasoning.effort, tools:['ipython']});
+    previousInput=Array.isArray(payload.input)?payload.input.map(x=>JSON.stringify(x)):undefined;
   };
   stage = 'model_request';
   await session.prompt(fs.readFileSync(path.join(job,'prompt.md'),'utf8'));

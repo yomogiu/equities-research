@@ -44,7 +44,12 @@ def verify(path):
     if v['kind']=='local_budget_stop':
         job=Path(v['failed_job']);jobs=list(job.parent.iterdir())
         if len(jobs)!=1 or job.name!='financial' or (job/'output.json').exists():raise ValueError('Only closed first-role preparation can recover')
-        tokens=failed_usage(job)
+        protocol=base.read(job.parent.parent/'protocol.json')
+        inherited=protocol.get('inherited_tokens',0)
+        if inherited:
+            parent=verify(protocol['recovery_path'])
+            if base.sha(protocol['recovery_path'])!=protocol['recovery_sha256'] or parent['inherited_tokens']!=inherited:raise ValueError('Prior inherited usage changed')
+        tokens=inherited+failed_usage(job)
     elif v['kind']=='reviewed_sidecar_compatibility':
         state=base.read(Path(v['source_request']).parent/'state.json')
         if state.get('status')!='needs_attention' or state.get('reason')!='Generated coverage implementation changed':raise ValueError('Exact sidecar preparation hold required')
