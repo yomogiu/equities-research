@@ -16,6 +16,39 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
 
     def assemble(self):return c.assemble(self.root/'evidence/manifest.json',self.catalog,self.root/'context',artifacts={'report':self.report},markdown='# Fictional report\n',metadata={'batch_sha256':'fake'})
 
+    def test_financial_inventory_retains_every_concept_and_gap(self):
+        data={'observations':[{'concept':'fake:Sales','status':'extracted','canonical_metric':'revenue'},
+                              {'concept':'fake:Sales','status':'extracted','canonical_metric':'revenue'},
+                              {'concept':'fake:Other','status':'unmapped','canonical_metric':None}],
+              'gaps':[{'concept':'fake:Zero','reason':'unsupported zero','start':10},
+                      {'concept':'fake:Zero','reason':'unsupported zero','start':30},
+                      {'concept':'fake:Other','reason':'missing','start':90,'detail':'retain me'}]}
+        value=c.financial_inventory(data)
+        self.assertEqual(sum(x[1] for x in value['concepts']),3)
+        self.assertEqual({x[0] for x in value['concepts']},{'fake:Sales','fake:Other'})
+        restored=[{**fields,'start':start} for fields,starts in value['gaps'] for start in starts]
+        self.assertCountEqual(restored,data['gaps'])
+        self.assertEqual(value['gap_count'],3)
+
+    def test_work_plan_reserves_paged_call_and_filing_check(self):
+        index=self.assemble()
+        def page(start,limit):
+            return 'header\nlocators\n'+json.dumps({'next_start':100 if start==0 else None})+'\ntext'
+        with patch.object(c.Evidence,'_call_batch',side_effect=page):
+            plan=r.work_plan('retrieval',index)
+        self.assertEqual(plan,{'metadata_allowance':1,'call_pages':2,'filing_checks':1,'work_tool_limit':4})
+        self.assertFalse((Path(index).parent/'unused-plan.jsonl').exists())
+
+    def test_work_plan_accounts_for_handoff_and_support_continuations(self):
+        index=self.assemble()
+        with patch.object(c.Evidence,'_handoff_body',return_value='x'*59001),patch.object(c.Evidence,'_support_body',return_value=('x'*59001,[],set())):
+            plan=r.work_plan('review',index)
+            self.assertEqual(plan['handoff_pages'],2)
+            self.assertEqual(plan['support_pages'],2)
+            self.assertEqual(plan['work_tool_limit'],7)
+        with patch.object(c.Evidence,'_handoff_body',return_value='x'*590000):
+            with self.assertRaisesRegex(ValueError,'eight-call'):r.work_plan('analysis',index)
+
     def drain(self,reader,method,name):
         at=0
         while True:

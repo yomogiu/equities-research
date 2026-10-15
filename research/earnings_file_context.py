@@ -2,12 +2,32 @@
 from __future__ import annotations
 import hashlib
 import json
+from collections import Counter, defaultdict
 from pathlib import Path
 from . import earnings_compact_evidence as evidence
 from . import earnings_mixed_runner as base
 
 VERSION = 'earnings-file-context-v1'
 PAGE_CHARACTERS = 6000
+
+
+def financial_inventory(data):
+    """Complete concept/gap inventory without repeating observation HTML rows."""
+    concepts=defaultdict(list)
+    for row in data['observations']:concepts[row.get('concept')].append(row)
+    gaps=defaultdict(list)
+    for gap in data.get('gaps',[]):
+        fields={k:v for k,v in gap.items() if k!='start'}
+        gaps[json.dumps(fields,sort_keys=True,ensure_ascii=False)].append(gap.get('start'))
+    return {'observation_count':len(data['observations']),
+        'concept_columns':['original_concept','count','statuses','mapped_metrics'],
+        'concepts':[[name,len(rows),dict(Counter(r.get('status') for r in rows)),
+                     sorted({r['canonical_metric'] for r in rows if r.get('canonical_metric')})]
+                    for name,rows in sorted(concepts.items(),key=lambda x:str(x[0]))],
+        'gap_count':len(data.get('gaps',[])),
+        'gap_columns':['all_original_fields_except_start','all_original_start_offsets'],
+        'gaps':[[json.loads(fields),starts] for fields,starts in sorted(gaps.items())],
+        'notice':'Every extracted concept and every extraction gap is represented. Original values, units, contexts and HTML remain file-backed. Inventory presence is not analytical acceptance or proof of materiality.'}
 
 
 def require(ok, message):
@@ -374,9 +394,11 @@ class Evidence:
             candidates=[p for p in self.catalog['passages'] if p['scope_id']==identifier]
             for passage in sorted(candidates,key=lambda p:(-len(p['text']),p['start']))[:3]:
                 locators.append([passage['passage_id'],identifier,passage['start'],passage['end']])
-        body=json.dumps({'notice':'Complete selected original source scopes; inspection is not analytical acceptance. Passage locators identify up to three longest exact passages per scope; original text is printed once.',
+        packet={'notice':'Complete selected original source scopes; inspection is not analytical acceptance. Passage locators identify up to three longest exact passages per scope; original text is printed once.',
             'passage_columns':['passage_id','scope_id','start','end'],'passages':locators,
-            'source_map':mapping,'files':files,'block_columns':['file','start','end','text','extra_provenance'],'unique_original_blocks':packed,'financial_contexts':contexts,'units':units},ensure_ascii=False,separators=(',',':'))
+            'source_map':mapping,'files':files,'block_columns':['file','start','end','text','extra_provenance'],'unique_original_blocks':packed,'financial_contexts':contexts,'units':units}
+        if selected is None:packet['complete_financial_inventory']=financial_inventory(financial)
+        body=json.dumps(packet,ensure_ascii=False,separators=(',',':'))
         return body,ids,rows
 
     def _role_batch(self,method,start,limit,ids=None):

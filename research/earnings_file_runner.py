@@ -17,6 +17,31 @@ DELIVERY=HELPER.with_name('earnings_file_delivery.mjs')
 USAGE=('input','output','cacheRead','cacheWrite','totalTokens')
 
 
+def work_plan(role,index):
+    """Reserve actual required packet pages plus one metadata call, bounded at 8."""
+    if role not in ('financial','retrieval','analysis','signal_author','review','correction'):return None
+    reader=context.Evidence(index,Path(index).parent/'unused-plan.jsonl',_replay=True)
+    plan={'metadata_allowance':1}
+    if role=='financial':return {**plan,'work_tool_limit':3}
+    if role in ('retrieval','analysis','review','correction'):
+        start=0;pages=0
+        while True:
+            meta=json.loads(reader._call_batch(start,48000).splitlines()[2]);pages+=1
+            if pages>8:raise ValueError('Required call coverage exceeds bounded work plan')
+            if meta['next_start'] is None:break
+            start=meta['next_start']
+        plan['call_pages']=pages
+    if role in ('analysis','signal_author','review','correction'):
+        plan['handoff_pages']=(len(reader._handoff_body())+58999)//59000
+    if role in ('analysis','review','correction'):
+        plan['support_pages']=(len(reader._support_body()[0])+58999)//59000
+    if role in ('retrieval','review'):plan['filing_checks']=1
+    if role=='signal_author':plan['selected_source_checks']=2
+    total=sum(plan.values())
+    if total>8:raise ValueError('Required evidence pages exceed eight-call bounded work plan')
+    return {**plan,'work_tool_limit':total}
+
+
 def parse(text):
     # Markdown envelope keeps machine-verifiable metadata separate from prose.
     import re
@@ -69,8 +94,8 @@ def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,tim
     old._validate_selection(model,effort)
     if not prompt.strip() or type(max_tokens) is not int or not 1<=max_tokens<=1200000 or type(max_tool_calls) is not int or not 1<=max_tool_calls<=64 or timeout<=0:raise ValueError('Explicit bounded role settings required')
     index=Path(index).resolve();context.Evidence(index,job/'retrieval.jsonl')
-    role=bindings.get('role');limits={'financial':3,'retrieval':3,'analysis':3,'signal_author':3,'review':4,'correction':4}
-    policy={'work_tool_limit':min(limits[role],max_tool_calls-1),'automatic_checkpoints':True,'finalization_margin_tokens':65536} if role in limits and max_tool_calls>1 else None
+    plan=work_plan(bindings.get('role'),index) if max_tool_calls>1 else None
+    policy={**plan,'work_tool_limit':min(plan['work_tool_limit'],max_tool_calls-1),'automatic_checkpoints':True,'finalization_margin_tokens':65536} if plan else None
     return {'execution_policy':policy,'checkpoint_python':sys.executable,'version':VERSION,'job_path':str(job),'model':model,'effort':effort,'provider':old.PROVIDER,'bindings':bindings,
         'context_index':str(index),'context_sha256':old.sha(index),'max_tokens':max_tokens,'max_tool_calls':max_tool_calls,
         'timeout_seconds':timeout,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'helper_sha256':old.sha(HELPER),'runner_sha256':old.sha(__file__),
