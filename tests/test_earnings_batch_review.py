@@ -17,6 +17,22 @@ class BatchTests(PassageFixture, unittest.TestCase):
             'passage_ids':[self.ids[0]],'review_kind':kind,'editorial_repairs':[
                 {'field_path':path,'before':before,'after':after,'reason':'Exact factual correction'}]}],'reopen':[]}
 
+    def test_quote_deletion_is_unresolved_and_cannot_add_or_rebind(self):
+        items=self.items();key='analysis:0';quotes=[{'passage_id':self.ids[0]},{'passage_id':self.ids[1]}]
+        items[key]['value']['quotes']=copy.deepcopy(quotes)
+        review=self.editorial_decision(items,key,'editorial',['quotes'],quotes,[])
+        accepted,findings=b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+        self.assertNotIn(key,accepted);self.assertIn('EDITORIAL REPAIRS',findings[key])
+        self.assertEqual(items[key]['value']['quotes'],quotes)
+        edit=review['decisions'][0]['editorial_repairs'][0]
+        for invalid in ([{'passage_id':'invented'}],quotes,list(reversed(quotes))):
+            edit['after']=invalid
+            with self.assertRaises(ValueError):b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+        edit['after']=[quotes[1]]
+        b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+        edit['before']=[]
+        with self.assertRaises(ValueError):b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+
     def test_factual_findings_may_provide_concrete_rewrites(self):
         items=self.items();key='analysis:0';before=items[key]['value']['text']
         review=self.editorial_decision(items,key,'factual',['text'],before,'Fictional source-backed rewrite')

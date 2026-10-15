@@ -349,6 +349,41 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         self.assertEqual(base.read(root/'financial-compiled.json')['status'],'source_bound_draft_pending_independent_review')
         self.assertEqual(value['status'],'pending')
 
+    def test_review_continuation_retains_findings_usage_and_skips_completed_roles(self):
+        from research import earnings_prepared_review as prepared
+        state=fixture_signals.SignalTests.state(self);pack=self.pack(state);items=p.batch.units(state,pack)
+        review={'batch_sha256':base.digest(items),'report_sha256':signals.report_digest(state),
+            'report_criteria':{k:{'status':'pass','evidence':'Fictional original review'} for k in p.legacy.CRITERIA},
+            'signal_criteria':{k:{'status':'pass','evidence':'Fictional original review'} for k in signals.CRITERIA},
+            'decisions':[],'reopen':[]}
+        for key in items:
+            failed=key=='analysis:0'
+            review['decisions'].append({'unit_id':key,'verdict':'revise' if failed else 'pass',
+                'reason':'Retain this original factual finding','passage_ids':[self.ids[0]],
+                'review_kind':'factual' if failed else 'none','editorial_repairs':[]})
+        previous=self.root/'old-review';previous.mkdir();base.save(previous/'output.json',review)
+        writing=self.root/'writing.md';writing.write_text('Fictional writing.\n')
+        manifest=self.root/'prepared-review.json'
+        inherited={'state':state,'signals':pack,'review':review,'tokens':300,'max_tokens':10000,
+            'writing_sha256':base.sha(writing),'session_ids':['old-extractor','old-author','old-signals','old-review'],
+            'review_session':'old-review','review_job':str(previous)}
+        base.save(manifest,inherited)
+        root=self.root/'continued';self.fail_reviews=0
+        with patch.object(prepared,'verify',return_value=inherited),patch.object(r,'run_role',side_effect=self.fake_run) as run:
+            p.initialize(self.casepath,root,writing,max_tokens=10000,review_preparation=manifest)
+            for _ in range(4):
+                result=p.advance(root,True)
+                if result['status']=='accepted':break
+            self.assertEqual(result['status'],'accepted')
+            self.assertEqual(result['tokens'],380)
+            self.assertEqual([call.args[4]['role'] for call in run.call_args_list],['correction','review'])
+            self.assertEqual(result['correction_rounds'],1)
+            self.assertIn('Retain this original factual finding',base.read(root/'contexts/correction-1/artifacts.json')['findings']['analysis:0'])
+            self.assertEqual(p.verify(root),result)
+            with self.assertRaisesRegex(ValueError,'raise ceiling'):
+                p.initialize(self.casepath,self.root/'inflated',writing,max_tokens=10001,review_preparation=manifest)
+        self.assertEqual(base.read(previous/'output.json'),review)
+
     def test_complete_lifecycle_short_markdown_prompts_replay_and_mutation(self):
         root,value=self.lifecycle();self.assertEqual(value['status'],'accepted');self.assertEqual(value['tokens'],200)
         self.assertEqual(p.verify(root),value)

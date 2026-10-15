@@ -40,7 +40,7 @@ def verify_budget_authorization(path,case):
     return a
 
 
-def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None):
+def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None):
     root=Path(output).resolve();case=Path(case).resolve();writing=Path(writing).resolve()
     require(financial_mode in ('deterministic-original-facts-v1','model-original-selector-v1'),'Known financial preparation mode required')
     require(max_tokens is None and budget_authorization is not None or type(max_tokens) is int and 1<=max_tokens<=1200000,'Explicit lifecycle budget or approved cap removal required')
@@ -58,6 +58,12 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         'code':[{'path':str(q),'sha256':base.sha(q)} for q in sorted(code)],
         'qa_grounding_sha256':base.sha(root/'qa-grounding.json'),'report_signals':True,'deterministic_corrections':True,
         'transport':'file-evidence-ipython-markdown-v1','financial_mode':financial_mode}
+    if review_preparation is not None:
+        from . import earnings_prepared_review as prepared_review
+        require(all(x is None for x in (recovery,budget_authorization,preparation,analysis_preparation)),'Review continuation has separate exact lineage')
+        inherited_review=prepared_review.verify(review_preparation,case,catalog)
+        require(max_tokens<=inherited_review['max_tokens'] and inherited_review['writing_sha256']==base.sha(writing),'Review continuation cannot raise ceiling or change writing guide')
+        p.update(review_preparation_path=str(Path(review_preparation).resolve()),review_preparation_sha256=base.sha(review_preparation),inherited_tokens=inherited_review['tokens'])
     if budget_authorization is not None:
         require(max_tokens is None and recovery is None,'Cap removal is a separately authorized trial, not a historical protocol edit')
         authorization=verify_budget_authorization(budget_authorization,case)
@@ -92,7 +98,12 @@ def load(root):
                    (p['writing_standard'],p['writing_sha256']),(root/'passages.json',p['passages_sha256']),
                    (root/'qa-grounding.json',p['qa_grounding_sha256']),*((x['path'],x['sha256']) for x in p['code'])]:
         require(base.sha(name)==h,'Frozen pipeline input or code changed')
-    if p.get('recovery_path'):
+    if p.get('review_preparation_path'):
+        from . import earnings_prepared_review as prepared_review
+        require(base.sha(p['review_preparation_path'])==p['review_preparation_sha256'],'Review continuation manifest changed')
+        inherited_review=prepared_review.verify(p['review_preparation_path'],p['case_path'],base.read(root/'passages.json'))
+        require(p['inherited_tokens']==inherited_review['tokens'] and p['max_tokens']<=inherited_review['max_tokens'] and p['writing_sha256']==inherited_review['writing_sha256'],'Review continuation usage, ceiling or guide changed')
+    elif p.get('recovery_path'):
         from . import earnings_file_recovery
         require(base.sha(p['recovery_path'])==p['recovery_sha256'],'Recovery manifest changed')
         lineage=earnings_file_recovery.verify(p['recovery_path'])
@@ -244,7 +255,10 @@ def review_result(value,items,state,pack,catalog,job):
 
 def _advance(root,execute):
     p,bundle,catalog=load(root);artifacts={};sessions=set();tokens=p.get('inherited_tokens',0)+p.get('authorized_prior_tokens',0);launched=False
-    for role in ('financial','retrieval','analysis','signal_author'):
+    continued=base.read(p['review_preparation_path']) if p.get('review_preparation_path') else None
+    if continued:
+        state=copy.deepcopy(continued['state']);pack=copy.deepcopy(continued['signals']);sessions.update(continued['session_ids'])
+    for role in (() if continued else ('financial','retrieval','analysis','signal_author')):
         if role=='financial' and p.get('financial_mode')=='deterministic-original-facts-v1':
             from . import earnings_financial_outline
             artifacts[role]=earnings_financial_outline.artifact(bundle['financial'])
@@ -304,10 +318,15 @@ def _advance(root,execute):
         metadata={'round':round_no,'batch_sha256':base.digest(items),'report_sha256':signals.report_digest(state),'signals_sha256':base.digest(pack),'pending_findings':findings}
         deps={'units':items,'state':state,'signals':pack,'qa_grounding':base.read(root/'qa-grounding.json')}
         existed=any((root/'jobs'/(name+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
-        value,tokens=_job(root,p,bundle,catalog,'review',name,deps,metadata,report,execute and not launched,sessions,tokens)
-        if value.get('status') in ('pending','launch_uncertain','budget_exhausted'):return value
-        if not existed:launched=True
-        accepted,findings,passed=review_result(value['content'],items,state,pack,catalog,checkpoint.select(root/'jobs'/name)[0])
+        if continued and round_no==0:
+            value={'content':continued['review'],'receipt':{'session':{'id':continued['review_session']}}}
+            review_job=Path(continued['review_job'])
+        else:
+            value,tokens=_job(root,p,bundle,catalog,'review',name,deps,metadata,report,execute and not launched,sessions,tokens)
+            if value.get('status') in ('pending','launch_uncertain','budget_exhausted'):return value
+            if not existed:launched=True
+            review_job=checkpoint.select(root/'jobs'/name)[0]
+        accepted,findings,passed=review_result(value['content'],items,state,pack,catalog,review_job)
         context.write(root/'decisions'/f'{name}.json',{'accepted':accepted,'findings':findings,'passed':passed,'candidate_sha256':base.digest(items)})
         if passed:
             markdown.write(root/'report.md',state,bundle,catalog,pack,status='accepted')

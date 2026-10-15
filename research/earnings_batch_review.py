@@ -257,6 +257,17 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION,fina
                     require((isinstance(value,dict) and isinstance(part,str) and part in value) or
                             (isinstance(value,list) and type(part) is int and 0<=part<len(value)), 'Unknown editorial field path')
                     value=value[part]
+                if path==['quotes']:
+                    # Quote removal is a typed edit, not a string replacement.
+                    # No passage can be added, altered, reordered or rebound.
+                    before=repair['before'];after=repair['after']
+                    require(isinstance(value,list) and before==value and isinstance(after,list)
+                        and len(after)<len(value) and all(isinstance(q,dict) and set(q)=={'passage_id'} for q in value),
+                        'Quote repair must delete from the exact original selections')
+                    cursor=iter(value)
+                    require(all(any(old==q for old in cursor) for q in after),'Quote repair cannot add or reorder selections')
+                    require(isinstance(repair['reason'],str) and repair['reason'].strip(),'Specific quote deletion reason required')
+                    continue
                 require(isinstance(value,str) and isinstance(repair['before'],str) and
                         ((repair['before'] and value.count(repair['before'])==1) or value==repair['before']==''),
                         'Editorial repair must locate exact unique text or an exact empty field')
@@ -286,7 +297,9 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION,fina
     invalid=factual_affected(items,set(findings)) if policy==FACTUAL_VERSION else affected(items,set(findings))
     for key in invalid:
         out.pop(key,None);findings.setdefault(key,'Dependency remains unresolved')
-    return out,findings
+    # Dependency closure is a set; stable key order keeps immutable decision
+    # receipts identical when replayed in another interpreter.
+    return {k:out[k] for k in sorted(out)},{k:findings[k] for k in sorted(findings)}
 
 
 def initialize(source_protocol,state,pack,output,authorization, *, presentation_derivation=None, editorial_locator_derivation=None, baseline_review_policy=None, seeded_factual_acceptance=None, inherited_factual_rounds=0, pending_inherited_review=None):
