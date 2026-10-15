@@ -40,3 +40,13 @@ Separately authorized pilot calls are recorded as source-bound usage debits.
 Recovery verifies both the interrupted and completed pilot receipts, adds their
 measured usage to inherited spend, and freezes the debit and supporting private
 artifacts. Testing never creates a fresh company allowance.
+
+A user may explicitly remove the cumulative cap for one trial. Initialize with
+`max_tokens=None` and an immutable `budget_authorization` file binding that issuer,
+period, the user's request and the prior measured-usage proof. Prior usage remains
+in every cumulative total. The normal default remains 1.2M tokens. Per-role 1.2M
+token limits, tool-call limits, checkpoint lineage, source checks, independent
+review and two correction rounds remain in effect. Such approval creates a new
+frozen trial; it never edits an old request or protocol. A source-bound previous
+checkpoint may be supplied as unreviewed preparation data, without inheriting
+another context's inspection or approval credit.

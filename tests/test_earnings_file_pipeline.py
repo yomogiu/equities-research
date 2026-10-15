@@ -173,4 +173,31 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         for text in ('{"x":1}','```json\n{"x":1}\n```\n```json\n{"x":2}\n```'):
             with self.assertRaises(ValueError):r.parse(text)
 
+
+
+    def test_explicit_cap_removal_preserves_prior_usage_role_limits_and_review(self):
+        case=base.read(self.casepath);case.update(issuer_id='fictional:issuer',period='FICTIONAL-Q1');self.casepath.write_text(json.dumps(case))
+        writing=self.root/'authorized-writing.md';writing.write_text('Fictional source-grounded writing.')
+        proof=self.root/'prior-usage.json';proof.write_text(json.dumps({'cumulative_company_tokens':1800000}))
+        approval=self.root/'approval.json';approval.write_text(json.dumps({'scope':'one_company_trial','user_request':'Lift the cap and retry this fictional company.',
+          'issuer_id':case['issuer_id'],'period':case['period'],'max_tokens':None,'prior_usage_tokens':1800000,'prior_usage_proof':{'path':str(proof),'sha256':base.sha(proof)}}))
+        root=self.root/'uncapped';p.initialize(self.casepath,root,writing,max_tokens=None,budget_authorization=approval,financial_mode='model-original-selector-v1')
+        with patch.object(r,'run_role',side_effect=self.fake_run) as run:
+            for _ in range(8):
+                value=p.advance(root,True)
+                if value.get('status')=='accepted':break
+            self.assertEqual(value['status'],'accepted');self.assertEqual(value['tokens'],1800200)
+            self.assertEqual(run.call_count,5)
+            self.assertTrue(all(x.kwargs['max_tokens']==1200000 for x in run.call_args_list))
+        proof.write_text(json.dumps({'cumulative_company_tokens':0}))
+        with self.assertRaisesRegex(ValueError,'Prior usage proof changed'):p.verify(root)
+
+    def test_cap_removal_requires_explicit_matching_authorization(self):
+        writing=self.root/'budget-writing.md';writing.write_text('Fictional writing.')
+        with self.assertRaises(ValueError):p.initialize(self.casepath,self.root/'no-approval',writing,max_tokens=None)
+        proof=self.root/'proof.json';proof.write_text(json.dumps({'cumulative_company_tokens':30}))
+        approval=self.root/'bad-approval.json';approval.write_text(json.dumps({'scope':'one_company_trial','user_request':'Remove cap','max_tokens':None,
+            'issuer_id':'another-issuer','period':self.case.get('period'),'prior_usage_tokens':30,'prior_usage_proof':{'path':str(proof),'sha256':base.sha(proof)}}))
+        with self.assertRaisesRegex(ValueError,'issuer or period'):p.initialize(self.casepath,self.root/'wrong-scope',writing,max_tokens=None,budget_authorization=approval)
+
 if __name__=='__main__':unittest.main()
