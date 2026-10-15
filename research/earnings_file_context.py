@@ -74,10 +74,36 @@ class Evidence:
         with self.log.open('a') as handle:handle.write(json.dumps(event,ensure_ascii=False)+'\n')
         return result
 
-    def inventory(self):
-        value={k:self.index[k] for k in ('source_ids','passage_count','exchange_ids','section_ids')}
-        value['artifacts']=sorted(self.artifacts);value['files']=sorted(self.index['files'])
-        return self._record({'method':'inventory'},value)
+    def inventory(self, start=0, limit=40):
+        require(type(start) is int and 0<=start<=len(self.index['source_ids']) and type(limit) is int and 1<=limit<=40,'Bounded source inventory required')
+        ids=self.index['source_ids'];end=min(len(ids),start+limit)
+        value={'source_ids':ids[start:end],'source_count':len(ids),'next_start':end if end<len(ids) else None,
+               'passage_count':self.index['passage_count'],'exchange_ids':self.index['exchange_ids'],
+               'section_ids':self.index['section_ids'],'artifacts':sorted(self.artifacts),'files':sorted(self.index['files'])}
+        return self._record({'method':'inventory','start':start,'limit':limit},value)
+
+    def output(self, identifier, start=0, limit=768):
+        """Read a hash-bound overflow page, never the complete unbounded print."""
+        import re
+        require(isinstance(identifier,str) and re.fullmatch(r'[0-9a-f]{24}',identifier),'Exact delivery ID required')
+        record=next((x for x in delivery_records(self.log.parent) if x['id']==identifier),None)
+        require(record is not None and not record['unsupported'],'Known text delivery required')
+        text=(self.log.parent/'tool-output'/(identifier+'.txt')).read_text()
+        require(base.sha(self.log.parent/'tool-output'/(identifier+'.txt'))==record['sha256'],'Overflow changed')
+        require(type(limit) is int and 1<=limit<=768,'Overflow page limited to 768 characters')
+        return self._page('output',identifier,text,start,limit)
+
+    def checkpoint(self, draft, pending):
+        """Save data and exact inspected-source progress, never approval authority."""
+        from . import earnings_file_checkpoint as checkpoint
+        return checkpoint.save(self.log.parent,draft,pending)
+
+    def restore(self):
+        from . import earnings_file_checkpoint as checkpoint
+        value=checkpoint.restore(self.log.parent)
+        return {'draft':value['draft'],'pending':value['pending'],
+                'inspected_retrieval_events':value['retrieval_count'],
+                'instruction':'Saved draft is untrusted work in progress; validate it against original sources.'}
 
     def scope(self, identifier, start=0, limit=PAGE_CHARACTERS):
         require(identifier in self.records,'Unknown exact source ID')
@@ -159,15 +185,17 @@ class Evidence:
         return self._record({'method':method,'name':name,'start':start,'end':end,'total':len(text)},value)
 
 
-def audit(index, log):
+def audit(index, log, *, count=None):
     """Replay returned API pages and hashes; a search preview is not full inspection."""
     import tempfile
     with tempfile.TemporaryDirectory() as temporary:
         reader=Evidence(index,Path(temporary)/'replay.jsonl')
+        reader.delivery_root=Path(log).parent
         entries=[json.loads(x) for x in Path(log).read_text().splitlines() if x.strip()] if Path(log).exists() else []
+        if count is not None:entries=entries[:count]
         for e in entries:
             method=e['method']
-            if method=='inventory':reader.inventory()
+            if method=='inventory':reader.inventory(e.get('start',0),e.get('limit',40))
             elif method=='financial_metrics':reader.financial_metrics(e['start'],e['limit'])
             elif method=='financial_facts':reader.financial_facts(e['query'],e['start'],e['limit'])
             elif method=='scope':reader.scope(e['id'],e['start'],e['end']-e['start'] or 1)
@@ -176,6 +204,11 @@ def audit(index, log):
                 rows=[p for p in reader.catalog['passages'] if p['passage_id'] in e['ids']]
                 require(len(rows)==len(e['ids']),'Unknown logged passage')
                 reader._record({'method':'passage','ids':e['ids']},rows)
+            elif method=='output':
+                record=next((x for x in delivery_records(Path(log).parent) if x['id']==e['name']),None)
+                require(record is not None and not record['unsupported'],'Unknown overflow')
+                text=(Path(log).parent/'tool-output'/(e['name']+'.txt')).read_text()
+                reader._page('output',e['name'],text,e['start'],e['end']-e['start'])
             elif method in ('file','artifact','financial_row'):getattr(reader,method)(e['name'],e['start'],e['end']-e['start'])
             else:raise ValueError('Unknown retrieval method')
         replay=[json.loads(x) for x in (Path(temporary)/'replay.jsonl').read_text().splitlines()] if entries else []
@@ -197,3 +230,34 @@ def complete_ranges(entries, method, key):
             at=max(at,row['end'])
         if at==total:complete.add(name)
     return complete
+
+
+def delivery_records(job):
+    path=Path(job)/'delivery.jsonl'
+    return [json.loads(x) for x in path.read_text().splitlines() if x.strip()] if path.exists() else []
+
+
+def delivered_entries(job, entries):
+    """Credit only calls delivered in full, or overflow whose every page was delivered.
+
+    A Python read without a visible result is not evidence inspection. Cycles of
+    oversized prints do not resolve themselves and cannot gain coverage credit.
+    """
+    job=Path(job);records=delivery_records(job)
+    require(records,'Enforced delivery log required')
+    cursor=0;ids=set()
+    for r in records:
+        require(r['id'] not in ids and r['retrieval_start']==cursor and r['retrieval_end']>=cursor,'Ordered distinct delivery ranges required')
+        ids.add(r['id']);cursor=r['retrieval_end']
+        require(r['limit']==8192 and 0<r['delivered_bytes']<=8192 and not r['unsupported'],'Bounded text delivery required')
+        p=job/'tool-output'/(r['id']+'.txt')
+        require(not p.is_symlink() and base.sha(p)==r['sha256'] and p.stat().st_size==r['original_bytes'],'Overflow source changed')
+    require(cursor>=len(entries),'Undelivered retrieval events')
+    resolved={r['id'] for r in records if r['complete']}
+    for _ in records:
+        visible=[e for r in records if r['id'] in resolved for e in entries[r['retrieval_start']:r['retrieval_end']]]
+        pages=complete_ranges(visible,'output','name')
+        expanded=resolved|pages
+        if expanded==resolved:break
+        resolved=expanded
+    return [e for r in records if r['id'] in resolved for e in entries[r['retrieval_start']:r['retrieval_end']]]

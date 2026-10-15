@@ -5,7 +5,7 @@ from . import earnings_mixed_runner as base
 VERSION='authenticated-file-preparation-recovery-v1'
 
 
-def failed_usage(job):
+def failed_usage(job, *, allowed_codes=('role_budget',)):
     import json
     job=Path(job).resolve();q=base.read(job/'request.json');execution=base.read(job/'execution.json')
     if execution['status']!='execution_failed' or execution['exit_code']!=1 or execution['request_sha256']!=base.digest(q):raise ValueError('Known failed execution required')
@@ -13,7 +13,7 @@ def failed_usage(job):
     if len(paths)!=1:raise ValueError('One recorded attempt required')
     events=[json.loads(x) for x in paths[0].read_text().splitlines() if x.strip()]
     messages=[x['message'] for x in events if x.get('type')=='message']
-    if not messages or messages[-1].get('role')!='assistant' or messages[-1].get('stopReason')!='error' or messages[-1].get('errorMessage')!='role_budget':raise ValueError('Only proven local budget stop is recoverable')
+    if not messages or messages[-1].get('role')!='assistant' or messages[-1].get('stopReason')!='error' or messages[-1].get('errorMessage') not in allowed_codes:raise ValueError('Only proven local budget stop is recoverable')
     if messages[-1].get('usage',{}).get('totalTokens')!=0:raise ValueError('Failed pre-provider turn must have zero usage')
     calls={};results=set();tokens=0;turns=0
     for m in messages:

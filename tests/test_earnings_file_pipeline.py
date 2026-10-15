@@ -70,10 +70,13 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         target=self.root/'render.md';md.write(target,state,self.bundle,self.catalog,self.pack(state),status='accepted')
         self.assertEqual((self.root/'render.html').read_text(),md.render(target.read_text(),status='accepted'))
 
-    def fake_run(self,job,prompt,model,effort,bindings,index,*,max_tokens,max_tool_calls,timeout=1200):
-        job=Path(job);q=r.request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout);job.mkdir(parents=True)
+    def fake_run(self,job,prompt,model,effort,bindings,index,*,max_tokens,max_tool_calls,timeout=1200,resume=None):
+        job=Path(job);q=r.request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,resume=resume);job.mkdir(parents=True)
         base.save(job/'request.json',q);(job/'prompt.md').write_text(prompt)
-        reader=c.Evidence(index,job/'retrieval.jsonl');reader.inventory()
+        if resume:base.save(job/'resume.json',resume)
+        reader=c.Evidence(index,job/'retrieval.jsonl')
+        if resume:reader.restore()
+        reader.inventory()
         # Fake provider inspects the complete frozen inventory using the same API.
         for identifier in reader.index['source_ids']:self.drain(reader,'scope',identifier)
         if 'report.md' in reader.index['files']:self.drain(reader,'file','report.md')
@@ -104,12 +107,18 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         usage={'input':10,'output':10,'cacheRead':0,'cacheWrite':0,'totalTokens':20}
         assistant={'role':'assistant','provider':'openai-codex','api':'openai-codex-responses','model':model,'usage':usage}
         messages=[{'role':'user','content':prompt},{**assistant,'stopReason':'toolUse','content':[{'type':'toolCall','id':'inspect','name':'ipython','arguments':{'code':'# Fictional complete API inspection'}}]},
-                  {'role':'toolResult','toolName':'ipython','toolCallId':'inspect','content':[{'type':'text','text':'Fictional source inspection'}]},
+                  {'role':'toolResult','toolName':'ipython','toolCallId':'inspect','content':[{'type':'text','text':'Fictional source inspection'}],'details':{'delivery_id':'a'*24},'isError':False},
                   {**assistant,'stopReason':'stop','content':[{'type':'text','text':response}]}]
         events=[{'type':'session','id':sid,'cwd':str(job)},{'type':'model_change','provider':'openai-codex','modelId':model},{'type':'thinking_level_change','thinkingLevel':effort}]+[{'type':'message','message':x} for x in messages]
         (job/'sessions').mkdir();(job/'sessions/fake.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in events))
+        import hashlib
+        delivered={k:messages[2][k] for k in ('content','details','isError')}
+        raw=json.dumps(delivered,ensure_ascii=False,separators=(',',':')).encode()
+        (job/'tool-output').mkdir();(job/'tool-output'/('a'*24+'.txt')).write_text('Fictional source inspection')
+        entry={'id':'a'*24,'tool_call_id':'inspect','sha256':base.sha(job/'tool-output'/('a'*24+'.txt')),'original_bytes':len('Fictional source inspection'.encode()),'unsupported':False,'complete':True,'retrieval_start':0,'retrieval_end':len((job/'retrieval.jsonl').read_text().splitlines()),'delivered_sha256':hashlib.sha256(raw).hexdigest(),'delivered_bytes':len(raw),'limit':8192}
+        (job/'delivery.jsonl').write_text(json.dumps(entry)+'\n')
         execution={'request_sha256':base.digest(q),'launch_sha256':base.sha(job/'launch.json'),'exit_code':0,'status':'completed',
-            'session':r.receipt(job,q),'artifact_sha256':{n:base.sha(job/n) for n in ('runtime-start.json','runtime-finish.json','wire.json','response.md','retrieval.jsonl')}}
+            'session':r.receipt(job,q),'artifact_sha256':{n:base.sha(job/n) for n in ('runtime-start.json','runtime-finish.json','wire.json','response.md','retrieval.jsonl','delivery.jsonl')}}
         base.save(job/'execution.json',execution);base.save(job/'output.json',{'request_sha256':base.digest(q),'execution_sha256':base.sha(job/'execution.json'),'content':content})
         return r.verify_job(job)
 
@@ -157,7 +166,7 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
 
     def test_review_needs_full_markdown_and_call_not_search_previews(self):
         index=self.assemble();job=self.root/'job';job.mkdir();reader=c.Evidence(index,job/'retrieval.jsonl');reader.search('Fictitious')
-        with self.assertRaises(ValueError):p.coverage('review',index,job,{},self.catalog,{})
+        with self.assertRaises((ValueError,FileNotFoundError)):p.coverage('review',index,job,{},self.catalog,{})
 
     def test_markdown_result_requires_one_metadata_block(self):
         self.assertEqual(r.parse('# Role result\n```json\n{"x":1}\n```\n'),{'x':1})
