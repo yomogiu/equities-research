@@ -350,6 +350,12 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         self.assertEqual(value['status'],'pending')
 
     def test_review_continuation_retains_findings_usage_and_skips_completed_roles(self):
+        self.review_continuation_fixture()
+
+    def test_completed_correction_continuation_only_launches_fresh_reviewer(self):
+        self.review_continuation_fixture(inherit_correction=True)
+
+    def review_continuation_fixture(self,inherit_correction=False):
         from research import earnings_prepared_review as prepared
         state=fixture_signals.SignalTests.state(self);pack=self.pack(state);items=p.batch.units(state,pack)
         review={'batch_sha256':base.digest(items),'report_sha256':signals.report_digest(state),
@@ -367,6 +373,13 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         inherited={'state':state,'signals':pack,'review':review,'tokens':300,'max_tokens':10000,
             'writing_sha256':base.sha(writing),'session_ids':['old-extractor','old-author','old-signals','old-review'],
             'review_session':'old-review','review_job':str(previous)}
+        if inherit_correction:
+            corrected=copy.deepcopy(items['analysis:0']['value']);corrected['text']='Fictional prior correction'
+            plan={'before_sha256':base.digest(items),'changes':[{'unit_id':'analysis:0',
+                'before_sha256':base.digest(items['analysis:0']['value']),'value':corrected,'reason':'Original factual finding'}]}
+            old_correction=self.root/'old-correction';old_correction.mkdir();base.save(old_correction/'output.json',plan)
+            inherited['prepared_correction']={'content':plan,'job':str(old_correction),'round':1}
+            inherited['tokens']=340;inherited['session_ids'].append('old-correction')
         base.save(manifest,inherited)
         root=self.root/'continued';self.fail_reviews=0
         with patch.object(prepared,'verify',return_value=inherited),patch.object(r,'run_role',side_effect=self.fake_run) as run:
@@ -376,9 +389,9 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
                 if result['status']=='accepted':break
             self.assertEqual(result['status'],'accepted')
             self.assertEqual(result['tokens'],380)
-            self.assertEqual([call.args[4]['role'] for call in run.call_args_list],['correction','review'])
+            self.assertEqual([call.args[4]['role'] for call in run.call_args_list],['review'] if inherit_correction else ['correction','review'])
             self.assertEqual(result['correction_rounds'],1)
-            self.assertIn('Retain this original factual finding',base.read(root/'contexts/correction-1/artifacts.json')['findings']['analysis:0'])
+            if not inherit_correction:self.assertIn('Retain this original factual finding',base.read(root/'contexts/correction-1/artifacts.json')['findings']['analysis:0'])
             self.assertEqual(p.verify(root),result)
             with self.assertRaisesRegex(ValueError,'raise ceiling'):
                 p.initialize(self.casepath,self.root/'inflated',writing,max_tokens=10001,review_preparation=manifest)

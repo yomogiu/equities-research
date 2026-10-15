@@ -109,6 +109,61 @@ def apply(items,plan,policy=VERSION):
     return candidate,changed | affected(candidate,invalidating)
 
 
+def resolve_correction_hashes(items,plan):
+    """Rebind an adjacent analysis-unit hash only within the exact bound batch.
+
+    Call only after authenticating the correction role and its request/context.
+    Proposed values and reasons are unchanged and still need a fresh reviewer.
+    Unknown/stale batch hashes, arbitrary hashes and ambiguous values fail shut.
+    """
+    require(plan.get('before_sha256')==runner.digest(items),'Stale batch')
+    result=copy.deepcopy(plan);hashes={k:runner.digest(v['value']) for k,v in items.items()};changes=[]
+    for op in result.get('changes',[]):
+        key=op['unit_id'];require(key in hashes,'Unknown correction target')
+        if op['before_sha256']==hashes[key]:continue
+        origins=[k for k,v in hashes.items() if v==op['before_sha256']]
+        require(len(origins)==1,'Correction hash must identify one original bound unit')
+        origin=origins[0]
+        require(re.fullmatch(r'analysis:\d+',key) and re.fullmatch(r'analysis:\d+',origin)
+            and abs(int(key.split(':')[1])-int(origin.split(':')[1]))==1,
+            'Only an adjacent analysis-unit hash may be rebound')
+        changes.append({'unit_id':key,'original_hash_unit_id':origin,'original_sha256':op['before_sha256'],'resolved_sha256':hashes[key]})
+        op['before_sha256']=hashes[key]
+    return result,{'version':'bound-adjacent-correction-hash-v1','batch_sha256':runner.digest(items),
+        'original_plan_sha256':runner.digest(plan),'resolved_plan_sha256':runner.digest(result),'changes':changes}
+
+
+def resolve_basis_citations(items,plan,bundle):
+    """Bind an exact compiled units/basis label to its unchanged table facts.
+
+    This adds source addresses only. It neither writes prose nor grants factual
+    acceptance. Other labels, altered financial selections and arbitrary claims
+    retain the normal mandatory source-citation check.
+    """
+    from . import earnings_financial_display as display
+    result=copy.deepcopy(plan);changes=[]
+    if any(op['unit_id']=='financial' for op in result['changes']):return result,changes
+    rendered=display.build(items['financial']['value'],bundle)
+    observations={o['id']:o for o in bundle['financial']['observations']}
+    facts=[observations[k] for k in rendered['selected_fact_ids']]
+    units={g['unit'] for g in rendered['groups']}
+    currencies=[u.split()[0] for u in units if re.fullmatch(r'[A-Z]{3} millions',u)]
+    if len(currencies)!=1 or units!={currencies[0]+' millions',currencies[0]+'/share'}:return result,changes
+    if not facts or not all(o['concept'].startswith('us-gaap:') for o in facts):return result,changes
+    if not isinstance(bundle['financial']['units'],dict):return result,changes
+    eps=[o for o in facts if display.scaled_value(o,bundle['financial']['units'][o['unit_id']])[1].endswith('/share')]
+    if not eps or any(o['concept']!='us-gaap:EarningsPerShareDiluted' for o in eps):return result,changes
+    expected='Financial tables: GAAP; '+currencies[0]+' millions except diluted EPS in '+currencies[0]+'/share.'
+    for op in result['changes']:
+        basis=op['value'].get('basis') if op['unit_id']=='format' else None
+        if isinstance(basis,dict) and basis.get('text')==expected and basis.get('citations')==[]:
+            basis['citations']=rendered['selected_fact_ids'][:]
+            changes.append({'unit_id':'format','field_path':['basis','citations'],
+                'selected_fact_ids':rendered['selected_fact_ids'],'label':expected,
+                'financial_sha256':runner.digest(items['financial']['value'])})
+    return result,changes
+
+
 def references(value):
     result=set()
     if isinstance(value,dict):

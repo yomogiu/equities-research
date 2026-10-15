@@ -307,12 +307,20 @@ def _advance(root,execute):
             state,pack=batch.validate(items,bundle,catalog);report=markdown.report(state,bundle,catalog,pack)
             deps={'units':items,'findings':findings};metadata={'round':round_no,'before_sha256':base.digest(items),'unit_sha256':{k:base.digest(v['value']) for k,v in items.items()}}
             existed=any((root/'jobs'/(name+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
-            value,tokens=_job(root,p,bundle,catalog,'correction',name,deps,metadata,report,execute and not launched,sessions,tokens)
-            if value.get('status') in ('pending','launch_uncertain','budget_exhausted'):return value
-            if not existed:launched=True
+            inherited_correction=continued.get('prepared_correction') if continued and round_no==1 else None
+            if inherited_correction:
+                value={'content':inherited_correction['content']};correction_job=Path(inherited_correction['job'])
+            else:
+                value,tokens=_job(root,p,bundle,catalog,'correction',name,deps,metadata,report,execute and not launched,sessions,tokens)
+                if value.get('status') in ('pending','launch_uncertain','budget_exhausted'):return value
+                if not existed:launched=True
+                correction_job=checkpoint.select(root/'jobs'/name)[0]
             if set(value['content'])=={'blocked'}:return {'status':'blocked','stage':name,'reason':value['content']['blocked'],'tokens':tokens}
-            items,_=batch.apply(items,value['content'],batch.EDITORIAL_VERSION);batch.validate(items,bundle,catalog)
-            context.write(root/'decisions'/f'{name}.json',{'before_sha256':base.digest(before),'after_sha256':base.digest(items),'changes':value['content']['changes']})
+            canonical,derivation=batch.resolve_correction_hashes(items,value['content'])
+            canonical,basis_sources=batch.resolve_basis_citations(items,canonical,bundle)
+            items,_=batch.apply(items,canonical,batch.EDITORIAL_VERSION);batch.validate(items,bundle,catalog)
+            context.write(root/'decisions'/f'{name}.json',{'before_sha256':base.digest(before),'after_sha256':base.digest(items),'changes':canonical['changes'],
+                'hash_addressing_derivation':derivation,'basis_source_derivation':basis_sources,'source_output_sha256':base.sha(correction_job/'output.json')})
         state,pack=batch.validate(items,bundle,catalog);mechanical.check(state,bundle,catalog)
         report=markdown.report(state,bundle,catalog,pack);name='review-'+str(round_no)
         metadata={'round':round_no,'batch_sha256':base.digest(items),'report_sha256':signals.report_digest(state),'signals_sha256':base.digest(pack),'pending_findings':findings}

@@ -33,6 +33,40 @@ class BatchTests(PassageFixture, unittest.TestCase):
         edit['before']=[]
         with self.assertRaises(ValueError):b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
 
+    def test_adjacent_hash_resolution_keeps_values_and_rejects_unbound_batches(self):
+        items=self.items();plan=self.plan(items,['analysis:1'])
+        plan['changes'][0]['before_sha256']=b.runner.digest(items['analysis:0']['value'])
+        fixed,note=b.resolve_correction_hashes(items,plan)
+        self.assertEqual(fixed['changes'][0]['value'],plan['changes'][0]['value'])
+        self.assertEqual(fixed['changes'][0]['before_sha256'],b.runner.digest(items['analysis:1']['value']))
+        self.assertEqual(note['changes'][0]['original_hash_unit_id'],'analysis:0')
+        for invalid in ('unknown',b.runner.digest(items['format']['value'])):
+            bad=copy.deepcopy(plan);bad['changes'][0]['before_sha256']=invalid
+            with self.assertRaises(ValueError):b.resolve_correction_hashes(items,bad)
+        bad=copy.deepcopy(plan);bad['before_sha256']='stale'
+        with self.assertRaises(ValueError):b.resolve_correction_hashes(items,bad)
+
+    def test_basis_citation_binding_only_uses_exact_compiled_label(self):
+        items=self.items();value=copy.deepcopy(items['format']['value'])
+        value['basis']={'text':'Financial tables: GAAP; USD millions except diluted EPS in USD/share.','citations':[]}
+        plan={'before_sha256':b.runner.digest(items),'changes':[{'unit_id':'format',
+            'before_sha256':b.runner.digest(items['format']['value']),'value':value,'reason':'Fictional label'}]}
+        display={'groups':[{'unit':'USD millions'},{'unit':'USD/share'}],'selected_fact_ids':['F001','F002']}
+        bundle={'financial':{'observations':[{'id':'F001','concept':'us-gaap:Revenues','unit_id':'money','value':'1000000'},
+            {'id':'F002','concept':'us-gaap:EarningsPerShareDiluted','unit_id':'eps','value':'1'}],
+            'units':{'money':{'numerator':['iso4217:USD'],'denominator':[]},
+                     'eps':{'numerator':['iso4217:USD'],'denominator':['xbrli:shares']}}}}
+        from research import earnings_financial_display
+        with patch.object(earnings_financial_display,'build',return_value=display):
+            fixed,notes=b.resolve_basis_citations(items,plan,bundle)
+            self.assertEqual(fixed['changes'][0]['value']['basis']['citations'],['F001','F002'])
+            self.assertEqual(fixed['changes'][0]['value']['basis']['text'],value['basis']['text'])
+            self.assertEqual(len(notes),1)
+            bad=copy.deepcopy(plan);bad['changes'][0]['value']['basis']['text']='Unrelated unsupported claim'
+            self.assertEqual(b.resolve_basis_citations(items,bad,bundle),(bad,[]))
+            bundle['financial']['observations'][0]['concept']='fake:AdjustedRevenue'
+            self.assertEqual(b.resolve_basis_citations(items,plan,bundle),(plan,[]))
+
     def test_factual_findings_may_provide_concrete_rewrites(self):
         items=self.items();key='analysis:0';before=items[key]['value']['text']
         review=self.editorial_decision(items,key,'factual',['text'],before,'Fictional source-backed rewrite')
