@@ -96,3 +96,21 @@ Repair review metadata uses a lossless columnar passage index to avoid repeated
 field names. Original evidence and Unicode offsets remain available in full.
 Explicit formatting remediation may correct table captions and period labels with
 source citations, while preserving numeric values, units, periods and group identity.
+
+
+### Batched call inspection
+
+File-backed roles use `print(ctx.call_batch())` to show the original transcript
+once, with compact citation offsets and provisional Q&A annotations. For calls
+longer than 48,000 characters, follow `next_start` in the same IPython call when
+practical. The overlapping exchange, section, turn and quotation representations
+are locators rather than repeated source paragraphs. Coverage projects only to
+hash- and offset-equivalent transcript spans after the full call is delivered;
+filings and financial rows still require their own evidence reads. Merely loading
+a batch into kernel memory does not satisfy inspection. Reviewers inspect their
+own fresh-context batch. Historical frozen runs retain their original API.
+
+Measure retrieval changes in one fresh retrieval-only job with an explicit token
+budget, tool-call bound and no automatic retries. Record input, output, cache-read,
+cache-write, model turns and source coverage, including failed attempts. Do not
+advance analysis or restart the batch as part of this measurement.

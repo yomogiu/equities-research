@@ -100,19 +100,22 @@ def instruction(role,index,job,p):
     value=base.read(index);inventory={'source_count':len(value['source_ids']),'passage_count':value['passage_count'],
         'qa_exchange_count':len(value['exchange_ids']),'context_files':sorted(value['files'])}
     bootstrap=('```python\nimport sys\nsys.path.insert(0, '+repr(str(Path(__file__).resolve().parent.parent))+')\n'
-        'from research.earnings_file_context import Evidence\nctx = Evidence('+repr(str(index))+', '+repr(str(job/'retrieval.jsonl'))+')\n'
-        'print(ctx.inventory())\n```')
+        'from research.earnings_file_context import Evidence\nctx = Evidence('+repr(str(index))+', '+repr(str(job/'retrieval.jsonl'))+')\n'+
+        ('print(ctx.call_batch())\n```' if role in ('retrieval','analysis','review') else 'print(ctx.inventory())\n```'))
     return ((PROMPTS/'common.md').read_text()+'\n'+(PROMPTS/(role+'.md')).read_text()+\
         '\n## Writing standard\n\n'+Path(p['writing_standard']).read_text()+\
         '\n## Context access\n\n'+bootstrap+'\n\nInventory counts: '+json.dumps(inventory,sort_keys=True)+\
         '\n\nUse `ctx.scope(id, start=0, limit=6000)`, `ctx.passage(id, neighbors=1)`, `ctx.search(literal)`, '
         '`ctx.financial_row(fact_id, start=0)`, `ctx.artifact(name, start=0)`, or `ctx.file(name, start=0)`. Print the relevant results. '
         'Follow `next_start` for complete inspection; search previews do not satisfy coverage. '
-        'Start by reading `metadata.json`, the artifact inventory, and the appropriate handoffs. '
+        'Read metadata.json and the appropriate handoffs, projecting only necessary fields. '
         'Tool responses have no enforced byte-size cap. Complete responses are retained in private delivery files; '
         'optional `ctx.output(delivery_id, start=0, limit=768)` provides paged rereading. Undelivered pages do not count as inspection. '
         'Batch relevant source pages in a single IPython call with limit=6000 where useful; avoid one model turn for each tiny page. '
-        'Read the complete transcript in a batch, then inspect required source scopes. '
+        'Use print(ctx.call_batch()) once for the complete call and compact citation/grounding locators. '
+        'Follow its next_start only for longer calls. Exact equivalent Q&A, section and passage spans share coverage; do not reread them separately. '
+        'Do not print the full transcript-index or qa_grounding artifact: their source paragraphs overlap this batch. '
+        'Batch additional targeted filing searches and source reads in one IPython call. '
         'For financial.json and transcript-index.json, use ctx.load_structured(name); originals stay in ctx.financial_data or ctx.transcript_index in kernel memory. '
         'Select needed fields there and use financial_metrics, financial_facts, scope and financial_row for cited evidence. '
         'Do not paginate a complete financial extraction or transcript index into model context. '
@@ -138,6 +141,7 @@ def refs(value):
 def coverage(role,index,job,content,catalog,artifacts):
     entries=checkpoint.entries(job);scopes=context.complete_ranges(entries,'scope','id')
     files=context.complete_ranges(entries,'file','name');pids={x for e in entries if e['method']=='passage' for x in e['ids']}
+    call_scopes,call_files=context.inspected_call(index,entries);scopes.update(call_scopes);files.update(call_files)
     parent={p['passage_id']:p['scope_id'] for p in catalog['passages']}
     covered=pids|{pid for pid,scope in parent.items() if scope in scopes}
     required=refs(content)

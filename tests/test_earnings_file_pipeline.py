@@ -34,6 +34,41 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         (self.root/'context/sources.json').write_text('{}')
         with self.assertRaises(ValueError):c.Evidence(index,log)
 
+    def test_call_batch_deduplicates_exact_text_and_projects_only_call_scopes(self):
+        index=self.assemble();reader=c.Evidence(index,self.root/'batch.jsonl')
+        text=(Path(index).parent/'transcript.md').read_bytes().decode()
+        packet=reader.call_batch()
+        self.assertEqual(packet.count(text),1)
+        self.assertNotIn('"text":',packet.split('## Original transcript characters')[0])
+        entries=c.audit(index,self.root/'batch.jsonl')
+        scopes,files=c.inspected_call(index,entries)
+        self.assertEqual(files,{'transcript.md'})
+        self.assertTrue(set(reader.index['exchange_ids'])<=scopes)
+        self.assertTrue(set(reader.index['section_ids'])<=scopes)
+        self.assertNotIn('D001',scopes)
+        self.assertFalse(c.inspected_call(index,[{**entries[0],'end':1}])[0])
+        # Separate pages compose the original source, never overlapping Q&A dumps.
+        log=self.root/'pages.jsonl';reader=c.Evidence(index,log)
+        for start in range(0,len(text),100):reader.call_batch(start,100)
+        self.assertEqual(c.inspected_call(index,c.audit(index,log))[0],scopes)
+        with self.assertRaises(ValueError):reader.call_batch(0,48001)
+
+    def test_unprinted_call_batch_does_not_gain_delivery_coverage(self):
+        index=self.assemble();job=self.root/'packet-job';job.mkdir()
+        base.save(job/'request.json',{'context_index':str(index)})
+        reader=c.Evidence(index,job/'retrieval.jsonl');packet=reader.call_batch()
+        identifier='a'*24;(job/'tool-output').mkdir();path=job/'tool-output'/(identifier+'.txt')
+        def deliver(text):
+            path.write_text(text)
+            record={'id':identifier,'retrieval_start':0,'retrieval_end':1,'limit':None,
+                    'delivered_bytes':len(text.encode()),'unsupported':False,'sha256':base.sha(path),
+                    'original_bytes':len(text.encode()),'complete':True}
+            (job/'delivery.jsonl').write_text(json.dumps(record)+'\n')
+            return c.delivered_entries(job,c.audit(index,job/'retrieval.jsonl'))
+        self.assertEqual(deliver('Loaded into kernel; not printed'),[])
+        self.assertEqual(len(deliver(packet)),1)
+        self.assertEqual(deliver(packet[:100]),[])
+
     def test_original_source_and_forged_retrieval_receipt_rejected(self):
         index=self.assemble();log=self.root/'read.jsonl';reader=c.Evidence(index,log);reader.scope('D001')
         events=[json.loads(x) for x in log.read_text().splitlines()];events[0]['result_sha256']='forged';log.write_text(json.dumps(events[0])+'\n')
