@@ -315,7 +315,7 @@ class Evidence:
 
             # Unit values already contain the financial, retrieval, author and
             # signal state; avoid printing those same objects a second time.
-            artifacts={'units':artifacts['units']}
+            artifacts={k:artifacts[k] for k in ('units','findings') if k in artifacts}
         return json.dumps({'metadata':base.read(self.root/'metadata.json'),
             'report_markdown':(self.root/'report.md').read_text() if 'report.md' in self.index['files'] else None,
             'artifacts':artifacts},ensure_ascii=False,separators=(',',':'))

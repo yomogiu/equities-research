@@ -158,7 +158,7 @@ schemas are rejected rather than repaired by guesswork.
 ### Host-enforced progress and final-writing phase
 
 New role requests bind an execution policy: three tool calls for financial,
-retrieval, analysis and correction roles; two for signal authors; four for reviewers.
+retrieval, analysis and signal roles; four for reviewers and correction authors.
 Batch required evidence within that plan. The host uses Responses `tool_choice=none`
 after the allowance, or earlier when another maximum-output reserve no longer fits,
 so the next turn writes the result instead of adding another exploration round.

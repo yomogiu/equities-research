@@ -179,6 +179,9 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         reader.artifacts={'finding_catalog':[{'id':'finding-1','text':'Fictional claim'}],'state':{'duplicate':'x'*70000},'qa_grounding':{'duplicate':'y'*70000}}
         body=reader._handoff_body();self.assertNotIn('duplicate',body)
         self.assertIn('finding_catalog',body)
+        reader.artifacts={'units':{'fictional':{'value':'original'}},'findings':{'fictional':['Required repair']},'state':{'duplicate':'x'}}
+        packet=json.loads(reader._handoff_body());self.assertEqual(set(packet['artifacts']),{'units','findings'})
+        self.assertIn('Required repair',reader._handoff_body())
         reader.artifacts={'long':'z'*70000}
         first=reader._role_batch('handoff_batch',0,59000);meta=json.loads(first.splitlines()[1])
         self.assertEqual(meta['next_start'],59000)

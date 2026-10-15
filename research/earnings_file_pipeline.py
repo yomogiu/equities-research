@@ -149,7 +149,7 @@ def instruction(role,index,job,p):
         'Do not paginate a complete financial extraction or transcript index into model context. '
         'ctx.artifacts and ctx.catalog are already in kernel memory; project relevant fields rather than printing entire large artifacts. '
         'The host saves delivered-source progress after every tool call. Save authored work too with ctx.checkpoint(draft_dict, pending_list), combined with a planned tool call; automatic source checkpoints contain no authored prose. '
-        'Tool exploration is bounded: retrieval/analysis/correction/financial/signals get three calls, review four; then the host disables tool calls for final writing. '
+        'Tool exploration is bounded: retrieval/analysis/financial/signals get three calls, review/correction four; then the host disables tool calls for final writing. '
         'Batch handoff fields and all needed original evidence within that plan, keep each response below 60000 characters, and return the requested metadata after the tool phase. '
         'For analysis, review and corrections use this exact plan: call 1 print(ctx.handoff_batch()), call 2 print(ctx.call_batch()), call 3 print(ctx.support_batch()). Follow next_start on any paged packet in the same stage using an available remaining call; never concatenate outputs past 60000 characters. '
         'For signals, call 1 print(ctx.handoff_batch()), then call 2 print(ctx.source_batch([...])) with the exact source IDs or P IDs supporting the chosen developments from the finding catalogue. A third call is available only for remaining material support. The selected source packet supplies exact passage IDs; there is no need to reread the full call unless the chosen signal requires it. '
