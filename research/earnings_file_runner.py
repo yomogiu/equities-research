@@ -71,7 +71,7 @@ def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,tim
     return {'version':VERSION,'job_path':str(job),'model':model,'effort':effort,'provider':old.PROVIDER,'bindings':bindings,
         'context_index':str(index),'context_sha256':old.sha(index),'max_tokens':max_tokens,'max_tool_calls':max_tool_calls,
         'timeout_seconds':timeout,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'helper_sha256':old.sha(HELPER),'runner_sha256':old.sha(__file__),
-        'delivery_sha256':old.sha(DELIVERY),'checkpoint_api_sha256':old.sha(Path(__file__).with_name('earnings_file_checkpoint.py')),'max_tool_response_bytes':8192,'yield_checkpoint':yield_checkpoint,'resume':resume,'context_api_sha256':old.sha(context.__file__),'code_root':str(Path(__file__).resolve().parent.parent),'tool_names':['ipython']}
+        'delivery_sha256':old.sha(DELIVERY),'checkpoint_api_sha256':old.sha(Path(__file__).with_name('earnings_file_checkpoint.py')),'max_tool_response_bytes':None,'yield_checkpoint':yield_checkpoint,'resume':resume,'context_api_sha256':old.sha(context.__file__),'code_root':str(Path(__file__).resolve().parent.parent),'tool_names':['ipython']}
 
 
 def verify_delivery(job,messages):
@@ -81,14 +81,14 @@ def verify_delivery(job,messages):
     for r,m in zip(records,results):
         value={k:m[k] for k in ('content','details','isError')}
         raw=json.dumps(value,ensure_ascii=False,separators=(',',':')).encode()
-        if r['tool_call_id']!=m['toolCallId'] or r['delivered_bytes']!=len(raw) or r['delivered_sha256']!=hashlib.sha256(raw).hexdigest() or len(raw)>8192:raise ValueError('Tool delivery exceeded limit or changed')
+        if r['tool_call_id']!=m['toolCallId'] or r['delivered_bytes']!=len(raw) or r['delivered_sha256']!=hashlib.sha256(raw).hexdigest():raise ValueError('Tool delivery exceeded limit or changed')
     entries=context.audit(old.read(job/'request.json')['context_index'],job/'retrieval.jsonl')
     context.delivered_entries(job,entries)
 
 
 def verify_request(job,q):
     if q['version']!=VERSION or q['job_path']!=str(job) or q['helper_sha256']!=old.sha(HELPER) or q['runner_sha256']!=old.sha(__file__) or q['context_api_sha256']!=old.sha(context.__file__):raise ValueError('Runner/code binding changed')
-    if q.get('delivery_sha256')!=old.sha(DELIVERY) or q.get('checkpoint_api_sha256')!=old.sha(Path(__file__).with_name('earnings_file_checkpoint.py')) or q.get('max_tool_response_bytes')!=8192:raise ValueError('Delivery/checkpoint code binding changed')
+    if q.get('delivery_sha256')!=old.sha(DELIVERY) or q.get('checkpoint_api_sha256')!=old.sha(Path(__file__).with_name('earnings_file_checkpoint.py')) or ('max_tool_response_bytes' not in q or q['max_tool_response_bytes'] is not None):raise ValueError('Delivery/checkpoint code binding changed')
     old._validate_selection(q['model'],q['effort'])
     if q['prompt_sha256']!=old.sha(job/'prompt.md') or q['context_sha256']!=old.sha(q['context_index']) or q['tool_names']!=['ipython']:raise ValueError('Instruction/evidence/tool binding changed')
     if q.get('resume') is not None:

@@ -70,11 +70,6 @@ try {
   session.agent.onPayload = payload => {
     if (payload.model !== request.model || payload.reasoning?.effort !== request.effort ||
         JSON.stringify((payload.tools ?? []).map(t=>t.name)) !== JSON.stringify(['ipython'])) throw Error('wire_mismatch');
-    for(const m of session.agent.state.messages.filter(x=>x.role==='toolResult')) {
-      if(Buffer.byteLength(JSON.stringify({content:m.content,details:m.details,isError:m.isError}))>8192) {
-        localFailure='tool_output_limit'; throw Error('tool_output_limit');
-      }
-    }
     if(request.yield_checkpoint && fs.existsSync(path.join(job,'checkpoints'))) {
       localFailure='checkpoint_yield'; throw Error('checkpoint_yield');
     }

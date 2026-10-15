@@ -1,17 +1,18 @@
 # File-backed tool delivery and checkpoint recovery
 
-New frozen file-pipeline runs enforce an 8,192-byte aggregate limit on each
-model-facing IPython result (content plus delivery metadata). The runtime hook
-runs before the result enters the session. It removes duplicated tool details.
-Oversized text is saved intact under the private job's `tool-output/`, with a
-hash-bound locator in `delivery.jsonl`. Use `ctx.output(id, start, limit=768)` to
-read it in bounded pages. A second pre-provider guard rejects oversized results
-that bypass the hook. Unsupported non-text content cannot satisfy coverage.
+New frozen file-pipeline runs have no enforced tool-response byte limit. The
+runtime delivers complete text results and still saves hash-bound private
+`tool-output/` copies and delivery receipts. Duplicate tool details remain
+removed. `max_tool_response_bytes: null` explicitly records the uncapped policy.
+Normal source API paging and small-print guidance remain available.
 
-Source API reads in an oversized result earn no coverage until every overflow
-page has itself been delivered. Partial pages, unresolved recursive overflows,
-and search previews do not establish full inspection. Original source and
-candidate hashes, independent review, and the two correction rounds still apply.
+Historical frozen runs retain their original 8,192-byte cap and spill receipts.
+Partial pages, unresolved recursive overflows, and search previews do not
+establish full inspection. Unsupported non-text content cannot satisfy coverage.
+Original source and candidate hashes, independent review, checkpoints, token
+budgets and the two correction rounds remain unchanged. Removing the response
+cap does not change the registered 128,000-token output reservation used by the
+separate token-budget guard.
 
 Call `ctx.checkpoint(draft_dict, pending_list)` after material progress. It saves
 an immutable, bounded partial draft plus pending work and exact retrieval-prefix

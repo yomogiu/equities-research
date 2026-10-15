@@ -74,6 +74,17 @@ def usage_debit(path, source_request):
     failed=Path(d['failed_job']);completed=Path(d['completed_job'])
     a=base.read(failed/'request.json');b=base.read(completed/'request.json')
     if a['bindings']!=b['bindings'] or a['bindings'].get('pilot_manifest_sha256')!=base.sha(result_path.parent/'manifest.json'):raise ValueError('Pilot job binding changed')
-    measured=checkpoint.closed(failed)+runner.verify_job(completed)['receipt']['session']['usage']['totalTokens']
+    if b.get('runner_sha256',base.sha(runner.__file__))!=base.sha(runner.__file__):
+        # Historical jobs retain their exact frozen verifier when transport changes.
+        import re,subprocess,sys
+        code=Path(b['code_root']).resolve();private=source_request.parents[3]
+        if code.parent!=private/'.report-workflow' or not re.fullmatch('[0-9a-f]{40}',code.name):raise ValueError('Frozen verifier outside managed code cache')
+        commit=subprocess.check_output(['git','-C',str(code),'rev-parse','HEAD'],text=True).strip()
+        dirty=subprocess.check_output(['git','-C',str(code),'status','--porcelain','--untracked-files=no'],text=True).strip()
+        if commit!=code.name or dirty or base.sha(code/'research/earnings_file_runner.py')!=b['runner_sha256']:raise ValueError('Historical verifier code changed')
+        program="import sys,json;sys.path.insert(0,sys.argv[1]);from research import earnings_file_checkpoint as c,earnings_file_runner as r;print(json.dumps(c.closed(sys.argv[2])+r.verify_job(sys.argv[3])['receipt']['session']['usage']['totalTokens']))"
+        measured=__import__('json').loads(subprocess.check_output([sys.executable,'-B','-I','-c',program,str(code),str(failed),str(completed)],text=True))
+    else:
+        measured=checkpoint.closed(failed)+runner.verify_job(completed)['receipt']['session']['usage']['totalTokens']
     if type(d.get('tokens')) is not int or d['tokens']<=0 or d['tokens']!=measured or result.get('pilot_tokens')!=measured:raise ValueError('Debit must equal measured usage of every pilot attempt')
     return measured

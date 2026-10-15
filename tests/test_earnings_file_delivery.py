@@ -20,13 +20,13 @@ console.log(JSON.stringify({out,preserved,record:JSON.parse(fs.readFileSync(job+
             result=subprocess.run([shutil.which('node'),'--input-type=module','-e',script,directory],input=json.dumps({'content':blocks,'details':details}),text=True,capture_output=True,check=True)
             return json.loads(result.stdout)
 
-    def test_aggregate_multiblock_unicode_overflow_preserved_on_disk(self):
-        result=self.deliver([{'type':'text','text':'\\\n😀'*3000},{'type':'text','text':'more'*3000}],{'stdout':'duplicate'*10000})
-        self.assertTrue(result['preserved']);self.assertFalse(result['record']['complete'])
-        self.assertLessEqual(result['record']['delivered_bytes'],8192)
-        self.assertGreater(result['record']['original_bytes'],8192)
-        self.assertEqual(len(result['files']),1);self.assertIn('ctx.output',result['out']['content'][0]['text'])
-        self.assertNotIn('stdout',result['out']['details'])
+    def test_large_multiblock_unicode_is_delivered_in_full_without_cap(self):
+        blocks=[{'type':'text','text':'\\\n😀'*3000},{'type':'text','text':'more'*3000}]
+        result=self.deliver(blocks,{'stdout':'duplicate'*10000})
+        self.assertTrue(result['preserved']);self.assertTrue(result['record']['complete'])
+        self.assertIsNone(result['record']['limit']);self.assertGreater(result['record']['delivered_bytes'],8192)
+        self.assertEqual(result['out']['content'][0]['text'],'\n'.join(x['text'] for x in blocks))
+        self.assertEqual(len(result['files']),1);self.assertNotIn('stdout',result['out']['details'])
 
     def test_small_result_keeps_complete_text_but_removes_duplicate_details(self):
         result=self.deliver([{'type':'text','text':'small original source'}],{'stdout':'duplicate'*10000})

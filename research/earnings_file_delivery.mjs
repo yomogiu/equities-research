@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-export const LIMIT=8192;
+export const LIMIT=null;
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 export function installDelivery(agent,job) {
   const previous=agent.afterToolCall;
@@ -20,7 +20,7 @@ export function installDelivery(agent,job) {
     fs.writeFileSync(path.join(root,id+'.txt'),text,{flag:'wx',mode:0o600});
     const end=lines();
     let delivered={content:[{type:'text',text}],details:{delivery_id:id},isError:prior?.isError??event.isError};
-    const complete=!unsupported && Buffer.byteLength(JSON.stringify(delivered))<=LIMIT;
+    const complete=!unsupported && (LIMIT===null || Buffer.byteLength(JSON.stringify(delivered))<=LIMIT);
     if(!complete) delivered={content:[{type:'text',text:JSON.stringify({complete:false,delivery_id:id,sha256:hash(text),total_characters:[...text].length,
       reason:unsupported?'unsupported_content':'output_limit',next_start:0,read:`ctx.output('${id}', start=0, limit=768)`})}],details:{delivery_id:id},isError:unsupported||delivered.isError};
     const record={id,tool_call_id:event.toolCall.id,sha256:hash(text),original_bytes:Buffer.byteLength(text),unsupported,

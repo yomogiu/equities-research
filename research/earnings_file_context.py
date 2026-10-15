@@ -249,7 +249,7 @@ def delivered_entries(job, entries):
     for r in records:
         require(r['id'] not in ids and r['retrieval_start']==cursor and r['retrieval_end']>=cursor,'Ordered distinct delivery ranges required')
         ids.add(r['id']);cursor=r['retrieval_end']
-        require(r['limit']==8192 and 0<r['delivered_bytes']<=8192 and not r['unsupported'],'Bounded text delivery required')
+        require((r['limit'] is None or r['limit']==8192) and 0<r['delivered_bytes'] and (r['limit'] is None or r['delivered_bytes']<=r['limit']) and not r['unsupported'],'Bounded text delivery required')
         p=job/'tool-output'/(r['id']+'.txt')
         require(not p.is_symlink() and base.sha(p)==r['sha256'] and p.stat().st_size==r['original_bytes'],'Overflow source changed')
     require(cursor>=len(entries),'Undelivered retrieval events')
