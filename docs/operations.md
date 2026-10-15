@@ -174,3 +174,13 @@ limit. Missing, altered or stale checkpoint receipts fail closed. Source-progres
 recovery still requires the new model to inspect material text for interpretation.
 The lifecycle ceiling and conservative output reserve remain unchanged. These
 controls cannot retroactively reconstruct an unsaved draft from a historical run.
+
+
+Completed author output can likewise continue through a separately bound analysis
+manifest when its only issue is source addressing. Exact passage references in
+citation lists map to their original parent scopes; the transcript document identity
+maps to all its original call sections. Unknown IDs remain errors. Text and quote
+selections are unchanged. The original frozen verifier replays the author receipt,
+normalizes addressing, and verifies original inspection and all author validation.
+The new lifecycle retains both session IDs and the combined inherited usage; it
+cannot raise the original ceiling or bypass fresh signal/review work.

@@ -40,7 +40,7 @@ def verify_budget_authorization(path,case):
     return a
 
 
-def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None):
+def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None):
     root=Path(output).resolve();case=Path(case).resolve();writing=Path(writing).resolve()
     require(financial_mode in ('deterministic-original-facts-v1','model-original-selector-v1'),'Known financial preparation mode required')
     require(max_tokens is None and budget_authorization is not None or type(max_tokens) is int and 1<=max_tokens<=1200000,'Explicit lifecycle budget or approved cap removal required')
@@ -68,6 +68,12 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         inherited=prepared.verify(preparation,case,catalog)
         require(max_tokens==inherited['max_tokens'],'Preparation continuation must retain original lifecycle ceiling')
         p.update(preparation_path=str(Path(preparation).resolve()),preparation_sha256=base.sha(preparation),inherited_tokens=inherited['tokens'])
+    if analysis_preparation is not None:
+        from . import earnings_prepared_analysis as prepared_analysis
+        require(preparation is not None and recovery is None and budget_authorization is None,'Analysis continuation requires verified retrieval lineage')
+        inherited_analysis=prepared_analysis.verify(analysis_preparation,case,catalog)
+        require(max_tokens==inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis lifecycle or retrieval lineage differs')
+        p.update(analysis_preparation_path=str(Path(analysis_preparation).resolve()),analysis_preparation_sha256=base.sha(analysis_preparation),inherited_tokens=inherited_analysis['tokens'])
     if recovery is not None:
         from . import earnings_file_recovery
         lineage=earnings_file_recovery.verify(recovery)
@@ -95,7 +101,13 @@ def load(root):
         from . import earnings_prepared_retrieval as prepared
         require(base.sha(p['preparation_path'])==p['preparation_sha256'],'Preparation manifest changed')
         inherited=prepared.verify(p['preparation_path'],p['case_path'],base.read(root/'passages.json'))
-        require(p['inherited_tokens']==inherited['tokens'] and p['max_tokens']==inherited['max_tokens'],'Preparation usage changed')
+        require(p['max_tokens']==inherited['max_tokens'],'Preparation ceiling changed')
+        if p.get('analysis_preparation_path'):
+            from . import earnings_prepared_analysis as prepared_analysis
+            require(base.sha(p['analysis_preparation_path'])==p['analysis_preparation_sha256'],'Analysis manifest changed')
+            inherited_analysis=prepared_analysis.verify(p['analysis_preparation_path'],p['case_path'],base.read(root/'passages.json'))
+            require(p['inherited_tokens']==inherited_analysis['tokens'] and p['max_tokens']==inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis usage or lineage changed')
+        else:require(p['inherited_tokens']==inherited['tokens'],'Preparation usage changed')
     else:require(p.get('inherited_tokens',0)==0,'Unbound inherited usage')
     if p.get('budget_authorization'):
         require(p['max_tokens'] is None and base.sha(p['budget_authorization'])==p['budget_authorization_sha256'],'Cap-removal authorization changed')
@@ -240,6 +252,12 @@ def _advance(root,execute):
             pipe.validate(role,inherited['content'],bundle,catalog)
             artifacts[role]=copy.deepcopy(inherited['content']);sessions.add(inherited['session_id'])
             continue
+        if role=='analysis' and p.get('analysis_preparation_path'):
+            inherited_analysis=base.read(p['analysis_preparation_path'])
+            pipe.validate(role,inherited_analysis['content'],bundle,catalog)
+            artifacts[role]=copy.deepcopy(inherited_analysis['content'])
+            require(inherited_analysis['session_ids'][0] in sessions and inherited_analysis['session_ids'][1] not in sessions,'Analysis session lineage differs')
+            sessions.add(inherited_analysis['session_ids'][1]);continue
         state=None;report=None;dependencies={**artifacts,'qa_grounding':base.read(root/'qa-grounding.json')}
         if role=='retrieval' and p.get('budget_authorization'):
             approved=base.read(p['budget_authorization'])
