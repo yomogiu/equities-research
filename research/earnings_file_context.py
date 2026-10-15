@@ -122,6 +122,20 @@ class Evidence:
             if not value['table_row_complete']:value['table_row_next_start']=PAGE_CHARACTERS
         return self._record({'method':'scope','id':identifier,'start':start,'end':end,'total':len(text)},value)
 
+    def load_structured(self, name):
+        """Load large structured evidence into kernel memory; return counts only.
+
+        Original text inspection still uses scope/passage/row APIs. Loading a
+        large extraction is not equivalent to showing its contents to the model.
+        """
+        require(name in ('financial.json','transcript-index.json'),'Exact structured evidence file required')
+        value=base.read(self.root/name)
+        attribute='financial_data' if name=='financial.json' else 'transcript_index'
+        setattr(self,attribute,value)
+        counts={k:len(v) for k,v in value.items() if isinstance(v,(list,dict))}
+        return self._record({'method':'load_structured','name':name},{'name':name,'kernel_attribute':'ctx.'+attribute,'counts':counts,
+            'instruction':'Select fields in kernel memory. Inspect cited original text through scope, passage or financial_row; do not print the full extraction.'})
+
     def financial_metrics(self, start=0, limit=12):
         """Paged concept inventory, including unmapped extraction and gaps."""
         from collections import Counter
@@ -174,7 +188,8 @@ class Evidence:
         return self._page('artifact',name,json.dumps(self.artifacts[name],ensure_ascii=False,indent=2),start,limit)
 
     def file(self, name, start=0, limit=PAGE_CHARACTERS):
-        require(name in ('report.md','metadata.json','financial.json','transcript-index.json','transcript.md'),'Use exact permitted context file')
+        require(name not in ('financial.json','transcript-index.json'),'Large structured evidence stays in kernel memory: use ctx.load_structured(name), then select fields; financial_facts and scope retain original evidence access')
+        require(name in ('report.md','metadata.json','transcript.md'),'Use exact permitted context file')
         require(name in self.index['files'],'Unavailable context file')
         return self._page('file',name,(self.root/name).read_bytes().decode('utf-8'),start,limit)
 
@@ -196,6 +211,7 @@ def audit(index, log, *, count=None):
         for e in entries:
             method=e['method']
             if method=='inventory':reader.inventory(e.get('start',0),e.get('limit',40))
+            elif method=='load_structured':reader.load_structured(e['name'])
             elif method=='financial_metrics':reader.financial_metrics(e['start'],e['limit'])
             elif method=='financial_facts':reader.financial_facts(e['query'],e['start'],e['limit'])
             elif method=='scope':reader.scope(e['id'],e['start'],e['end']-e['start'] or 1)

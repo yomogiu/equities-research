@@ -200,4 +200,16 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
             'issuer_id':'another-issuer','period':self.case.get('period'),'prior_usage_tokens':30,'prior_usage_proof':{'path':str(proof),'sha256':base.sha(proof)}}))
         with self.assertRaisesRegex(ValueError,'issuer or period'):p.initialize(self.casepath,self.root/'wrong-scope',writing,max_tokens=None,budget_authorization=approval)
 
+    def test_large_structured_sources_load_into_kernel_without_raw_html_output(self):
+        index=self.assemble();log=self.root/'structured.jsonl';reader=c.Evidence(index,log)
+        for name,attribute in [('financial.json','financial_data'),('transcript-index.json','transcript_index')]:
+            with self.assertRaisesRegex(ValueError,'kernel memory'):reader.file(name)
+            summary=reader.load_structured(name)
+            self.assertEqual(getattr(reader,attribute),base.read(Path(index).parent/name))
+            self.assertLess(len(json.dumps(summary)),1500)
+            self.assertNotIn('observations',summary)
+        self.assertEqual(len(c.audit(index,log)),2)
+        self.assertFalse(c.complete_ranges(c.audit(index,log),'scope','id'))
+        self.assertIn('facts',reader.financial_facts('revenue'))
+
 if __name__=='__main__':unittest.main()

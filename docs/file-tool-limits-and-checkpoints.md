@@ -50,3 +50,12 @@ review and two correction rounds remain in effect. Such approval creates a new
 frozen trial; it never edits an old request or protocol. A source-bound previous
 checkpoint may be supplied as unreviewed preparation data, without inheriting
 another context's inspection or approval credit.
+
+Large structured `financial.json` and `transcript-index.json` files load through
+`ctx.load_structured(name)` into kernel memory. That returns counts and the kernel
+attribute name, not thousands of raw observations/HTML snippets. Project needed
+fields from `ctx.financial_data` or `ctx.transcript_index`; inspect cited originals
+with the existing fact, scope and table-row methods. This avoids automatic full
+extraction dumps without reinstating a tool-response byte cap or hiding evidence.
+Complete call pages may be batched within a tool invocation to avoid dozens of
+model turns spent walking 768-character transcript fragments.
