@@ -184,3 +184,26 @@ selections are unchanged. The original frozen verifier replays the author receip
 normalizes addressing, and verifies original inspection and all author validation.
 The new lifecycle retains both session IDs and the combined inherited usage; it
 cannot raise the original ceiling or bypass fresh signal/review work.
+
+
+### Typed, paged role packets
+
+Use handoff_batch for the whole report, metadata and relevant handoffs. Signal
+handoffs contain the finding catalogue rather than a duplicate of the entire state;
+review handoffs contain unit values rather than repeating both units and state.
+Use call_batch for the complete call and support_batch for all referenced non-call
+support. Each role packet is at most 59,000 body characters, with next_start when
+more remains. Full delivered ranges, not kernel loads, determine coverage.
+
+Signal authors may instead use source_batch with exact selected scope or passage
+IDs after choosing material findings. It prints complete original parent scopes,
+original provenance, selected context/unit data and exact passage locators. This
+avoids a whole-call reread for a narrow signal selection. Reviewers still inspect
+all required original evidence. Support packets deduplicate source blocks and file
+identities without changing original text. Missing pages receive no coverage.
+
+The early-finalization margin is 65,536 tokens above the registered maximum-output
+reserve, rather than another full maximum output. The hard conservative reserve
+and cumulative token accounting remain in force. A continuation may lower its
+ceiling to deduct a verified failed sibling's usage; it cannot raise the inherited
+ceiling. This preserves lost-attempt charges without rerunning a validated author.

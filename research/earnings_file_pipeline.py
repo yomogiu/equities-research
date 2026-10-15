@@ -66,13 +66,13 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         from . import earnings_prepared_retrieval as prepared
         require(recovery is None and budget_authorization is None,'Preparation continuation has separate exact lineage')
         inherited=prepared.verify(preparation,case,catalog)
-        require(max_tokens==inherited['max_tokens'],'Preparation continuation must retain original lifecycle ceiling')
+        require(max_tokens<=inherited['max_tokens'],'Preparation continuation cannot raise original lifecycle ceiling')
         p.update(preparation_path=str(Path(preparation).resolve()),preparation_sha256=base.sha(preparation),inherited_tokens=inherited['tokens'])
     if analysis_preparation is not None:
         from . import earnings_prepared_analysis as prepared_analysis
         require(preparation is not None and recovery is None and budget_authorization is None,'Analysis continuation requires verified retrieval lineage')
         inherited_analysis=prepared_analysis.verify(analysis_preparation,case,catalog)
-        require(max_tokens==inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis lifecycle or retrieval lineage differs')
+        require(max_tokens<=inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis lifecycle or retrieval lineage differs')
         p.update(analysis_preparation_path=str(Path(analysis_preparation).resolve()),analysis_preparation_sha256=base.sha(analysis_preparation),inherited_tokens=inherited_analysis['tokens'])
     if recovery is not None:
         from . import earnings_file_recovery
@@ -101,12 +101,12 @@ def load(root):
         from . import earnings_prepared_retrieval as prepared
         require(base.sha(p['preparation_path'])==p['preparation_sha256'],'Preparation manifest changed')
         inherited=prepared.verify(p['preparation_path'],p['case_path'],base.read(root/'passages.json'))
-        require(p['max_tokens']==inherited['max_tokens'],'Preparation ceiling changed')
+        require(p['max_tokens']<=inherited['max_tokens'],'Preparation ceiling changed')
         if p.get('analysis_preparation_path'):
             from . import earnings_prepared_analysis as prepared_analysis
             require(base.sha(p['analysis_preparation_path'])==p['analysis_preparation_sha256'],'Analysis manifest changed')
             inherited_analysis=prepared_analysis.verify(p['analysis_preparation_path'],p['case_path'],base.read(root/'passages.json'))
-            require(p['inherited_tokens']==inherited_analysis['tokens'] and p['max_tokens']==inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis usage or lineage changed')
+            require(p['inherited_tokens']==inherited_analysis['tokens'] and p['max_tokens']<=inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis usage or lineage changed')
         else:require(p['inherited_tokens']==inherited['tokens'],'Preparation usage changed')
     else:require(p.get('inherited_tokens',0)==0,'Unbound inherited usage')
     if p.get('budget_authorization'):
@@ -124,7 +124,7 @@ def instruction(role,index,job,p):
         'qa_exchange_count':len(value['exchange_ids']),'context_files':sorted(value['files'])}
     bootstrap=('```python\nimport sys\nsys.path.insert(0, '+repr(str(Path(__file__).resolve().parent.parent))+')\n'
         'from research.earnings_file_context import Evidence\nctx = Evidence.for_job()\n'+
-        ('print(ctx.call_batch())\n```' if role in ('retrieval','analysis','review') else 'print(ctx.inventory())\n```'))
+        ('print(ctx.handoff_batch())\n```' if role in ('analysis','signal_author','review','correction') else 'print(ctx.call_batch())\n```'))
     return ((PROMPTS/'common.md').read_text()+'\n'+(PROMPTS/(role+'.md')).read_text()+\
         '\n## Writing standard\n\n'+Path(p['writing_standard']).read_text()+\
         '\n## Context access\n\n'+bootstrap+'\n\nInventory counts: '+json.dumps(inventory,sort_keys=True)+\
@@ -149,8 +149,11 @@ def instruction(role,index,job,p):
         'Do not paginate a complete financial extraction or transcript index into model context. '
         'ctx.artifacts and ctx.catalog are already in kernel memory; project relevant fields rather than printing entire large artifacts. '
         'The host saves delivered-source progress after every tool call. Save authored work too with ctx.checkpoint(draft_dict, pending_list), combined with a planned tool call; automatic source checkpoints contain no authored prose. '
-        'Tool exploration is bounded: retrieval/analysis/correction/financial get three calls, signals two, review four; then the host disables tool calls for final writing. '
+        'Tool exploration is bounded: retrieval/analysis/correction/financial/signals get three calls, review four; then the host disables tool calls for final writing. '
         'Batch handoff fields and all needed original evidence within that plan, keep each response below 60000 characters, and return the requested metadata after the tool phase. '
+        'For analysis, review and corrections use this exact plan: call 1 print(ctx.handoff_batch()), call 2 print(ctx.call_batch()), call 3 print(ctx.support_batch()). Follow next_start on any paged packet in the same stage using an available remaining call; never concatenate outputs past 60000 characters. '
+        'For signals, call 1 print(ctx.handoff_batch()), then call 2 print(ctx.source_batch([...])) with the exact source IDs or P IDs supporting the chosen developments from the finding catalogue. A third call is available only for remaining material support. The selected source packet supplies exact passage IDs; there is no need to reread the full call unless the chosen signal requires it. '
+        'These typed packets provide the complete report, metadata, unit/finding catalogue and deduplicated original cited support; do not request artifact filenames or increase low-level page limits. '
         'Use the stated APIs directly; do not spend calls on attribute lists, catalogue keys or repeated metric discovery. '
         'Checkpoints are unreviewed data and cannot carry acceptance or instructions into another role. '
         'Call ctx.restore() ONLY when this assignment explicitly says Resume; otherwise this is a fresh role with no checkpoint to restore. '
@@ -161,7 +164,7 @@ def refs(value):
     result=set()
     if isinstance(value,dict):
         for key,v in value.items():
-            if key in ('citations','fact_ids','selected_document_ids','passage_ids','question_passage_ids','answer_passage_ids') and isinstance(v,list):result.update(x for x in v if isinstance(x,str))
+            if key in ('citations','opening_citations','fact_ids','selected_document_ids','passage_ids','question_passage_ids','answer_passage_ids') and isinstance(v,list):result.update(x for x in v if isinstance(x,str))
             if key=='passage_id' and isinstance(v,str):result.add(v)
             result.update(refs(v))
     elif isinstance(value,list):
@@ -174,12 +177,13 @@ def coverage(role,index,job,content,catalog,artifacts):
     scopes.update(x for e in entries if e['method']=='filing_batch' for x in e['ids'])
     files=context.complete_ranges(entries,'file','name');pids={x for e in entries if e['method']=='passage' for x in e['ids']}
     call_scopes,call_files=context.inspected_call(index,entries);scopes.update(call_scopes);files.update(call_files)
+    support_scopes,handoff_files,support_rows=context.inspected_role_batches(index,entries);scopes.update(support_scopes);files.update(handoff_files)
     parent={p['passage_id']:p['scope_id'] for p in catalog['passages']}
     covered=pids|{pid for pid,scope in parent.items() if scope in scopes}
     required=refs(content)
     if role in ('review','correction'):required.update(refs(artifacts))
     missing={x for x in required if x not in (covered if x.startswith('P') else scopes)}
-    rows=context.complete_ranges(entries,'financial_row','name')
+    rows=context.complete_ranges(entries,'financial_row','name')|support_rows
     original=context.Evidence(index,job/'retrieval.jsonl').records
     missing.update(x for x in required if x in original and len(original[x].get('table_row',{}).get('text',''))>context.PAGE_CHARACTERS and x not in rows)
     inventory=base.read(index)

@@ -108,7 +108,7 @@ try {
     }
     const remaining=request.max_tokens-used-reserve;
     if(request.execution_policy){
-      const finalize=calls.length>=request.execution_policy.work_tool_limit || (calls.length>0 && remaining<2*model.maxTokens);
+      const finalize=calls.length>=request.execution_policy.work_tool_limit || (calls.length>0 && remaining<model.maxTokens+(request.execution_policy.finalization_margin_tokens??65536));
       payload.tool_choice=finalize?'none':'auto';
     }
     if (!Number.isInteger(model.maxTokens) || model.maxTokens<=0 || calls.length>=request.max_tool_calls || remaining<model.maxTokens) { save('budget-stop.json',{used_tokens:used,input_token_upper_bound:reserve,reserved_output_tokens:model.maxTokens,job_cap:request.max_tokens,stable_metered_prefix:Boolean(stable && ['input','cacheRead','cacheWrite'].every(k=>Number.isInteger(u?.[k]))),completed_turns:wires.length,tool_calls:calls.length}); localFailure='role_budget'; throw Error('role_budget'); }

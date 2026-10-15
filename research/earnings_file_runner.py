@@ -69,8 +69,8 @@ def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,tim
     old._validate_selection(model,effort)
     if not prompt.strip() or type(max_tokens) is not int or not 1<=max_tokens<=1200000 or type(max_tool_calls) is not int or not 1<=max_tool_calls<=64 or timeout<=0:raise ValueError('Explicit bounded role settings required')
     index=Path(index).resolve();context.Evidence(index,job/'retrieval.jsonl')
-    role=bindings.get('role');limits={'financial':3,'retrieval':3,'analysis':3,'signal_author':2,'review':4,'correction':3}
-    policy={'work_tool_limit':min(limits[role],max_tool_calls-1),'automatic_checkpoints':True} if role in limits and max_tool_calls>1 else None
+    role=bindings.get('role');limits={'financial':3,'retrieval':3,'analysis':3,'signal_author':3,'review':4,'correction':3}
+    policy={'work_tool_limit':min(limits[role],max_tool_calls-1),'automatic_checkpoints':True,'finalization_margin_tokens':65536} if role in limits and max_tool_calls>1 else None
     return {'execution_policy':policy,'checkpoint_python':sys.executable,'version':VERSION,'job_path':str(job),'model':model,'effort':effort,'provider':old.PROVIDER,'bindings':bindings,
         'context_index':str(index),'context_sha256':old.sha(index),'max_tokens':max_tokens,'max_tool_calls':max_tool_calls,
         'timeout_seconds':timeout,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'helper_sha256':old.sha(HELPER),'runner_sha256':old.sha(__file__),

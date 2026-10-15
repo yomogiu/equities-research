@@ -93,14 +93,14 @@ class PrimeHelperTests(unittest.TestCase):
         self.assertIn('response.md',files)
 
     def test_low_remaining_budget_finalizes_before_another_tool_round(self):
-        code,files=self.run_helper(cap=200000,work_limit=3)
+        code,files=self.run_helper(cap=180000,work_limit=3)
         self.assertEqual(code,0)
         self.assertEqual(json.loads(files['wire.json'])[-1]['tool_choice'],'none')
 
     def test_real_host_hook_captures_without_a_model_checkpoint_call(self):
         from test_earnings_file_pipeline import FilePipelineTests
         fixture=FilePipelineTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
-        code,files=self.run_helper(cap=200000,capture_index=fixture.assemble())
+        code,files=self.run_helper(cap=180000,capture_index=fixture.assemble())
         self.assertEqual(code,0,files.get('runtime-failure.json'))
         receipts=json.loads(files['automatic-checkpoints.json'])
         self.assertEqual(receipts[0]['status'],'saved')

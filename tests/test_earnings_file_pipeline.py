@@ -145,6 +145,60 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         with patch.object(Path,'cwd',return_value=self.root):
             with self.assertRaises(FileNotFoundError):c.Evidence.for_job()
 
+    def test_typed_packets_supply_complete_role_without_duplicate_state_or_sources(self):
+        index=self.assemble();job=self.root/'typed-job';job.mkdir()
+        base.save(job/'request.json',{'context_index':str(index)})
+        reader=c.Evidence(index,job/'retrieval.jsonl')
+        handoff=reader.handoff_batch();call=reader.call_batch();support=reader.support_batch()
+        entries=c.audit(index,job/'retrieval.jsonl')
+        self.assertEqual([e['method'] for e in entries],['handoff_batch','call_batch','support_batch'])
+        self.assertTrue(all(len(text)<60000 for text in (handoff,call,support)))
+        payload=json.loads(reader._support_body()[0])
+        for identifier,item in payload['source_map'].items():
+            for original,pointer in zip(reader.records[identifier]['spans'],item['spans']):
+                block=payload['unique_original_blocks'][pointer]
+                self.assertEqual(block[3],original['text'])
+                file=payload['files'][block[0]]
+                self.assertEqual(file['sha256'],original['sha256'])
+                self.assertEqual(block[1:3],[original['start'],original['end']])
+        delivery='c'*24;(job/'tool-output').mkdir();path=job/'tool-output'/(delivery+'.txt')
+        def deliver(text):
+            path.write_bytes(text.encode())
+            row={'id':delivery,'retrieval_start':0,'retrieval_end':3,'limit':None,'delivered_bytes':len(text.encode()),
+                 'unsupported':False,'sha256':base.sha(path),'original_bytes':len(text.encode()),'complete':True}
+            (job/'delivery.jsonl').write_text(json.dumps(row)+'\n')
+        deliver(handoff+call+support)
+        proof=p.coverage('review',index,job,self.report,self.catalog,reader.artifacts)
+        self.assertIn('report.md',proof['files']);self.assertIn('transcript.md',proof['files'])
+        self.assertIn('D001',proof['source_ids'])
+        deliver(handoff+call+support[:100])
+        with self.assertRaises(ValueError):p.coverage('review',index,job,self.report,self.catalog,reader.artifacts)
+
+    def test_role_packet_pages_and_signal_handoff_avoid_duplicate_raw_state(self):
+        index=self.assemble();reader=c.Evidence(index,self.root/'packet-pages.jsonl')
+        reader.artifacts={'finding_catalog':[{'id':'finding-1','text':'Fictional claim'}],'state':{'duplicate':'x'*70000},'qa_grounding':{'duplicate':'y'*70000}}
+        body=reader._handoff_body();self.assertNotIn('duplicate',body)
+        self.assertIn('finding_catalog',body)
+        reader.artifacts={'long':'z'*70000}
+        first=reader._role_batch('handoff_batch',0,59000);meta=json.loads(first.splitlines()[1])
+        self.assertEqual(meta['next_start'],59000)
+        second=reader._role_batch('handoff_batch',59000,59000)
+        self.assertLess(len(first),60000);self.assertLess(len(second),60000)
+        with self.assertRaises(ValueError):reader.handoff_batch(0,60000)
+
+    def test_selected_source_packet_projects_exact_parent_only_after_complete_pages(self):
+        index=self.assemble();reader=c.Evidence(index,self.root/'selected-source.jsonl')
+        selected=[self.ids[0]];parent=next(p['scope_id'] for p in self.catalog['passages'] if p['passage_id']==self.ids[0])
+        first=reader.source_batch(selected,limit=80)
+        entries=c.audit(index,reader.log);self.assertFalse(c.inspected_role_batches(index,entries)[0])
+        at=json.loads(first.splitlines()[1])['next_start']
+        while at is not None:
+            packet=reader.source_batch(selected,start=at,limit=80);at=json.loads(packet.splitlines()[1])['next_start']
+        self.assertEqual(c.inspected_role_batches(index,c.audit(index,reader.log))[0],{parent})
+        body,ids,rows=reader._support_body(selected);self.assertIn(self.ids[0],body)
+        with self.assertRaises(ValueError):reader.source_batch(['unknown'])
+        with self.assertRaises(ValueError):reader.source_batch([])
+
     def test_original_source_and_forged_retrieval_receipt_rejected(self):
         index=self.assemble();log=self.root/'read.jsonl';reader=c.Evidence(index,log);reader.scope('D001')
         events=[json.loads(x) for x in log.read_text().splitlines()];events[0]['result_sha256']='forged';log.write_text(json.dumps(events[0])+'\n')
