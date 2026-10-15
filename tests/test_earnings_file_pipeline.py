@@ -53,6 +53,17 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         self.assertEqual(c.inspected_call(index,c.audit(index,log))[0],scopes)
         with self.assertRaises(ValueError):reader.call_batch(0,48001)
 
+    def test_call_batch_respects_runtime_character_boundary_and_continuation(self):
+        index=self.assemble();reader=c.Evidence(index,self.root/'bounded-call.jsonl')
+        text='Fictional Unicode \u00a0 passage.\r\n'*4000
+        with patch.object(reader,'_call_scopes',return_value=(text,{})):
+            first=reader._call_batch(0,48000);meta=json.loads(first.splitlines()[2])
+            self.assertLessEqual(len(first),60000)
+            self.assertEqual(meta['next_start'],meta['end'])
+            second=reader._call_batch(meta['next_start'],48000)
+            self.assertIn(text[meta['end']:min(len(text),meta['end']+48000)],second)
+            self.assertLessEqual(len(second),60000)
+
     def test_unprinted_call_batch_does_not_gain_delivery_coverage(self):
         index=self.assemble();job=self.root/'packet-job';job.mkdir()
         base.save(job/'request.json',{'context_index':str(index)})

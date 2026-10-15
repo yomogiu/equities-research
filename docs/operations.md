@@ -114,3 +114,9 @@ Measure retrieval changes in one fresh retrieval-only job with an explicit token
 budget, tool-call bound and no automatic retries. Record input, output, cache-read,
 cache-write, model turns and source coverage, including failed attempts. Do not
 advance analysis or restart the batch as part of this measurement.
+
+The IPython runtime independently truncates outputs at 65,536 characters. Call
+batches therefore fit within 60,000 characters including compact locator tables,
+and expose next_start for any remaining source text. Do not concatenate batches
+or other prints beyond that total in one tool result. A delivery-hook setting
+does not remove the runtime truncation. Missing exact batch text earns no credit.

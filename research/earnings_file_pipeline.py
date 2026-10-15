@@ -113,7 +113,7 @@ def instruction(role,index,job,p):
         'optional `ctx.output(delivery_id, start=0, limit=768)` provides paged rereading. Undelivered pages do not count as inspection. '
         'Batch relevant source pages in a single IPython call with limit=6000 where useful; avoid one model turn for each tiny page. '
         'Use print(ctx.call_batch()) once for the complete call and compact citation/grounding locators. '
-        'Follow its next_start only for longer calls. Exact equivalent Q&A, section and passage spans share coverage; do not reread them separately. '
+        'Follow its next_start whenever present; never print more than 60000 combined characters in one IPython response. Exact equivalent Q&A, section and passage spans share coverage; do not reread them separately. '
         'Do not print the full transcript-index or qa_grounding artifact: their source paragraphs overlap this batch. '
         'Batch additional targeted filing searches and source reads in one IPython call. '
         'For financial.json and transcript-index.json, use ctx.load_structured(name); originals stay in ctx.financial_data or ctx.transcript_index in kernel memory. '
