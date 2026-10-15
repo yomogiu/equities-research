@@ -214,7 +214,7 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         response='# Role result\n\n```json\n'+json.dumps(content)+'\n```\n';(job/'response.md').write_text(response)
         sid='fictional-'+job.name;launch={'id':'fictional-launch','request_sha256':base.digest(q)};base.save(job/'launch.json',launch)
         for name in ('runtime-start.json','runtime-finish.json'):base.save(job/name,{'launch_id':launch['id'],'session_id':sid,'model':model,'effort':effort,'oauth':True})
-        base.save(job/'wire.json',[{'model':model,'effort':effort,'tools':['ipython']}]*2)
+        base.save(job/'wire.json',[{'model':model,'effort':effort,'tools':['ipython'],**({'tool_choice':'auto'} if q.get('execution_policy') else {})}]*2)
         usage={'input':10,'output':10,'cacheRead':0,'cacheWrite':0,'totalTokens':20}
         assistant={'role':'assistant','provider':'openai-codex','api':'openai-codex-responses','model':model,'usage':usage}
         messages=[{'role':'user','content':prompt},{**assistant,'stopReason':'toolUse','content':[{'type':'toolCall','id':'inspect','name':'ipython','arguments':{'code':'# Fictional complete API inspection'}}]},
@@ -228,6 +228,9 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         (job/'tool-output').mkdir();(job/'tool-output'/('a'*24+'.txt')).write_text('Fictional source inspection')
         entry={'id':'a'*24,'tool_call_id':'inspect','sha256':base.sha(job/'tool-output'/('a'*24+'.txt')),'original_bytes':len('Fictional source inspection'.encode()),'unsupported':False,'complete':True,'retrieval_start':0,'retrieval_end':len((job/'retrieval.jsonl').read_text().splitlines()),'delivered_sha256':hashlib.sha256(raw).hexdigest(),'delivered_bytes':len(raw),'limit':8192}
         (job/'delivery.jsonl').write_text(json.dumps(entry)+'\n')
+        if q.get('execution_policy'):
+            from research.earnings_file_checkpoint import capture
+            base.save(job/'automatic-checkpoints.json',[{'delivery_id':entry['id'],**capture(job)}])
         execution={'request_sha256':base.digest(q),'launch_sha256':base.sha(job/'launch.json'),'exit_code':0,'status':'completed',
             'session':r.receipt(job,q),'artifact_sha256':{n:base.sha(job/n) for n in ('runtime-start.json','runtime-finish.json','wire.json','response.md','retrieval.jsonl','delivery.jsonl')}}
         base.save(job/'execution.json',execution);base.save(job/'output.json',{'request_sha256':base.digest(q),'execution_sha256':base.sha(job/'execution.json'),'content':content})

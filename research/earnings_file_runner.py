@@ -8,6 +8,7 @@ import signal
 import subprocess
 import time
 import uuid
+import sys
 from . import earnings_mixed_runner as old, earnings_file_context as context
 
 VERSION='file-prime-role-v1'
@@ -68,7 +69,9 @@ def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,tim
     old._validate_selection(model,effort)
     if not prompt.strip() or type(max_tokens) is not int or not 1<=max_tokens<=1200000 or type(max_tool_calls) is not int or not 1<=max_tool_calls<=64 or timeout<=0:raise ValueError('Explicit bounded role settings required')
     index=Path(index).resolve();context.Evidence(index,job/'retrieval.jsonl')
-    return {'version':VERSION,'job_path':str(job),'model':model,'effort':effort,'provider':old.PROVIDER,'bindings':bindings,
+    role=bindings.get('role');limits={'financial':3,'retrieval':3,'analysis':3,'signal_author':2,'review':4,'correction':3}
+    policy={'work_tool_limit':min(limits[role],max_tool_calls-1),'automatic_checkpoints':True} if role in limits and max_tool_calls>1 else None
+    return {'execution_policy':policy,'checkpoint_python':sys.executable,'version':VERSION,'job_path':str(job),'model':model,'effort':effort,'provider':old.PROVIDER,'bindings':bindings,
         'context_index':str(index),'context_sha256':old.sha(index),'max_tokens':max_tokens,'max_tool_calls':max_tool_calls,
         'timeout_seconds':timeout,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'helper_sha256':old.sha(HELPER),'runner_sha256':old.sha(__file__),
         'delivery_sha256':old.sha(DELIVERY),'checkpoint_api_sha256':old.sha(Path(__file__).with_name('earnings_file_checkpoint.py')),'max_tool_response_bytes':None,'yield_checkpoint':yield_checkpoint,'resume':resume,'context_api_sha256':old.sha(context.__file__),'code_root':str(Path(__file__).resolve().parent.parent),'tool_names':['ipython']}
@@ -82,7 +85,21 @@ def verify_delivery(job,messages):
         value={k:m[k] for k in ('content','details','isError')}
         raw=json.dumps(value,ensure_ascii=False,separators=(',',':')).encode()
         if r['tool_call_id']!=m['toolCallId'] or r['delivered_bytes']!=len(raw) or r['delivered_sha256']!=hashlib.sha256(raw).hexdigest():raise ValueError('Tool delivery exceeded limit or changed')
-    entries=context.audit(old.read(job/'request.json')['context_index'],job/'retrieval.jsonl')
+    q=old.read(job/'request.json')
+    if q.get('execution_policy',{} ) and q['execution_policy']['automatic_checkpoints']:
+        from . import earnings_file_checkpoint as checkpoint
+        saved=old.read(job/'automatic-checkpoints.json')
+        if len(saved)!=len(records):raise ValueError('Host checkpoint receipt required after every tool result')
+        for item,record in zip(saved,records):
+            if item['delivery_id']!=record['id']:raise ValueError('Checkpoint delivery identity changed')
+            if item['status']=='saved':
+                if old.sha(item['checkpoint'])!=item['sha256']:raise ValueError('Automatic checkpoint changed')
+                progress=checkpoint.validate(item['checkpoint'])
+                if Path(progress['job']).resolve()!=Path(job).resolve() or progress['retrieval_count']!=record['retrieval_end']:raise ValueError('Automatic checkpoint does not cover this delivered prefix')
+            elif item['status']=='no_evidence_progress':
+                if record['retrieval_end']>record['retrieval_start']:raise ValueError('Delivered evidence progress was not checkpointed')
+            else:raise ValueError('Unknown checkpoint capture result')
+    entries=context.audit(q['context_index'],job/'retrieval.jsonl')
     context.delivered_entries(job,entries)
 
 
@@ -97,6 +114,26 @@ def verify_request(job,q):
         earnings_file_checkpoint.restore(job)
 
 
+def verify_wire(q,wire,messages):
+    turns=[m for m in messages if m.get('role')=='assistant' and m.get('stopReason')!='error']
+    if len(wire)!=len(turns):raise ValueError('Exact metered wire turns required')
+    calls=0;finalizing=False
+    for item,m in zip(wire,turns):
+        expected={'model':q['model'],'effort':q['effort'],'tools':['ipython']}
+        policy=q.get('execution_policy')
+        if policy:
+            choice=item.get('tool_choice')
+            if choice not in ('auto','none') or (finalizing and choice!='none'):raise ValueError('Monotonic tool phase required')
+            if calls>=policy['work_tool_limit'] and choice!='none':raise ValueError('Tool exploration limit exceeded')
+            if choice=='none':finalizing=True
+            expected['tool_choice']=choice
+        if item!=expected:raise ValueError('Provider tool/model transcript changed')
+        new=sum(b.get('type')=='toolCall' for b in m.get('content',[]))
+        if finalizing and new:raise ValueError('Tool call returned during final-writing phase')
+        calls+=new
+        if policy and calls>policy['work_tool_limit']:raise ValueError('Requested tool batch exceeds bounded work phase')
+
+
 def verify_job(job_path):
     job=Path(job_path).resolve();q=old.read(job/'request.json');verify_request(job,q)
     launch=old.read(job/'launch.json');execution=old.read(job/'execution.json');output=old.read(job/'output.json')
@@ -109,7 +146,9 @@ def verify_job(job_path):
     if start.get('launch_id')!=launch['id']:raise ValueError('Launch identity changed')
     for value in (start,finish):
         if value.get('session_id')!=r['id'] or value.get('model')!=q['model'] or value.get('effort')!=q['effort'] or value.get('oauth') is not True:raise ValueError('Runtime identity changed')
-    if len(wire)!=r['model_turns'] or any(x!={'model':q['model'],'effort':q['effort'],'tools':['ipython']} for x in wire):raise ValueError('Provider tool/model transcript changed')
+    if len(wire)!=r['model_turns']:raise ValueError('Provider turn transcript changed')
+    events=[json.loads(x) for x in (job/r['path']).read_text().splitlines() if x.strip()]
+    verify_wire(q,wire,[x['message'] for x in events if x.get('type')=='message'])
     context.audit(q['context_index'],job/'retrieval.jsonl')
     if q.get('resume'):
         ancestor=Path(q['resume']['failed_job'])

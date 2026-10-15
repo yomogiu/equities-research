@@ -46,7 +46,7 @@ def closed(job):
     heads=[x for x in events if x.get('type')=='session']
     if len(heads)!=1 or heads[0].get('parentSession') or Path(heads[0].get('cwd','')).resolve()!=job.resolve():raise ValueError('Fresh failed session required')
     if any(x.get('type') in ('compaction','branch_summary') for x in events):raise ValueError('Unexpected failed context mutation')
-    if any(x!={'model':q['model'],'effort':q['effort'],'tools':['ipython']} for x in base.read(job/'wire.json')):raise ValueError('Failed wire identity changed')
+    runner.verify_wire(q,base.read(job/'wire.json'),[x['message'] for x in events if x.get('type')=='message'])
     messages=[x['message'] for x in events if x.get('type')=='message']
     if base._text(messages[0])!=(job/'prompt.md').read_text() or sum(m.get('role')=='user' for m in messages)!=1:raise ValueError('Failed instruction binding changed')
     if (job/'resume.json').exists():
@@ -69,7 +69,7 @@ def select(job):
         chosen=checkpoints[-1];v=validate(chosen)
         if previous:
             old=validate(previous['checkpoint'])
-            if v['draft']==old['draft'] and v['pending']==old['pending']:return current,spent,None
+            if v['draft']==old['draft'] and v['pending']==old['pending'] and v['retrieval_sha256']==old['retrieval_sha256']:return current,spent,None
         record={'checkpoint':str(chosen),'sha256':base.sha(chosen),'failed_job':str(current),
                 'failed_usage':closed(current),'number':number+1}
         following=original.with_name(original.name+'--resume-'+str(number+1))
@@ -97,3 +97,26 @@ def entries(job, count=None):
         previous=entries(Path(r['failed_job']),count=v['retrieval_count'])
     current=context.audit(q['context_index'],job/'retrieval.jsonl',count=count)
     return previous+context.delivered_entries(job,current)
+
+
+def capture(job):
+    """Host-owned checkpoint of delivered progress; never invent author prose."""
+    job=Path(job).resolve();q=base.read(job/'request.json')
+    if not (job/'retrieval.jsonl').exists():
+        return {'status':'no_evidence_progress'}
+    observed=entries(job)
+    if not observed:return {'status':'no_evidence_progress'}
+    paths=sorted((job/'checkpoints').glob('*.json'))
+    last=validate(paths[-1]) if paths else None
+    if last and last['draft'].get('kind')!='source_progress_only':
+        draft=last['draft'];pending=last['pending']
+    else:
+        scopes=context.complete_ranges(observed,'scope','id')
+        scopes.update(x for e in observed if e['method']=='filing_batch' for x in e['ids'])
+        draft={'kind':'source_progress_only','role':q['bindings'].get('role'),
+               'notice':'Delivered source progress only; no authored prose or analytical conclusions are saved.',
+               'source_ids':sorted(scopes)[:64],'source_count':len(scopes),
+               'event_count':len(observed),'event_sha256':base.digest(observed)}
+        pending=['Complete the assigned role using original evidence. Inspect material source text needed for interpretation; the saved progress is not an authored draft or approval.']
+    saved=save(job,draft,pending)
+    return {'status':'saved',**saved}

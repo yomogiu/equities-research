@@ -46,6 +46,17 @@ class CheckpointTests(PassageFixture,unittest.TestCase):
         q['bindings']['candidate']='different';put(next_job/'request.json',q)
         with self.assertRaises(ValueError):cp.restore(next_job)
 
+    def test_host_capture_saves_progress_without_model_checkpoint_and_preserves_draft(self):
+        index=self.assemble();job=(self.root/'jobs/financial').resolve()
+        self.fake_run(job,'Fictional role','gpt-6.1-sol','low',{'role':'financial'},index,max_tokens=200000,max_tool_calls=48)
+        for path in (job/'checkpoints').glob('*.json'):path.unlink()
+        captured=cp.capture(job);value=cp.validate(captured['checkpoint'])
+        self.assertEqual(value['draft']['kind'],'source_progress_only')
+        self.assertNotIn('approval',value['draft'])
+        ctx=c.Evidence(index,job/'retrieval.jsonl');manual=ctx.checkpoint({'finding':'Fictional unreviewed draft'},['Check cash'])
+        captured=cp.capture(job);self.assertEqual(captured['checkpoint'],manual['checkpoint'])
+        self.assertEqual(cp.validate(captured['checkpoint'])['draft'],{'finding':'Fictional unreviewed draft'})
+
     def test_altered_checkpoint_or_read_log_cannot_resume(self):
         job,index,saved=self.failed();path=Path(saved['checkpoint']);v=base.read(path);v['retrieval_count']+=1;put(path,v)
         with self.assertRaises(ValueError):cp.select(job)
@@ -58,10 +69,16 @@ class CheckpointTests(PassageFixture,unittest.TestCase):
         events=[e for e in events if e.get('message',{}).get('role')!='toolResult'];path.write_text(''.join(json.dumps(x)+'\n' for x in events))
         with self.assertRaises(ValueError):cp.select(job)
 
-    def test_no_checkpoint_does_not_restart_exploration(self):
+    def test_host_checkpoint_recovers_without_model_saved_draft(self):
         job,index,saved=self.failed();Path(saved['checkpoint']).unlink()
         selected,spent,resume=cp.select(job)
-        self.assertEqual(selected,job);self.assertEqual(spent,20);self.assertIsNone(resume)
+        self.assertNotEqual(selected,job);self.assertEqual(spent,20);self.assertIsNotNone(resume)
+        self.assertEqual(cp.validate(resume['checkpoint'])['draft']['kind'],'source_progress_only')
+
+    def test_missing_host_checkpoint_receipt_fails_closed(self):
+        job,index,saved=self.failed()
+        for path in (job/'checkpoints').glob('*.json'):path.unlink()
+        with self.assertRaises((ValueError,FileNotFoundError)):cp.select(job)
 
     def test_oversized_read_gets_no_coverage_until_every_page_delivered(self):
         index=self.assemble();job=self.root/'spill';job.mkdir();ctx=c.Evidence(index,job/'retrieval.jsonl');ctx.scope('D001')

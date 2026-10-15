@@ -153,3 +153,24 @@ Q&A grounding. A new immutable continuation carries the original token ceiling,
 all spent tokens and the retrieval session identity. Authors and reviewers remain
 fresh. Original requests, sessions and outputs are never edited; unknown or mixed
 schemas are rejected rather than repaired by guesswork.
+
+
+### Host-enforced progress and final-writing phase
+
+New role requests bind an execution policy: three tool calls for financial,
+retrieval, analysis and correction roles; two for signal authors; four for reviewers.
+Batch required evidence within that plan. The host uses Responses `tool_choice=none`
+after the allowance, or earlier when another maximum-output reserve no longer fits,
+so the next turn writes the result instead of adding another exploration round.
+An unexpected tool call in final-writing mode is blocked and cannot pass replay.
+This follows the final-request pattern in the official OpenAI agent optimization
+example: https://developers.openai.com/cookbook/examples/agent_optimization/optimizing_agents_for_cost_and_quality
+
+After every tool result, the host independently checkpoints the delivered evidence
+prefix and records its bound receipt. It preserves authored partial work if supplied;
+otherwise it labels the checkpoint source-progress-only, with no invented prose or
+acceptance authority. Resume retains all spent tokens, dependencies and the two-resume
+limit. Missing, altered or stale checkpoint receipts fail closed. Source-progress
+recovery still requires the new model to inspect material text for interpretation.
+The lifecycle ceiling and conservative output reserve remain unchanged. These
+controls cannot retroactively reconstruct an unsaved draft from a historical run.

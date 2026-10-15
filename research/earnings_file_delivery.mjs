@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 export const LIMIT=null;
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
-export function installDelivery(agent,job) {
+export function installDelivery(agent,job,onDelivered) {
   const previous=agent.afterToolCall;
   const lines=()=>fs.existsSync(path.join(job,'retrieval.jsonl'))?fs.readFileSync(path.join(job,'retrieval.jsonl'),'utf8').split('\n').filter(Boolean).length:0;
   let start=lines();
@@ -26,6 +26,7 @@ export function installDelivery(agent,job) {
     const record={id,tool_call_id:event.toolCall.id,sha256:hash(text),original_bytes:Buffer.byteLength(text),unsupported,
       complete,retrieval_start:start,retrieval_end:end,delivered_sha256:hash(JSON.stringify(delivered)),delivered_bytes:Buffer.byteLength(JSON.stringify(delivered)),limit:LIMIT};
     fs.appendFileSync(path.join(job,'delivery.jsonl'),JSON.stringify(record)+'\n',{mode:0o600});start=end;
+    if(onDelivered) await onDelivered(record);
     return delivered;
   };
 }
