@@ -56,5 +56,24 @@ def verify(path):
         if list(Path(v['source_request']).parent.glob('**/jobs/**/request.json')):raise ValueError('Sidecar hold must precede model execution')
         tokens=0
     else:raise ValueError('Unknown recovery kind')
+    seen=set()
+    for debit in v.get('supplemental_usage',[]):
+        if debit['path'] in seen or base.sha(debit['path'])!=debit['sha256']:raise ValueError('Distinct immutable usage debit required')
+        seen.add(debit['path']);tokens+=usage_debit(debit['path'],v['source_request'])
     if v['inherited_tokens']!=tokens or not 0<=tokens<1200000:raise ValueError('Inherited usage differs')
     return v
+
+
+def usage_debit(path, source_request):
+    """Charge a separately authorized pilot to the same original company cap."""
+    from . import earnings_file_checkpoint as checkpoint, earnings_file_runner as runner
+    path=Path(path).resolve();d=base.read(path);source_request=Path(source_request).resolve()
+    if d.get('version')!='file-role-usage-debit-v1' or d.get('source_request_sha256')!=base.sha(source_request):raise ValueError('Usage debit must bind the exact original request')
+    result_path=Path(d['result']);result=base.read(result_path);manifest=base.read(result_path.parent/'manifest.json')
+    if base.sha(result_path)!=d['result_sha256'] or result.get('status')!='passed' or manifest.get('source_request_sha256')!=base.sha(source_request) or Path(manifest['source_run']).resolve()!=source_request.parent:raise ValueError('Pilot source/result binding changed')
+    failed=Path(d['failed_job']);completed=Path(d['completed_job'])
+    a=base.read(failed/'request.json');b=base.read(completed/'request.json')
+    if a['bindings']!=b['bindings'] or a['bindings'].get('pilot_manifest_sha256')!=base.sha(result_path.parent/'manifest.json'):raise ValueError('Pilot job binding changed')
+    measured=checkpoint.closed(failed)+runner.verify_job(completed)['receipt']['session']['usage']['totalTokens']
+    if type(d.get('tokens')) is not int or d['tokens']<=0 or d['tokens']!=measured or result.get('pilot_tokens')!=measured:raise ValueError('Debit must equal measured usage of every pilot attempt')
+    return measured

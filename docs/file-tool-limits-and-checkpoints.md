@@ -34,3 +34,8 @@ retrofitted with checkpoints. A checkpoint does not by itself wake a caller;
 the existing bounded coordinator must invoke the next advance. Use the optional
 `yield_checkpoint=True` runner setting for a controlled recovery pilot, where the
 next provider turn stops after a checkpoint has been written.
+
+Separately authorized pilot calls are recorded as source-bound usage debits.
+Recovery verifies both the interrupted and completed pilot receipts, adds their
+measured usage to inherited spend, and freezes the debit and supporting private
+artifacts. Testing never creates a fresh company allowance.
