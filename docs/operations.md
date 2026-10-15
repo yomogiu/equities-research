@@ -143,3 +143,13 @@ context. Historical offline audit contexts remain replayable. Full lifecycles us
 their explicit lifecycle budget; small retrieval-trial ceilings are not inherited
 as full-run ceilings. The conservative pre-turn input/output reserve remains in
 force; cached input and prior attempts remain counted.
+
+
+A completed retrieval stopped by the exact `{finding, document_id}` transport
+shape can continue through an explicit preparation manifest. The caller replays
+the original frozen verifier and coverage, performs only the lossless conversion
+to `{text, citations}`, and validates the complete canonical retrieval including
+Q&A grounding. A new immutable continuation carries the original token ceiling,
+all spent tokens and the retrieval session identity. Authors and reviewers remain
+fresh. Original requests, sessions and outputs are never edited; unknown or mixed
+schemas are rejected rather than repaired by guesswork.
