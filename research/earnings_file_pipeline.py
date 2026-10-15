@@ -100,7 +100,7 @@ def instruction(role,index,job,p):
     value=base.read(index);inventory={'source_count':len(value['source_ids']),'passage_count':value['passage_count'],
         'qa_exchange_count':len(value['exchange_ids']),'context_files':sorted(value['files'])}
     bootstrap=('```python\nimport sys\nsys.path.insert(0, '+repr(str(Path(__file__).resolve().parent.parent))+')\n'
-        'from research.earnings_file_context import Evidence\nctx = Evidence('+repr(str(index))+', '+repr(str(job/'retrieval.jsonl'))+')\n'+
+        'from research.earnings_file_context import Evidence\nctx = Evidence.for_job()\n'+
         ('print(ctx.call_batch())\n```' if role in ('retrieval','analysis','review') else 'print(ctx.inventory())\n```'))
     return ((PROMPTS/'common.md').read_text()+'\n'+(PROMPTS/(role+'.md')).read_text()+\
         '\n## Writing standard\n\n'+Path(p['writing_standard']).read_text()+\
@@ -109,6 +109,8 @@ def instruction(role,index,job,p):
         '`ctx.financial_row(fact_id, start=0)`, `ctx.artifact(name, start=0)`, or `ctx.file(name, start=0)`. Print the relevant results. '
         'Follow `next_start` for complete inspection; search previews do not satisfy coverage. '
         'Read metadata.json and the appropriate handoffs, projecting only necessary fields. '
+        'Use Evidence.for_job() exactly; the runner binds the context and retrieval log automatically. '
+        'Do not inspect catalogue keys or API attributes; the required APIs and schemas are supplied here. '
         'Tool responses have no enforced byte-size cap. Complete responses are retained in private delivery files; '
         'optional `ctx.output(delivery_id, start=0, limit=768)` provides paged rereading. Undelivered pages do not count as inspection. '
         'Batch relevant source pages in a single IPython call with limit=6000 where useful; avoid one model turn for each tiny page. '

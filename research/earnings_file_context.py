@@ -54,10 +54,24 @@ class Evidence:
     This API is read-only for evidence. IPython itself is a general Python tool,
     not an OS sandbox. Every API return is recorded in a per-job retrieval log.
     """
-    def __init__(self, index, log):
+    @classmethod
+    def for_job(cls):
+        """Bind paths from the runner-owned request, never model-copied strings."""
+        job=Path.cwd().resolve();q=base.read(job/'request.json')
+        require(q.get('version')=='file-prime-role-v1' and q.get('job_path')==str(job),'Active bound role request required')
+        return cls(q['context_index'],job/'retrieval.jsonl')
+
+    def __init__(self, index, log, *, _replay=False):
         self.root=Path(index).resolve().parent;self.index=base.read(index)
         require(self.index['version']==VERSION,'Unknown context version')
-        self.log=Path(log).resolve();self.verify()
+        self.log=Path(log).resolve()
+        active=Path.cwd().resolve();request=active/'request.json'
+        if not _replay and request.is_file():
+            q=base.read(request)
+            if q.get('version')=='file-prime-role-v1':
+                require(q.get('job_path')==str(active) and Path(q['context_index']).resolve()==Path(index).resolve(),'Evidence differs from active role request')
+                self.log=active/'retrieval.jsonl'
+        self.verify()
         self.records=base.read(self.root/'sources.json');self.catalog=base.read(self.root/'passages.json')
         self.artifacts=base.read(self.root/'artifacts.json')
 
@@ -314,7 +328,7 @@ def audit(index, log, *, count=None):
     """Replay returned API pages and hashes; a search preview is not full inspection."""
     import tempfile
     with tempfile.TemporaryDirectory() as temporary:
-        reader=Evidence(index,Path(temporary)/'replay.jsonl')
+        reader=Evidence(index,Path(temporary)/'replay.jsonl',_replay=True)
         reader.delivery_root=Path(log).parent
         entries=[json.loads(x) for x in Path(log).read_text().splitlines() if x.strip()] if Path(log).exists() else []
         if count is not None:entries=entries[:count]

@@ -134,3 +134,12 @@ remains required for a completed retrieval. Oversized scopes are counted separat
 and remain available through paged access. Selection is not acceptance or exhaustive
 filing review. Only complete visible, replay-verified batches gain coverage credit.
 `ctx.search` retains its original exact literal semantics for historical replay.
+
+
+Live role bootstraps use `Evidence.for_job()`, deriving the context and canonical
+retrieval log from the runner-owned request in the kernel working directory.
+Direct construction in an active role also binds that log and rejects a different
+context. Historical offline audit contexts remain replayable. Full lifecycles use
+their explicit lifecycle budget; small retrieval-trial ceilings are not inherited
+as full-run ceilings. The conservative pre-turn input/output reserve remains in
+force; cached input and prior attempts remain counted.

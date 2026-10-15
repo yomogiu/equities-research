@@ -131,6 +131,20 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         packet,ids=reader._filing_batch('cash revenue',4)
         self.assertEqual(ids,[]);self.assertIn('source-access gap',packet)
 
+    def test_active_job_binds_log_and_context_without_model_paths(self):
+        index=self.assemble();job=(self.root/'active-job').resolve();job.mkdir()
+        base.save(job/'request.json',{'version':r.VERSION,'job_path':str(job),'context_index':str(index)})
+        with patch.object(Path,'cwd',return_value=job):
+            reader=c.Evidence.for_job();reader.filing_batch('revenue cash')
+            other=c.Evidence(index,self.root/'wrong'/'retrieval.jsonl')
+            self.assertEqual(other.log,job/'retrieval.jsonl')
+            self.assertTrue((job/'retrieval.jsonl').exists());self.assertFalse((self.root/'wrong').exists())
+            before=(job/'retrieval.jsonl').read_bytes();c.audit(index,job/'retrieval.jsonl')
+            self.assertEqual((job/'retrieval.jsonl').read_bytes(),before)
+            with self.assertRaises(FileNotFoundError):c.Evidence(self.root/'nonexistent/index.json',job/'retrieval.jsonl')
+        with patch.object(Path,'cwd',return_value=self.root):
+            with self.assertRaises(FileNotFoundError):c.Evidence.for_job()
+
     def test_original_source_and_forged_retrieval_receipt_rejected(self):
         index=self.assemble();log=self.root/'read.jsonl';reader=c.Evidence(index,log);reader.scope('D001')
         events=[json.loads(x) for x in log.read_text().splitlines()];events[0]['result_sha256']='forged';log.write_text(json.dumps(events[0])+'\n')
