@@ -80,6 +80,57 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         self.assertEqual(len(deliver(packet)),1)
         self.assertEqual(deliver(packet[:100]),[])
 
+    def test_filing_batch_replays_and_requires_visible_complete_delivery(self):
+        index=self.assemble();job=self.root/'filing-batch-job';job.mkdir()
+        base.save(job/'request.json',{'context_index':str(index)})
+        reader=c.Evidence(index,job/'retrieval.jsonl');packet=reader.filing_batch('Fictitious revenue growth')
+        entries=c.audit(index,job/'retrieval.jsonl');ids=entries[0]['ids']
+        self.assertTrue(ids);self.assertTrue(all(i.startswith('D') for i in ids))
+        self.assertLessEqual(len(packet),60000)
+        for identifier in ids:
+            self.assertIn('\n'.join(s['text'] for s in reader.records[identifier]['spans']),packet)
+        identifier='b'*24;(job/'tool-output').mkdir();path=job/'tool-output'/(identifier+'.txt')
+        def deliver(text):
+            path.write_bytes(text.encode())
+            record={'id':identifier,'retrieval_start':0,'retrieval_end':1,'limit':None,'delivered_bytes':len(text.encode()),
+                    'unsupported':False,'sha256':base.sha(path),'original_bytes':len(text.encode()),'complete':True}
+            (job/'delivery.jsonl').write_text(json.dumps(record)+'\n')
+            return c.delivered_entries(job,c.audit(index,job/'retrieval.jsonl'))
+        self.assertEqual(deliver('Loaded; not printed'),[])
+        self.assertEqual(deliver(packet[:100]),[])
+        self.assertEqual(len(deliver(packet)),1)
+        proof=p.coverage('financial',index,job,{'selected_document_ids':ids},self.catalog,{})
+        self.assertEqual(set(proof['source_ids']),set(ids))
+        deliver(packet[:100])
+        with self.assertRaises(ValueError):p.coverage('financial',index,job,{'selected_document_ids':ids},self.catalog,{})
+        with self.assertRaises(ValueError):reader.filing_batch('revenue',5)
+
+    def test_filing_batch_ranks_terms_and_marks_unknown_query_fallback(self):
+        index=self.assemble();reader=c.Evidence(index,self.root/'unused.jsonl')
+        def record(text,start=0,document='fictional-filing'):
+            return {'spans':[{'text':text,'path':'/fictional/'+document,'sha256':'fake','document_id':document,'start':start,'end':start+len(text)}]}
+        reader.records={'D001':record('Other material.'),'D002':record('Revenue increased; cash improved.'),
+                        'D003':record('Debt commitments.',document='fictional-second')}
+        packet,ids=reader._filing_batch('What happened to revenue and cash this quarter?',1)
+        self.assertEqual(ids,['D002']);self.assertFalse(json.loads(packet.splitlines()[1])['fallback_used'])
+        packet,ids=reader._filing_batch('unmatchedxyz unmatchedabc',2)
+        self.assertEqual(ids,['D002','D003']);self.assertTrue(json.loads(packet.splitlines()[1])['fallback_used'])
+        self.assertIn('verify_relevance',packet)
+        self.assertNotIn('turn-',ids)
+
+    def test_filing_batch_omits_duplicate_overlap_and_transcript_sources(self):
+        index=self.assemble();reader=c.Evidence(index,self.root/'unused.jsonl')
+        def record(text,start=0):
+            return {'spans':[{'text':text,'path':'/fictional/filing','sha256':'fake','document_id':'fictional-filing','start':start,'end':start+len(text)}]}
+        reader.records={'D001':record('Cash revenue grew.'),'D002':record('Cash revenue grew.',100),
+                        'D003':record('Revenue and debt.',5),'D004':record('Debt outlook.',200),
+                        'turn-fake':record('Cash revenue debt commitments.')}
+        _,ids=reader._filing_batch('cash revenue debt',4)
+        self.assertEqual(ids,['D001','D004'])
+        reader.records={}
+        packet,ids=reader._filing_batch('cash revenue',4)
+        self.assertEqual(ids,[]);self.assertIn('source-access gap',packet)
+
     def test_original_source_and_forged_retrieval_receipt_rejected(self):
         index=self.assemble();log=self.root/'read.jsonl';reader=c.Evidence(index,log);reader.scope('D001')
         events=[json.loads(x) for x in log.read_text().splitlines()];events[0]['result_sha256']='forged';log.write_text(json.dumps(events[0])+'\n')

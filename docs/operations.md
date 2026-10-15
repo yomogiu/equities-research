@@ -120,3 +120,17 @@ batches therefore fit within 60,000 characters including compact locator tables,
 and expose next_start for any remaining source text. Do not concatenate batches
 or other prints beyond that total in one tool result. A delivery-hook setting
 does not remove the runtime truncation. Missing exact batch text earns no credit.
+
+
+### Filing retrieval without exact-query dead ends
+
+Use `print(ctx.filing_batch(query, limit=4))` in a separate tool response from the
+call batch. It ranks individual query tokens over the complete D-excerpt inventory,
+prefers source-document diversity, omits duplicate and overlapping text, and prints
+whole excerpts with their original provenance and exact D IDs. Empty matches trigger
+an explicitly marked representative fallback, not a claim that evidence is absent.
+If no eligible excerpts exist, record a source-access gap; nonempty document selection
+remains required for a completed retrieval. Oversized scopes are counted separately
+and remain available through paged access. Selection is not acceptance or exhaustive
+filing review. Only complete visible, replay-verified batches gain coverage credit.
+`ctx.search` retains its original exact literal semantics for historical replay.

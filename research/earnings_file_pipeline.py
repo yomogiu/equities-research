@@ -115,7 +115,10 @@ def instruction(role,index,job,p):
         'Use print(ctx.call_batch()) once for the complete call and compact citation/grounding locators. '
         'Follow its next_start whenever present; never print more than 60000 combined characters in one IPython response. Exact equivalent Q&A, section and passage spans share coverage; do not reread them separately. '
         'Do not print the full transcript-index or qa_grounding artifact: their source paragraphs overlap this batch. '
-        'Batch additional targeted filing searches and source reads in one IPython call. '
+        'For filing retrieval use print(ctx.filing_batch("guidance EBITDA cash debt capital expenditure", limit=4)) in a SEPARATE tool call. '
+        'This ranks individual query terms across D excerpts, deduplicates overlapping text and prints complete selected scopes with valid D IDs. '
+        'An empty term match automatically produces a clearly marked representative fallback; verify relevance and keep material gaps explicit. '
+        'ctx.search is exact literal substring search, not natural-language search. Never use a long question as its query or infer absence from no matches. '
         'For financial.json and transcript-index.json, use ctx.load_structured(name); originals stay in ctx.financial_data or ctx.transcript_index in kernel memory. '
         'Select needed fields there and use financial_metrics, financial_facts, scope and financial_row for cited evidence. '
         'Do not paginate a complete financial extraction or transcript index into model context. '
@@ -140,6 +143,7 @@ def refs(value):
 
 def coverage(role,index,job,content,catalog,artifacts):
     entries=checkpoint.entries(job);scopes=context.complete_ranges(entries,'scope','id')
+    scopes.update(x for e in entries if e['method']=='filing_batch' for x in e['ids'])
     files=context.complete_ranges(entries,'file','name');pids={x for e in entries if e['method']=='passage' for x in e['ids']}
     call_scopes,call_files=context.inspected_call(index,entries);scopes.update(call_scopes);files.update(call_files)
     parent={p['passage_id']:p['scope_id'] for p in catalog['passages']}
