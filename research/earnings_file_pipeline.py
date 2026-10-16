@@ -209,6 +209,7 @@ def coverage(role,index,job,content,catalog,artifacts):
 
 
 def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessions,tokens):
+    metadata={**metadata,'case_scope_notes':base.read(p['case_path']).get('scope_notes',[])}
     index=context.assemble(p['evidence_manifest'],catalog,root/'contexts'/name,artifacts=artifacts,markdown=report,metadata=metadata)
     original=root/'jobs'/name
     try:job,spent,resume=checkpoint.select(original)

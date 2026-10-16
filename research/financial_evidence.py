@@ -311,7 +311,7 @@ def propose_fact(text, source, *, concept, value, context, unit, quote, start):
     return record
 
 
-def validate_artifact(artifact, trusted_sources, *, html_table_inputs=None):
+def validate_artifact(artifact, trusted_sources, *, html_table_inputs=None, reviewed_proposal_inputs=None):
     """Require caller-owned source bindings, stable record hashes and finite values."""
     if artifact.get('schema_version') != SCHEMA_VERSION:
         raise ValueError('Unsupported financial artifact version')
@@ -326,6 +326,10 @@ def validate_artifact(artifact, trusted_sources, *, html_table_inputs=None):
         if (source.get('issuer_id') != trusted.get('issuer_id') or html_table_inputs is None
                 or financial_html_tables.extract(*html_table_inputs) != artifact):
             raise ValueError('Reviewed HTML artifact differs from independently authorized source replay')
+    if 'text_proposal_review' in artifact or any(o.get('method') == 'reviewed_text_proposal' for o in artifact['observations']):
+        from . import financial_reviewed_proposals
+        if reviewed_proposal_inputs is None or financial_reviewed_proposals.extract(*reviewed_proposal_inputs) != artifact:
+            raise ValueError('Reviewed text artifact differs from authenticated source replay')
     seen = set()
     for observation in artifact['observations']:
         obs_id = observation.get('observation_id')
@@ -347,8 +351,9 @@ def validate_artifact(artifact, trusted_sources, *, html_table_inputs=None):
         support = observation.get('support', {})
         if not isinstance(support.get('start'), int) or not isinstance(support.get('end'), int) or support['start'] < 0 or support['end'] <= support['start']:
             raise ValueError('Invalid evidence offsets')
-        if observation.get('method') == 'manual_proposal':
-            if observation['status'] != 'proposed' or not support.get('quote') or support.get('text_sha256') != source.get('text_sha256'):
+        if observation.get('method') in ('manual_proposal', 'reviewed_text_proposal'):
+            expected = 'proposed' if observation['method'] == 'manual_proposal' else 'extracted'
+            if observation['status'] != expected or not support.get('quote') or support.get('text_sha256') != source.get('text_sha256'):
                 raise ValueError('Manual observations must retain proposed status and text evidence')
             if support['end'] - support['start'] != len(support['quote']):
                 raise ValueError('Manual quote and offsets disagree')

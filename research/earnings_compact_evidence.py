@@ -113,7 +113,12 @@ def prepare(case_path, output_dir):
     if 'html_table_review' in artifact or case.get('financial_adapter'):
         from . import financial_html_tables
         html_inputs = financial_html_tables.case_inputs(case, Path(raw_source['path']).read_bytes(), source)
-    financial.validate_artifact(artifact, {source['document_id']: source}, html_table_inputs=html_inputs)
+    proposal_inputs = None
+    if 'text_proposal_review' in artifact or case.get('reviewed_proposal_adapter'):
+        from . import financial_reviewed_proposals
+        proposal_inputs = financial_reviewed_proposals.case_inputs(case, Path(raw_source['path']).read_bytes(), source)
+    financial.validate_artifact(artifact, {source['document_id']: source}, html_table_inputs=html_inputs,
+                               reviewed_proposal_inputs=proposal_inputs)
     index = base.read(case['transcript_index_path'])
     transcript_text = _text(case['transcript_path'])
     _verify_index(index, transcript_text)
@@ -142,7 +147,7 @@ def prepare(case_path, output_dir):
         snippet = _span(raw, support['start'], support['end'])
         if obs['method'] in ('inline_xbrl', 'reviewed_html_table') and _sha_text(snippet) != support['raw_span_sha256']:
             raise ValueError('Financial support source span hash mismatch')
-        if obs['method'] == 'manual_proposal' and snippet != support['quote']:
+        if obs['method'] in ('manual_proposal', 'reviewed_text_proposal') and snippet != support['quote']:
             raise ValueError('Financial proposed quote differs from source')
         row = support.get('table_row')
         if row and _sha_text(_span(raw, row['start'], row['end'])) != row['raw_span_sha256']:
