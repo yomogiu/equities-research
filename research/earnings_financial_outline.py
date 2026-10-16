@@ -1,5 +1,6 @@
 """Mechanical starting rows from original consolidated observations; never acceptance."""
 from datetime import date
+from .financial_reviewed_proposals import usable
 
 def build(data):
     contexts=data['contexts'];rows=[]
@@ -7,7 +8,7 @@ def build(data):
         candidates=[]
         for o in data['observations']:
             ctx=contexts.get(o.get('context_id'),{})
-            if o.get('canonical_metric')!=metric or o.get('nil') or o.get('status')!='extracted' or ctx.get('dimensions'):continue
+            if o.get('canonical_metric')!=metric or o.get('nil') or not usable(o,data) or ctx.get('dimensions'):continue
             end=ctx.get('end_date') or ctx.get('instant');start=ctx.get('start_date')
             if not end:continue
             if metric in ('revenue','operating_income','net_income','diluted_eps') and (not start or not 50<=(date.fromisoformat(end)-date.fromisoformat(start)).days<=110):continue

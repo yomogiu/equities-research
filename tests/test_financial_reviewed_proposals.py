@@ -23,14 +23,15 @@ class ReviewedProposalTests(unittest.TestCase):
         with ExitStack() as stack:
             stack.enter_context(patch.object(r,'verify_job',return_value=result));stack.enter_context(patch.object(b,'read',return_value={'context_index':str(self.job/'index.json')}))
             stack.enter_context(patch.object(c,'Evidence',return_value=reader));stack.enter_context(patch.object(c,'audit',return_value=self.entries));stack.enter_context(patch.object(c,'delivered_entries',return_value=self.entries))
-            return a.extract(self.raw,self.text,self.source,self.profile,self.job,self.auth)
+            return a.approve(self.profile,self.source,self.job,self.auth)
     def test_replay_preserves_proposals_and_other_review_findings(self):
         old=copy.deepcopy(self.profile);out=self.run_adapter();self.assertEqual(old,self.profile)
-        self.assertEqual('extracted',out['observations'][0]['status']);self.assertEqual('revise',self.verdict['verdict'])
-        with self.assertRaisesRegex(ValueError,'authenticated source replay'):f.validate_artifact(out,{'fictional':self.source})
+        self.assertEqual('proposed',self.profile['observations'][0]['status']);self.assertEqual('revise',self.verdict['verdict'])
+        self.assertTrue(a.usable(self.profile['observations'][0],{'proposal_approval':out}))
+        self.assertFalse(a.usable(self.profile['observations'][0],{}))
     def test_changed_original_bytes_rejected(self):
-        self.text+=b' changed'
-        with self.assertRaisesRegex(ValueError,'bytes changed'):self.run_adapter()
+        self.auth['source']={**self.source,'raw_sha256':'0'*64}
+        with self.assertRaisesRegex(ValueError,'authorization required'):self.run_adapter()
     def test_profile_value_cannot_be_changed_after_review(self):
         self.profile['observations'][0]['value']='99'
         with self.assertRaisesRegex(ValueError,'profile changed'):self.run_adapter()

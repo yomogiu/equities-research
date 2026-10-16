@@ -98,7 +98,8 @@ def validate_output(role, out, bundle):
                 raise ValueError('At most four facts per financial row')
             for i in row['fact_ids']:
                 obs = next(o for o in bundle['financial']['observations'] if o['id']==i)
-                if obs['status']!='extracted' or obs['nil'] or obs['value'] is None:
+                from .financial_reviewed_proposals import usable
+                if not usable(obs,bundle['financial']) or obs['nil'] or obs['value'] is None:
                     raise ValueError('Unresolved observation cannot populate financial table')
         check_items(out.get('context'),allowed,'financial context',8)
         if not isinstance(out.get('gaps'),list):
