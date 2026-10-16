@@ -536,7 +536,8 @@ def delivered_entries(job, entries):
 
 def inspected_call(index, entries):
     """Full visible call batches cover only byte/offset-equivalent call scopes."""
-    if 'transcript.md' not in complete_ranges(entries,'call_batch','name'):return set(),set()
+    complete=complete_ranges(entries,'call_batch','name')|complete_ranges(entries,'file','name')
+    if 'transcript.md' not in complete:return set(),set()
     reader=Evidence(index,Path(index).parent/'unused-audit.jsonl')
     _,scopes=reader._call_scopes()
     return set(scopes),{'transcript.md'}

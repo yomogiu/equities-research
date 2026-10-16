@@ -29,6 +29,16 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         for bad in [{**plan,'work_tool_limit':0},{**plan,'work_tool_limit':9},{**plan,'finalization_margin_tokens':-1},{**plan,'preflight_sha256':'unbound'}]:
             with self.assertRaisesRegex(ValueError,'preflighted execution plan'):r.request(job,'Fictional invalid review','gpt-6.1-sol','medium',{'role':'review'},index,225973,3,1200,execution_plan=bad)
 
+    def test_visible_raw_transcript_pages_cover_only_equivalent_scopes(self):
+        index=self.assemble();reader=c.Evidence(index,self.root/'read.jsonl',_replay=True)
+        total=len((index.parent/'transcript.md').read_text())
+        rows=[{'method':'file','name':'transcript.md','start':0,'end':total-1,'total':total}]
+        self.assertEqual(c.inspected_call(index,rows),(set(),set()))
+        rows.append({'method':'file','name':'transcript.md','start':total-1,'end':total,'total':total})
+        scopes,files=c.inspected_call(index,rows)
+        self.assertEqual(scopes,set(reader._call_scopes()[1]));self.assertEqual(files,{'transcript.md'})
+        self.assertFalse(any(k.startswith('F') for k in scopes))
+
     def test_financial_inventory_retains_every_concept_and_gap(self):
         data={'observations':[{'concept':'fake:Sales','status':'extracted','canonical_metric':'revenue'},
                               {'concept':'fake:Sales','status':'extracted','canonical_metric':'revenue'},
