@@ -197,7 +197,8 @@ def build(financial, bundle):
             if fid in seen: continue
             seen.add(fid); selected.append(fid)
             obs = observations[fid]
-            if obs['status'] != 'extracted' or obs['nil'] or obs['value'] is None:
+            from .financial_reviewed_proposals import usable
+            if not usable(obs, facts) or obs['nil'] or obs['value'] is None:
                 raise ValueError('Unqualified financial table observation')
             ctx, unit = facts['contexts'][obs['context_id']], facts['units'][obs['unit_id']]
             if strict:

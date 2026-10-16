@@ -30,18 +30,35 @@ def replay(previous):
     program="import sys,json,copy;from pathlib import Path\nsys.path.insert(0,sys.argv[1])\n"+inspect.getsource(normalize)+"""
 from research import earnings_file_pipeline as p,earnings_file_runner as r,earnings_mixed_runner as b
 root=Path(sys.argv[2]);protocol,bundle,catalog=p.load(root)
-assert protocol.get('preparation_path') and not protocol.get('analysis_preparation_path')
-assert sorted(x.name for x in (root/'jobs').iterdir())==['analysis']
+direct=not protocol.get('preparation_path') and sorted(x.name for x in (root/'jobs').iterdir())==['analysis','retrieval']
+assert not protocol.get('analysis_preparation_path') and (protocol.get('preparation_path') or direct)
+assert direct or sorted(x.name for x in (root/'jobs').iterdir())==['analysis']
 job=root/'jobs/analysis';q=b.read(job/'request.json');v=r.verify_job(job)
 assert q['bindings']['role']=='analysis' and q['bindings']['protocol_sha256']==b.sha(root/'protocol.json')
 assert [q['model'],q['effort']]==protocol['models']['analysis']
 assert b.read(q['context_index'])['manifest']==protocol['evidence_manifest']
-value=normalize(v['content'],catalog,bundle['transcript_index']['source']['document_id'],[s['id'] for s in bundle['transcript_index']['sections']])
+value=v['content'] if direct else normalize(v['content'],catalog,bundle['transcript_index']['source']['document_id'],[s['id'] for s in bundle['transcript_index']['sections']])
 p.coverage('analysis',Path(q['context_index']),job,value,catalog,{})
 p.pipe.validate('analysis',value,bundle,catalog)
-a=b.read(protocol['preparation_path']);sessions=[a['session_id'],v['receipt']['session']['id']]
+if direct:
+ from research import earnings_prepared_retrieval as prepared
+ # Authenticate both original instructions/dependencies using the frozen parent.
+ retrieval_job=root/'jobs/retrieval';rv=r.verify_job(retrieval_job);rq=b.read(retrieval_job/'request.json')
+ assert rq['bindings']['protocol_sha256']==b.sha(root/'protocol.json') and rq['bindings']['role']=='retrieval'
+ assert [rq['model'],rq['effort']]==protocol['models']['retrieval']
+ assert b.read(rq['context_index'])['manifest']==protocol['evidence_manifest']
+ p.coverage('retrieval',Path(rq['context_index']),retrieval_job,rv['content'],catalog,{})
+ p.pipe.validate('retrieval',rv['content'],bundle,catalog)
+ deps=b.read(Path(q['context_index']).parent/'artifacts.json')
+ assert deps['retrieval']==rv['content'] and b.digest(deps)==q['bindings']['artifact_sha256']
+ assert (job/'prompt.md').read_text()==p.instruction('analysis',Path(q['context_index']),job,protocol)
+ assert (retrieval_job/'prompt.md').read_text()==p.instruction('retrieval',Path(rq['context_index']),retrieval_job,protocol)
+ a={'session_id':rv['receipt']['session']['id']};prior_tokens=rv['receipt']['session']['usage']['totalTokens']
+else:
+ a=b.read(protocol['preparation_path']);prior_tokens=protocol['inherited_tokens']
+sessions=[a['session_id'],v['receipt']['session']['id']]
 assert len(set(sessions))==2
-print(json.dumps({'content':value,'tokens':protocol['inherited_tokens']+v['receipt']['session']['usage']['totalTokens'],'session_ids':sessions,'case_sha256':protocol['case_sha256'],'catalog_sha256':b.digest(catalog),'max_tokens':protocol['max_tokens']}))
+print(json.dumps({'content':value,'tokens':prior_tokens+v['receipt']['session']['usage']['totalTokens'],'session_ids':sessions,'case_sha256':protocol['case_sha256'],'catalog_sha256':b.digest(catalog),'max_tokens':protocol['max_tokens']}))
 """
     return json.loads(subprocess.check_output([sys.executable,'-B','-I','-c',program,str(code),str(previous)],text=True))
 

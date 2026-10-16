@@ -37,6 +37,15 @@ class ReviewedProposalTests(unittest.TestCase):
         result=build(data);self.assertEqual('10',result['rows'][0]['source_context'][0]['value'])
         self.assertEqual('0',result['rows'][0]['source_context'][0]['scale'])
         self.assertNotIn('scale',original)
+    def test_display_uses_existing_approval_and_rejects_unapproved_proposals(self):
+        from research.earnings_financial_display import build
+        original=self.profile['observations'][0]
+        row={**original,'id':'F001','context_id':'c','unit_id':'u'}
+        data={'observations':[row],'contexts':{'c':original['context']},'units':{'u':original['unit']},'proposal_approval':self.run_adapter()}
+        selected={'rows':[{'label':'Revenue','fact_ids':['F001']}]}
+        self.assertTrue(build(selected,{'financial':data}))
+        del data['proposal_approval']
+        with self.assertRaisesRegex(ValueError,'Unqualified'):build(selected,{'financial':data})
     def test_changed_original_bytes_rejected(self):
         self.auth['source']={**self.source,'raw_sha256':'0'*64}
         with self.assertRaisesRegex(ValueError,'authorization required'):self.run_adapter()

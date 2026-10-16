@@ -26,7 +26,7 @@ sys.path.insert(0,sys.argv[1])
 from research import earnings_file_pipeline as p,earnings_file_runner as r,earnings_mixed_runner as b
 root=Path(sys.argv[2]);protocol,bundle,catalog=p.load(root)
 assert protocol.get('inherited_tokens',0)==0 and not protocol.get('budget_authorization')
-assert sorted(x.name for x in (root/'jobs').iterdir())==['retrieval']
+assert sorted(x.name for x in (root/'jobs').iterdir()) in (['retrieval'],['analysis','retrieval'])
 job=root/'jobs/retrieval';q=b.read(job/'request.json');v=r.verify_job(job)
 assert q['bindings']['role']=='retrieval' and q['bindings']['protocol_sha256']==b.sha(root/'protocol.json')
 assert [q['model'],q['effort']]==protocol['models']['retrieval']
