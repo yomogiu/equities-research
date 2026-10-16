@@ -29,6 +29,14 @@ class ReviewedProposalTests(unittest.TestCase):
         self.assertEqual('proposed',self.profile['observations'][0]['status']);self.assertEqual('revise',self.verdict['verdict'])
         self.assertTrue(a.usable(self.profile['observations'][0],{'proposal_approval':out}))
         self.assertFalse(a.usable(self.profile['observations'][0],{}))
+    def test_approved_proposal_outline_keeps_normalized_value_without_xbrl_scale(self):
+        from research.earnings_financial_outline import build
+        approval=self.run_adapter();original=self.profile['observations'][0]
+        row={**original,'id':'F001','context_id':'c','unit_id':'u'}
+        data={'observations':[row],'contexts':{'c':original['context']},'proposal_approval':approval}
+        result=build(data);self.assertEqual('10',result['rows'][0]['source_context'][0]['value'])
+        self.assertEqual('0',result['rows'][0]['source_context'][0]['scale'])
+        self.assertNotIn('scale',original)
     def test_changed_original_bytes_rejected(self):
         self.auth['source']={**self.source,'raw_sha256':'0'*64}
         with self.assertRaisesRegex(ValueError,'authorization required'):self.run_adapter()

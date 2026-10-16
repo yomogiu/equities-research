@@ -20,7 +20,7 @@ def build(data):
         facts=[first]
         if comparable:facts.append(max(comparable,key=lambda x:x[2]))
         rows.append({'label':metric.replace('_',' ').capitalize(),'fact_ids':[x[0]['id'] for x in facts],
-                     'source_context':[{'id':x[0]['id'],'concept':x[0]['concept'],'start':x[3],'end_or_instant':x[2],'value':x[0]['value'],'scale':x[0]['scale'],'unit_id':x[0]['unit_id']} for x in facts]})
+                     'source_context':[{'id':x[0]['id'],'concept':x[0]['concept'],'start':x[3],'end_or_instant':x[2],'value':x[0]['value'],'scale':x[0].get('scale','0'),'unit_id':x[0]['unit_id']} for x in facts]})
     return {'status':'mechanical_unreviewed_outline','rows':rows,'must_verify_original_scopes':True,'gap_count':len(data.get('gaps',[])),
             'scope':'Consolidated original candidates only. Author must verify and may change selection; no acceptance or comparability conclusion is implied.'}
 
