@@ -16,6 +16,19 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
 
     def assemble(self):return c.assemble(self.root/'evidence/manifest.json',self.catalog,self.root/'context',artifacts={'report':self.report},markdown='# Fictional report\n',metadata={'batch_sha256':'fake'})
 
+    def test_scoped_batch_plan_keeps_checkpointing_and_full_model_reserve(self):
+        index=self.assemble();job=self.root/'scoped-job'
+        plan={'work_tool_limit':2,'finalization_margin_tokens':0,'preflight_sha256':'a'*64}
+        q=r.request(job,'Fictional scoped review','gpt-6.1-sol','medium',{'role':'review'},index,225973,3,1200,execution_plan=plan)
+        self.assertTrue(q['execution_policy']['automatic_checkpoints'])
+        self.assertEqual(q['execution_policy']['work_tool_limit'],2)
+        self.assertEqual(q['execution_policy']['finalization_margin_tokens'],0)
+        self.assertIn('maxTokens:128000',r.HELPER.read_text())
+        default=r.request(job,'Fictional default review','gpt-6.1-sol','medium',{'role':'review'},index,225973,48,1200)
+        self.assertEqual(default['execution_policy']['finalization_margin_tokens'],65536)
+        for bad in [{**plan,'work_tool_limit':0},{**plan,'work_tool_limit':9},{**plan,'finalization_margin_tokens':-1},{**plan,'preflight_sha256':'unbound'}]:
+            with self.assertRaisesRegex(ValueError,'preflighted execution plan'):r.request(job,'Fictional invalid review','gpt-6.1-sol','medium',{'role':'review'},index,225973,3,1200,execution_plan=bad)
+
     def test_financial_inventory_retains_every_concept_and_gap(self):
         data={'observations':[{'concept':'fake:Sales','status':'extracted','canonical_metric':'revenue'},
                               {'concept':'fake:Sales','status':'extracted','canonical_metric':'revenue'},

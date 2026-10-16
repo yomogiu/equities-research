@@ -90,12 +90,20 @@ def receipt(job,request):
         'effort':request['effort'],'provider':old.PROVIDER,'usage':usage,'model_turns':turns,'tool_calls':len(calls)}
 
 
-def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,*,yield_checkpoint=False,resume=None):
+def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,*,yield_checkpoint=False,resume=None,execution_plan=None):
     old._validate_selection(model,effort)
     if not prompt.strip() or type(max_tokens) is not int or not 1<=max_tokens<=1200000 or type(max_tool_calls) is not int or not 1<=max_tool_calls<=64 or timeout<=0:raise ValueError('Explicit bounded role settings required')
     index=Path(index).resolve();context.Evidence(index,job/'retrieval.jsonl')
     plan=work_plan(bindings.get('role'),index) if max_tool_calls>1 else None
     policy={**plan,'work_tool_limit':min(plan['work_tool_limit'],max_tool_calls-1),'automatic_checkpoints':True,'finalization_margin_tokens':65536} if plan else None
+    if execution_plan is not None:
+        if (not isinstance(execution_plan,dict) or set(execution_plan)!={'work_tool_limit','finalization_margin_tokens','preflight_sha256'}
+            or type(execution_plan['work_tool_limit']) is not int or not 1<=execution_plan['work_tool_limit']<=min(8,max_tool_calls-1)
+            or type(execution_plan['finalization_margin_tokens']) is not int or not 0<=execution_plan['finalization_margin_tokens']<=65536
+            or not __import__('re').fullmatch('[0-9a-f]{64}',str(execution_plan['preflight_sha256']))):
+            raise ValueError('Explicit bounded preflighted execution plan required')
+        policy={**(plan or {}),**execution_plan,'automatic_checkpoints':True}
+
     return {'execution_policy':policy,'checkpoint_python':sys.executable,'version':VERSION,'job_path':str(job),'model':model,'effort':effort,'provider':old.PROVIDER,'bindings':bindings,
         'context_index':str(index),'context_sha256':old.sha(index),'max_tokens':max_tokens,'max_tool_calls':max_tool_calls,
         'timeout_seconds':timeout,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'helper_sha256':old.sha(HELPER),'runner_sha256':old.sha(__file__),
@@ -184,8 +192,8 @@ def verify_job(job_path):
     return {'content':content,'receipt':execution,'output_path':str(job/'output.json')}
 
 
-def run_role(job_path,prompt,model,effort,bindings,index,*,max_tokens,max_tool_calls=48,timeout=1200,yield_checkpoint=False,resume=None):
-    job=Path(job_path).resolve();q=request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,yield_checkpoint=yield_checkpoint,resume=resume)
+def run_role(job_path,prompt,model,effort,bindings,index,*,max_tokens,max_tool_calls=48,timeout=1200,yield_checkpoint=False,resume=None,execution_plan=None):
+    job=Path(job_path).resolve();q=request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,yield_checkpoint=yield_checkpoint,resume=resume,execution_plan=execution_plan)
     if (job/'request.json').exists():
         if old.read(job/'request.json')!=q:raise ValueError('Immutable role request differs')
         if (job/'output.json').exists():return verify_job(job)
