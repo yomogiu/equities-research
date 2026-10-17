@@ -99,7 +99,8 @@ def render(markdown, *, status='draft'):
             rows=[split_row(line)];i+=2
             while i<len(lines) and lines[i].startswith('| '):rows.append(split_row(lines[i]));i+=1
             if any(len(r)!=len(rows[0]) for r in rows):raise ValueError('Markdown table column mismatch')
-            parts.append('<table><thead><tr>'+''.join('<th>'+inline(x)+'</th>' for x in rows[0])+'</tr></thead><tbody>'+''.join('<tr>'+''.join('<td>'+inline(x)+'</td>' for x in row)+'</tr>' for row in rows[1:])+'</tbody></table>');continue
+            from .earnings_visual_signals import badges
+            parts.append('<table><thead><tr>'+''.join('<th>'+inline(x)+'</th>' for x in rows[0])+'</tr></thead><tbody>'+''.join('<tr>'+''.join('<td>'+inline(x)+(' '+label if label else '')+'</td>' for x,label in zip(row,badges(rows[0],row)))+'</tr>' for row in rows[1:])+'</tbody></table>');continue
         if line.startswith('> '):
             rows=[]
             while i<len(lines) and lines[i].startswith('> '):rows.append(lines[i][2:]);i+=1
@@ -115,7 +116,7 @@ def render(markdown, *, status='draft'):
     targets=set(re.findall(r'href="#([^\"]+)"',body));ids=set(re.findall(r'id="([^\"]+)"',body))
     if not targets<=ids:raise ValueError('Unresolved Markdown source reference')
     title=next((line[2:] for line in lines if line.startswith('# ')),'Earnings report')
-    return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(title)+'</title><style>body{max-width:1050px;margin:32px auto;padding:0 22px;font:16px/1.55 system-ui;color:#20302a;background:#f7f7f2}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid #ccd3cb}blockquote{border-left:3px solid #859e8c;padding-left:16px;white-space:pre-wrap}a{color:#17634d}</style><header>'+('Accepted after independent review' if status=='accepted' else 'Draft — review pending')+'</header><main>'+body+'</main></html>'
+    return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(title)+'</title><style>body{max-width:1050px;margin:32px auto;padding:0 22px;font:16px/1.55 system-ui;color:#20302a;background:#f7f7f2}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid #ccd3cb}blockquote{border-left:3px solid #859e8c;padding-left:16px;white-space:pre-wrap}a{color:#17634d}.direction{display:inline-block;font-size:12px;font-weight:650;white-space:nowrap;margin-left:6px}.direction.up{color:#166534}.direction.down{color:#a32323}.direction.flat{color:#52605a}</style><header>'+('Accepted after independent review' if status=='accepted' else 'Draft — review pending')+'</header><main>'+body+'</main></html>'
 
 
 def write(path,state,bundle,catalog,pack=None,*,status='draft'):

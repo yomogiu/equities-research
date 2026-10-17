@@ -13,6 +13,11 @@ import re
 
 VERSION = 'financial-display-v2'
 LABELS = {
+ 'ifrs-full:Revenue':'Revenue',
+ 'ifrs-full:ProfitLossFromOperatingActivities':'Operating income',
+ 'ifrs-full:ProfitLossAttributableToOwnersOfParent':'Net income attributable to owners of parent',
+ 'ifrs-full:DilutedEarningsLossPerShare':'Diluted EPS · ordinary share',
+ 'ifrs-full:CashFlowsFromUsedInOperatingActivities':'Operating cash flow',
  'us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax': 'Revenue',
  'us-gaap:Revenues': 'Revenue', 'us-gaap:GrossProfit': 'Gross profit',
  'us-gaap:OperatingIncomeLoss': 'Operating income (loss)',
