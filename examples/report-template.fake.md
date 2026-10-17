@@ -52,7 +52,7 @@ Conditional · Management guidance · Fictional Q4 [^DEMO]
 
 Fictional management expects continued growth, conditional on its production schedule. No market valuation inputs were supplied. [^DEMO]
 
-## Questions That Matter — Earnings-Call Q&A
+## Earnings-Call Q&A
 
 ### When should the ramp costs ease?
 

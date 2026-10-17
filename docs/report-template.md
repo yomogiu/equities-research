@@ -13,8 +13,14 @@ new model stage, schedule change or budget increase is performed.
 3. **Earnings & Efficiency:** compiled profit/EPS rows and their drivers.
 4. **Cash & Financial Capacity:** cash flow, investment and balance-sheet rows.
 5. **Outlook & Guidance:** company guidance and its stated conditions.
-6. **Questions That Matter — Earnings-Call Q&A:** consequential questions,
+6. **Earnings-Call Q&A:** consequential questions,
    management responses, qualifications and unresolved details.
+
+The opening remains a substantive textual summary. Section findings retain material
+explanations of drivers, mechanisms, management commentary, qualifications and
+unresolved details; they may span multiple paragraphs. Tables support this narrative
+rather than replacing it with captions. Source material determines depth, without
+word or paragraph quotas. The existing reviewer checks material narrative omissions.
 
 Scope and original source references follow as supporting material. There is no
 next-tests/watchlist section. Valuation is optional commentary only if the supplied

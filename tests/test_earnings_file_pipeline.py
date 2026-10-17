@@ -447,7 +447,7 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
             self.assertEqual([call.args[4]['role'] for call in run.call_args_list],['retrieval','analysis','signal_author','review'])
             text=(root/'report.md').read_text()
             self.assertIn('## Quarter in Focus',text)
-            self.assertIn('## Questions That Matter',text)
+            self.assertIn('## Earnings-Call Q&A',text)
             self.assertNotIn('## Next tests',text)
             self.assertEqual(p.verify(root),value)
 

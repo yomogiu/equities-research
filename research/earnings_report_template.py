@@ -9,7 +9,7 @@ SECTIONS = OrderedDict([
     ('earnings', 'Earnings & Efficiency'),
     ('cash', 'Cash & Financial Capacity'),
     ('outlook', 'Outlook & Guidance'),
-    ('qa', 'Questions That Matter — Earnings-Call Q&A'),
+    ('qa', 'Earnings-Call Q&A'),
 ])
 
 # Exact taxonomy identities, never keywords in an author's display label.
@@ -29,8 +29,13 @@ Structure overrides older requests for next tests, valuation, an investment thes
 or word/finding quotas. Use supplied documents and call only; no broader market
 research or new forecasts. Script renders Quarter in Focus; Growth & Demand;
 Earnings & Efficiency; Cash & Financial Capacity; Outlook & Guidance;
-Questions That Matter — Earnings-Call Q&A. Tables, units, comparisons, references
+Earnings-Call Q&A. Tables, units, comparisons, references
 and colours are scripted. Do not author tables or repeat numbers without explanation.
+Preserve a substantive textual summary and material narrative. Tables
+support the prose; they do not replace it. Explain drivers, mechanisms, management
+commentary, qualifications and unresolved details in multiple paragraphs as needed.
+Do not reduce analysis to captions. Source material determines depth; no word or
+paragraph quota. Existing reviewers must flag material narrative omissions.
 
 Analysis: retain existing schema; add report_template: "source-led-six-sections-v1"
 and section: demand|earnings|cash|outlook|qa to every finding. Opening supplies

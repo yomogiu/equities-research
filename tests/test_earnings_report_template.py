@@ -69,7 +69,7 @@ class TemplateTests(PassageFixture, unittest.TestCase):
         self.assertEqual(md.report(replayed,self.bundle,self.catalog,rebound),text)
         page=md.render(text)
         self.assertIn('scope="row"',page);self.assertIn('table-scroll',page)
-        self.assertIn('Questions That Matter',page)
+        self.assertIn('Earnings-Call Q&amp;A',page)
 
     def test_marker_unknown_sections_and_next_tests_rejected(self):
         a=self.state()['artifacts']['analysis']
@@ -89,6 +89,10 @@ class TemplateTests(PassageFixture, unittest.TestCase):
         text=pipeline.instruction('analysis',index,self.root/'job',protocol)
         self.assertIn('Return next_tests: []',text)
         self.assertIn('no broader market',text)
+        self.assertIn('Preserve a substantive textual summary',text)
+        self.assertIn('Tables\nsupport the prose; they do not replace it.',text)
+        self.assertIn('multiple paragraphs',text)
+        self.assertNotIn('Questions That Matter',text)
         self.assertLess(len(text.encode()),24000)
         legacy=pipeline.initialize(self.casepath,self.root/'legacy',writing,report_template=None)
         self.assertNotIn('report_template',legacy)
