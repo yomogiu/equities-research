@@ -114,6 +114,10 @@ def prepare(case_path, output_dir):
         from . import financial_html_tables
         html_inputs = financial_html_tables.case_inputs(case, Path(raw_source['path']).read_bytes(), source)
     financial.validate_artifact(artifact, {source['document_id']: source}, html_table_inputs=html_inputs)
+    approval = None
+    if case.get('financial_proposal_approval'):
+        from . import financial_reviewed_proposals
+        approval = financial_reviewed_proposals.case_approval(case, source)
     index = base.read(case['transcript_index_path'])
     transcript_text = _text(case['transcript_path'])
     _verify_index(index, transcript_text)
@@ -161,6 +165,8 @@ def prepare(case_path, output_dir):
              'source': source, 'contexts': {v: json.loads(k) for k, v in contexts.items()},
              'units': {v: json.loads(k) for k, v in units.items()},
              'observations': observations, 'gaps': artifact.get('gaps', [])}
+    if approval is not None:
+        facts['proposal_approval'] = approval
     selected = [o for o in observations if o.get('canonical_metric') or PRIORITY_CONCEPT.search(o['concept'])]
     selected_ids = {o['id'] for o in selected}
     omitted = [o['id'] for o in observations if o['id'] not in selected_ids]

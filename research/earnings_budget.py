@@ -34,7 +34,12 @@ def review_calibration(jobs, bindings, model, verifier):
             if bindings.get(str(path)) != base.sha(path):
                 raise ValueError('Review reference is not bound to stopped source')
         request = base.read(job/'request.json')
-        if (request.get('model'), request.get('effort')) != tuple(model) or request.get('bindings', {}).get('role') != 'review':
+        binding = request.get('bindings', {})
+        batch_review = (job.name == 'review' and job.parent.parent.name == 'batches'
+                        and job.parent.parent.parent.name == 'batch-review'
+                        and set(binding) == {'protocol_sha256', 'batch_sha256', 'round'}
+                        and type(binding['round']) is int and binding['round'] in (0, 1, 2))
+        if (request.get('model'), request.get('effort')) != tuple(model) or not (binding.get('role') == 'review' or batch_review):
             raise ValueError('Reference must be an original same-model/effort review')
         result = verifier(job); session = result['receipt']['session']; usage = session['usage']
         if (session.get('model'), session.get('effort')) != tuple(model) or session.get('provider') != 'openai-codex':

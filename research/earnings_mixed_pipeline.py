@@ -98,7 +98,8 @@ def validate_output(role, out, bundle):
                 raise ValueError('At most four facts per financial row')
             for i in row['fact_ids']:
                 obs = next(o for o in bundle['financial']['observations'] if o['id']==i)
-                if obs['status']!='extracted' or obs['nil'] or obs['value'] is None:
+                from .financial_reviewed_proposals import usable
+                if not usable(obs,bundle['financial']) or obs['nil'] or obs['value'] is None:
                     raise ValueError('Unresolved observation cannot populate financial table')
         check_items(out.get('context'),allowed,'financial context',8)
         if not isinstance(out.get('gaps'),list):
@@ -123,9 +124,9 @@ def validate_output(role, out, bundle):
             check_text(out.get(k),k)
         check_ids(out.get('opening_citations'),allowed,'opening citations')
         findings = out.get('findings')
-        if not isinstance(findings,list) or not 4<=len(findings)<=7:
-            raise ValueError('Four to seven distinct findings required')
-        check_items(findings,allowed,'findings',7)
+        if not isinstance(findings,list) or not findings:
+            raise ValueError('Nonempty distinct source-supported findings required')
+        check_items(findings,allowed,'findings',len(findings))
         for f in findings:
             check_text(f.get('heading'),'finding heading')
             if not isinstance(f.get('quotes'),list):
@@ -133,6 +134,8 @@ def validate_output(role, out, bundle):
             for q in f['quotes']:
                 evidence.resolve_quote(bundle['manifest'],q['scope_id'],q['text'],start=q.get('start'))
         check_items(out.get('next_tests'),allowed,'next tests',4)
+        from . import earnings_report_template
+        earnings_report_template.validate(out)
     elif role == 'review':
         if out.get('verdict') not in ('pass','revise','blocked') or set(out.get('criteria',{}))!=set(CRITERIA):
             raise ValueError('Complete rubric and verdict required')
@@ -195,7 +198,7 @@ def prompt_for(role,bundle,writing,dependencies,feedback=None):
         instruction='''Prepare one evidence batch for a separate analyst. Read the complete transcript and all nontranscript documents. Select the complete document chunk IDs needed that best corroborate or challenge consequential Q&A, guidance, economics and cash/commitments. Cover every indexed Q&A exchange exactly once, including corrections and non-answers. Retain positive answers and actual deferrals; do not invent a question nobody asked. Return {"selected_document_ids":["D001"],"exchange_coverage":[{"exchange_id":"EXACT INDEX ID","question":"Asked detail","answer":"What management actually supplied or deferred","consequence":"Why it matters or why low priority"}],"document_findings":[{"text":"Source-backed material corroboration or limitation","citations":["D001"]}],"quotes":[{"scope_id":"EXACT TURN/EXCHANGE OR D ID","text":"Exact distinctive short source substring"}]}. Include 4–18 useful quotations. Do not include start offsets unless needed for repeated text. Document findings at most 16. Select evidence, do not write the report.'''
         data={**shared,'complete_transcript':transcript(bundle),'complete_nontranscript_documents':full_documents(bundle)}
     elif role=='analysis':
-        instruction='''Write a concise historical event-update report for a technically informed investor. Read the complete transcript directly, financial context sheet and corroborating document spans. Aim for 650–900 total report words including deterministic financial table and quotes. Synthesize 4–7 distinct consequential findings; favor actual analyst question/management answer, mechanisms, quantified guidance, sourced non-answers and important financial corroboration. Avoid repeating findings. Select only a few short exact quotations; place them in quotes arrays, not inside prose. Every statement must be grounded; citations identify supporting F/D/transcript scope IDs, not preparer output. Requested next tests max four, concrete and proportionate. Return {"title":"Issuer — period event update","opening":"Concise substantive opening","opening_citations":["F001"],"findings":[{"heading":"Factual heading","text":"One distinct finding with attribution, mechanisms and evidence","citations":["EXACT SOURCE ID"],"quotes":[{"scope_id":"EXACT SOURCE ID","text":"exact substring"}]}],"next_tests":[{"text":"Specific next question or measurement","citations":["EXACT SOURCE ID"]}],"scope":"One compact statement of historical snapshot and unavailable context"}. Table is generated separately from the financial sheet. No financial table duplication in prose. No formatting/HTML/Markdown. Never add caution or unprompted equivalences to sound balanced.'''
+        instruction='''Write a concise historical event-update report for a technically informed investor. Read the complete transcript directly, financial context sheet and corroborating document spans. No numerical word target applies. Cover distinct material findings without a count quota; favor actual analyst question/management answer, mechanisms, quantified guidance, sourced non-answers and important financial corroboration. Avoid repeating findings. Select only a few short exact quotations; place them in quotes arrays, not inside prose. Every statement must be grounded; citations identify supporting F/D/transcript scope IDs, not preparer output. Requested next tests max four, concrete and proportionate. Return {"title":"Issuer — period event update","opening":"Concise substantive opening","opening_citations":["F001"],"findings":[{"heading":"Factual heading","text":"One distinct finding with attribution, mechanisms and evidence","citations":["EXACT SOURCE ID"],"quotes":[{"scope_id":"EXACT SOURCE ID","text":"exact substring"}]}],"next_tests":[{"text":"Specific next question or measurement","citations":["EXACT SOURCE ID"]}],"scope":"One compact statement of historical snapshot and unavailable context"}. Table is generated separately from the financial sheet. No financial table duplication in prose. No formatting/HTML/Markdown. Never add caution or unprompted equivalences to sound balanced.'''
         selections=dependencies['retrieval']['selected_document_ids']
         data={**shared,'complete_transcript':transcript(bundle),'financial_context_sheet':dependencies['financial'],
               'financial_table':display.build(dependencies['financial'],bundle),'retrieval_batch':dependencies['retrieval'],

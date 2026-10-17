@@ -78,7 +78,7 @@ def _advance(root,execute):
     policy=protocol['batch_review']
     writing=Path(protocol['writing_standard']).read_text()
     artifacts={};sessions=set();tokens=0
-    inherited={}
+    inherited={};failed_reserve=0
     if protocol.get('grounding_recovery'):
         from .earnings_batched_grounding_recovery import validate
         inherited=validate(protocol,bundle,catalog)
@@ -98,6 +98,16 @@ def _advance(root,execute):
             from .earnings_role_import import authenticate
             boundary=authenticate(protocol['grounding_recovery']['reviewed_boundary']['review'])
             tokens+=inherited_review_tokens(boundary,sessions)
+    if protocol.get('attribution_preparer_recovery'):
+        from .earnings_attribution_preparer_recovery import apply
+        _, inherited, attribution = apply(protocol, pipe.evidence.load_bundle(protocol['evidence_manifest']), catalog)
+        tokens += inherited_review_tokens(attribution, sessions)
+    if protocol.get('signal_provider_recovery'):
+        from .earnings_signal_overload_recovery import validate
+        failed=validate(protocol['signal_provider_recovery'],protocol,bundle,catalog,{role:v['content'] for role,v in inherited.items()})
+        sessions.add(failed['session_id'])
+        failed_reserve=failed['failed_request_upper_bound_tokens']
+        tokens+=failed_reserve
     for role in ('financial','retrieval','analysis','signal_author'):
         if role=='signal_author':
             state={'artifacts':copy.deepcopy(artifacts),'format':{'rows':{},'basis':{'text':'','citations':[]}}}
@@ -130,7 +140,7 @@ def _advance(root,execute):
             **({'execution':result['execution']} if 'execution' in result else {})}
         tokens+=result['receipt']['session']['usage']['totalTokens']
         out=result['content']
-        if role=='retrieval' and protocol.get('qa_grounding') in pipe.grounding.HEADER_VERSIONS:
+        if role=='retrieval' and protocol.get('qa_grounding') in pipe.grounding.HEADER_VERSIONS and not protocol.get('attribution_preparer_recovery'):
             out,_=pipe.grounding.normalize_courtesy(out,bundle,catalog)
         if role=='signal_author':signals.validate(out,state,bundle,catalog);pack=out
         else:pipe.validate(role,out,bundle,catalog);artifacts[role]=out
@@ -175,6 +185,14 @@ def _advance(root,execute):
     review_launched=execute and result['status']=='pending'
     result=batch.advance(edition,execute) if execute else batch.summary(result)
     result['tokens']+=tokens
+    if failed_reserve:
+        accounting={'usage_is_unknown':True,'known_measured_tokens':result['tokens']-failed_reserve,'failed_request_reserved_tokens':failed_reserve,'total_tokens_upper_bound':result['tokens'],'notice':'The failed provider request reported zero tokens; its actual usage is unknown and conservatively reserved. Total is an upper bound, not measured usage.'}
+        result['token_accounting']=accounting
+        if result['status']=='accepted':
+            audit=root/'token-accounting.json'
+            if audit.exists():batch.require(runner.read(audit)==accounting,'Provider token accounting changed')
+            elif execute:runner.save(audit,accounting)
+            else:raise ValueError('Accepted provider recovery requires explicit token accounting')
     if policy==batch.FACTUAL_VERSION and result['status']=='accepted':
         from . import earnings_editorial_stage
         editorial=earnings_editorial_stage.advance(edition,root/'final-editorial',execute and not review_launched)
@@ -186,6 +204,7 @@ def _advance(root,execute):
     status = 'pending' if result['status']=='awaiting_batch' else result['status']
     stage = 'batch_correction' if result['status']=='awaiting_batch' else result.get('stage','batch_review')
     return {'status':status,'stage':stage,'detail':result,
+            **({'token_accounting':result['token_accounting']} if result.get('token_accounting') else {}),
             **({'reason':result['reason']} if 'reason' in result else {}),
             **({'report':str(edition/'report.html'),'report_sha256':runner.sha(edition/'report.html')} if result['status']=='accepted' else {})}
 

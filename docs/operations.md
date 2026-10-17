@@ -96,3 +96,114 @@ Repair review metadata uses a lossless columnar passage index to avoid repeated
 field names. Original evidence and Unicode offsets remain available in full.
 Explicit formatting remediation may correct table captions and period labels with
 source citations, while preserving numeric values, units, periods and group identity.
+
+
+### Batched call inspection
+
+File-backed roles use `print(ctx.call_batch())` to show the original transcript
+once, with compact citation offsets and provisional Q&A annotations. For calls
+longer than 48,000 characters, follow `next_start` in the same IPython call when
+practical. The overlapping exchange, section, turn and quotation representations
+are locators rather than repeated source paragraphs. Coverage projects only to
+hash- and offset-equivalent transcript spans after the full call is delivered;
+filings and financial rows still require their own evidence reads. Merely loading
+a batch into kernel memory does not satisfy inspection. Reviewers inspect their
+own fresh-context batch. Historical frozen runs retain their original API.
+
+Measure retrieval changes in one fresh retrieval-only job with an explicit token
+budget, tool-call bound and no automatic retries. Record input, output, cache-read,
+cache-write, model turns and source coverage, including failed attempts. Do not
+advance analysis or restart the batch as part of this measurement.
+
+The IPython runtime independently truncates outputs at 65,536 characters. Call
+batches therefore fit within 60,000 characters including compact locator tables,
+and expose next_start for any remaining source text. Do not concatenate batches
+or other prints beyond that total in one tool result. A delivery-hook setting
+does not remove the runtime truncation. Missing exact batch text earns no credit.
+
+
+### Filing retrieval without exact-query dead ends
+
+Use `print(ctx.filing_batch(query, limit=4))` in a separate tool response from the
+call batch. It ranks individual query tokens over the complete D-excerpt inventory,
+prefers source-document diversity, omits duplicate and overlapping text, and prints
+whole excerpts with their original provenance and exact D IDs. Empty matches trigger
+an explicitly marked representative fallback, not a claim that evidence is absent.
+If no eligible excerpts exist, record a source-access gap; nonempty document selection
+remains required for a completed retrieval. Oversized scopes are counted separately
+and remain available through paged access. Selection is not acceptance or exhaustive
+filing review. Only complete visible, replay-verified batches gain coverage credit.
+`ctx.search` retains its original exact literal semantics for historical replay.
+
+
+Live role bootstraps use `Evidence.for_job()`, deriving the context and canonical
+retrieval log from the runner-owned request in the kernel working directory.
+Direct construction in an active role also binds that log and rejects a different
+context. Historical offline audit contexts remain replayable. Full lifecycles use
+their explicit lifecycle budget; small retrieval-trial ceilings are not inherited
+as full-run ceilings. The conservative pre-turn input/output reserve remains in
+force; cached input and prior attempts remain counted.
+
+
+A completed retrieval stopped by the exact `{finding, document_id}` transport
+shape can continue through an explicit preparation manifest. The caller replays
+the original frozen verifier and coverage, performs only the lossless conversion
+to `{text, citations}`, and validates the complete canonical retrieval including
+Q&A grounding. A new immutable continuation carries the original token ceiling,
+all spent tokens and the retrieval session identity. Authors and reviewers remain
+fresh. Original requests, sessions and outputs are never edited; unknown or mixed
+schemas are rejected rather than repaired by guesswork.
+
+
+### Host-enforced progress and final-writing phase
+
+New role requests bind an execution policy: three tool calls for financial,
+retrieval, analysis and signal roles; four for reviewers and correction authors.
+Batch required evidence within that plan. The host uses Responses `tool_choice=none`
+after the allowance, or earlier when another maximum-output reserve no longer fits,
+so the next turn writes the result instead of adding another exploration round.
+An unexpected tool call in final-writing mode is blocked and cannot pass replay.
+This follows the final-request pattern in the official OpenAI agent optimization
+example: https://developers.openai.com/cookbook/examples/agent_optimization/optimizing_agents_for_cost_and_quality
+
+After every tool result, the host independently checkpoints the delivered evidence
+prefix and records its bound receipt. It preserves authored partial work if supplied;
+otherwise it labels the checkpoint source-progress-only, with no invented prose or
+acceptance authority. Resume retains all spent tokens, dependencies and the two-resume
+limit. Missing, altered or stale checkpoint receipts fail closed. Source-progress
+recovery still requires the new model to inspect material text for interpretation.
+The lifecycle ceiling and conservative output reserve remain unchanged. These
+controls cannot retroactively reconstruct an unsaved draft from a historical run.
+
+
+Completed author output can likewise continue through a separately bound analysis
+manifest when its only issue is source addressing. Exact passage references in
+citation lists map to their original parent scopes; the transcript document identity
+maps to all its original call sections. Unknown IDs remain errors. Text and quote
+selections are unchanged. The original frozen verifier replays the author receipt,
+normalizes addressing, and verifies original inspection and all author validation.
+The new lifecycle retains both session IDs and the combined inherited usage; it
+cannot raise the original ceiling or bypass fresh signal/review work.
+
+
+### Typed, paged role packets
+
+Use handoff_batch for the whole report, metadata and relevant handoffs. Signal
+handoffs contain the finding catalogue rather than a duplicate of the entire state;
+review handoffs contain unit values rather than repeating both units and state.
+Use call_batch for the complete call and support_batch for all referenced non-call
+support. Each role packet is at most 59,000 body characters, with next_start when
+more remains. Full delivered ranges, not kernel loads, determine coverage.
+
+Signal authors may instead use source_batch with exact selected scope or passage
+IDs after choosing material findings. It prints complete original parent scopes,
+original provenance, selected context/unit data and exact passage locators. This
+avoids a whole-call reread for a narrow signal selection. Reviewers still inspect
+all required original evidence. Support packets deduplicate source blocks and file
+identities without changing original text. Missing pages receive no coverage.
+
+The early-finalization margin is 65,536 tokens above the registered maximum-output
+reserve, rather than another full maximum output. The hard conservative reserve
+and cumulative token accounting remain in force. A continuation may lower its
+ceiling to deduct a verified failed sibling's usage; it cannot raise the inherited
+ceiling. This preserves lost-attempt charges without rerunning a validated author.

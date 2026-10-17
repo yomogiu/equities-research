@@ -1,5 +1,11 @@
 # Selected bounded report pipeline
 
+New file-backed report runs use the [source-led six-section template](report-template.md):
+Quarter in Focus, Growth & Demand, Earnings & Efficiency, Cash & Financial Capacity,
+Outlook & Guidance, and substantive earnings-call Q&A. Table assembly and comparable
+changes are scripted; next tests are omitted and valuation needs supplied inputs.
+Existing frozen runs retain their original format and model/coverage requirements.
+
 `research.earnings_passage_pipeline` is the selected entry point for new,
 user-authorized report runs. Version `luna6-sol-presentation-v4` uses financial
 preparation on `gpt-5.6-luna` / `xhigh`, retrieval on `gpt-6-luna` / `max`, and
