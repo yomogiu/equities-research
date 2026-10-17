@@ -80,3 +80,15 @@ and colour rendering, not an independently reviewed investment report. Model-fre
 tests exercise a complete simulated lifecycle, including independent-role receipts,
 corrections, report replay and source links. No real model-cost saving is claimed
 until a bounded run measures it; table assembly itself makes zero model calls.
+
+## Original earnings-call exchanges
+
+Q&A findings with exact exchange or member-turn citations receive expandable
+“Read the original exchange” blocks in HTML. Python resolves the reviewed index,
+includes linked parent questions/follow-ups, verifies the frozen transcript hash
+and copies each original turn by its Unicode offsets with speaker attribution.
+It does not infer exchanges from topic keywords or generate replacement quotations.
+Only exchange-ID directives enter report Markdown; the original text is assembled
+locally into HTML. This adds no model stage or repeated transcript payload to
+review context. Render through `earnings_markdown.write` with the source bundle;
+standalone rendering of a directive without source payload fails explicitly.

@@ -110,5 +110,38 @@ class TemplateTests(PassageFixture, unittest.TestCase):
         self.assertIn('direction up',page);self.assertIn('href="#source-F1"',page)
         self.assertNotIn('<script>',page);self.assertIn('&lt;script&gt;',page)
 
+    def test_original_exchange_is_exact_source_text_and_does_not_expand_review_markdown(self):
+        state=self.state();index=self.bundle['transcript_index']
+        exchange=index['exchanges'][0]
+        finding=state['artifacts']['analysis']['findings'][-1]
+        finding['citations']=[exchange['id']]
+        finding['quotes']=[]
+        before=copy.deepcopy(state)
+        text=md.report(state,self.bundle,self.catalog)
+        self.assertIn(':::original-qa '+exchange['id'],text)
+        copied=template.original_exchanges(state,self.bundle)
+        from research import earnings_compact_evidence as evidence
+        source=evidence.transcript_view(self.bundle['manifest'])['text']
+        for turn in copied[exchange['id']]['turns']:
+            self.assertEqual(turn['text'],source[turn['start']:turn['end']])
+        page=md.render(text,original_exchanges=copied)
+        self.assertIn('<details class="original-qa">',page)
+        self.assertIn('Read the original exchange',page)
+        self.assertEqual(state,before)
+        with self.assertRaisesRegex(ValueError,'verified source bundle'):md.render(text)
+
+    def test_turn_citations_and_followups_resolve_without_topic_guessing(self):
+        index={'exchanges':[
+            {'id':'e1','turn_ids':['q1','a1'],'followup_of':None},
+            {'id':'e2','turn_ids':['q2','a2'],'followup_of':'e1'},
+            {'id':'e3','turn_ids':['q3','a3'],'followup_of':None}]}
+        self.assertEqual(template.exchange_ids({'citations':['a2'],'quotes':[]},index),['e1','e2'])
+        self.assertEqual(template.exchange_ids({'citations':['D001'],'quotes':[]},index),[])
+
+    def test_original_source_markup_is_escaped(self):
+        page=md.render('# Fictional\n\n:::original-qa e1\n',original_exchanges={
+            'e1':{'turns':[{'speaker':'<speaker>','role':'analyst','text':'<script>bad()</script>'}]}})
+        self.assertNotIn('<script>',page);self.assertIn('&lt;script&gt;',page)
+
 
 if __name__=='__main__':unittest.main()

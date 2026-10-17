@@ -73,6 +73,50 @@ def validate(analysis):
         raise ValueError('Every finding requires a supported report section')
 
 
+def exchange_ids(finding, index):
+    """Resolve explicit exchange or member-turn citations, never topic matching."""
+    cited = set(finding['citations'])
+    cited.update(q['scope_id'] for q in finding.get('quotes', []) if 'scope_id' in q)
+    selected = {x['id'] for x in index['exchanges']
+                if x['id'] in cited or cited.intersection(x['turn_ids'])}
+    # Preserve linked parent questions and follow-ups as one contextual exchange.
+    while True:
+        linked = {x['id'] for x in index['exchanges'] if x.get('followup_of') in selected}
+        linked.update(x['followup_of'] for x in index['exchanges']
+                      if x['id'] in selected and x.get('followup_of'))
+        if linked <= selected:
+            break
+        selected.update(linked)
+    return [x['id'] for x in index['exchanges'] if x['id'] in selected]
+
+
+def original_exchanges(state, bundle):
+    """Copy original turn spans after verifying the frozen transcript hash/index."""
+    from . import earnings_compact_evidence as evidence
+    index = bundle['transcript_index']
+    selected = set()
+    for finding in state['artifacts']['analysis']['findings']:
+        if finding.get('section') == 'qa':
+            selected.update(exchange_ids(finding, index))
+    if not selected:
+        return {}
+    view = evidence.transcript_view(bundle['manifest'])
+    turns = {t['id']: t for t in index['turns']}
+    result = {}
+    for exchange in index['exchanges']:
+        if exchange['id'] not in selected:
+            continue
+        rows = []
+        for tid in exchange['turn_ids']:
+            turn = turns[tid]
+            rows.append({k: turn[k] for k in ('id', 'speaker', 'role', 'start', 'end')} |
+                        {'text': view['text'][turn['start']:turn['end']]})
+        rows.sort(key=lambda t: t['start'])
+        result[exchange['id']] = {'id': exchange['id'], 'turns': rows,
+                                  'transcript_sha256': view['sha256']}
+    return result
+
+
 def row_section(row):
     concept = row['concept']
     namespace, _, name = concept.partition(':')
@@ -199,6 +243,11 @@ def report(state, bundle, catalog, pack=None):
             lines.extend([finding['text'] + ' ' + refs(finding['citations']), ''])
             for quote in finding['quotes']:
                 lines.extend(['\n'.join('> ' + line for line in quote['text'].splitlines()) + ' ' + refs([quote['scope_id']]), ''])
+            if key == 'qa':
+                for identifier in exchange_ids(finding, bundle['transcript_index']):
+                    # Only an ID enters review context. Full text is copied into
+                    # HTML from the verified source bundle, not sent to a model again.
+                    lines.extend([':::original-qa ' + identifier, ''])
         if not findings and not tables[key]:
             lines.extend(['No additional source-backed commentary supplied for this section.' if key != 'qa' else
                           'No substantive Q&A selection supplied; call coverage remains a review requirement.', ''])

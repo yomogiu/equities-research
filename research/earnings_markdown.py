@@ -87,12 +87,24 @@ def split_row(line):
     return [x.strip().replace('\\|','|').replace('\\\\','\\') for x in re.split(r'(?<!\\)\|',line.strip()[1:-1])]
 
 
-def render(markdown, *, status='draft'):
+def render(markdown, *, status='draft', original_exchanges=None):
     if status not in ('draft','accepted'):raise ValueError('Explicit render status required')
     lines=markdown.splitlines();parts=[];i=0
     while i<len(lines):
         line=lines[i]
         if not line.strip():i+=1;continue
+        exchange=re.fullmatch(r':::original-qa ([A-Za-z0-9_-]+)',line)
+        if exchange:
+            identifier=exchange[1]
+            item=(original_exchanges or {}).get(identifier)
+            if item is None:
+                raise ValueError('Original Q&A requires its verified source bundle: '+identifier)
+            parts.append('<details class="original-qa"><summary>Read the original exchange</summary>')
+            parts.append('<p class="source-note">Original transcript · '+html.escape(identifier)+'</p>')
+            for turn in item['turns']:
+                parts.append('<p class="qa-speaker">'+html.escape(turn['speaker'])+' · '+html.escape(turn['role'])+'</p>')
+                parts.append('<pre class="qa-original">'+html.escape(turn['text'])+'</pre>')
+            parts.append('</details>');i+=1;continue
         foot=re.fullmatch(r'\[\^([A-Za-z0-9_-]+)\]: (.*)',line)
         if foot:parts.append('<p id="source-'+foot[1]+'">'+inline(foot[2])+'</p>');i+=1;continue
         heading=re.match(r'^(#{1,3}) (.*)$',line)
@@ -125,7 +137,7 @@ def render(markdown, *, status='draft'):
             while i<len(lines) and lines[i].startswith('- '):rows.append(lines[i][2:]);i+=1
             parts.append('<ul>'+''.join('<li>'+inline(x)+'</li>' for x in rows)+'</ul>');continue
         rows=[line];i+=1
-        while i<len(lines) and lines[i].strip() and not re.match(r'^(#{1,3} |> |- |\| |\[\^)',lines[i]):rows.append(lines[i]);i+=1
+        while i<len(lines) and lines[i].strip() and not re.match(r'^(#{1,3} |> |- |\| |\[\^|:::original-qa )',lines[i]):rows.append(lines[i]);i+=1
         text='\n'.join(rows)
         tone=next((key for name,key in [('Improving','up'),('Deteriorating','down'),('Conditional','conditional'),('Unresolved','flat')] if text.startswith(name+' · ')),None)
         parts.append('<p'+(' class="signal-label '+tone+'"' if tone else '')+'>'+inline(text)+'</p>')
@@ -133,14 +145,16 @@ def render(markdown, *, status='draft'):
     targets=set(re.findall(r'href="#([^\"]+)"',body));ids=set(re.findall(r'id="([^\"]+)"',body))
     if not targets<=ids:raise ValueError('Unresolved Markdown source reference')
     title=next((line[2:] for line in lines if line.startswith('# ')),'Earnings report')
-    return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(title)+'</title><style>body{max-width:1050px;margin:32px auto;padding:0 22px;font:16px/1.55 system-ui;color:#20302a;background:#f7f7f2}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid #ccd3cb}blockquote{border-left:3px solid #859e8c;padding-left:16px;white-space:pre-wrap}a{color:#17634d}.direction{display:inline-block;font-size:12px;font-weight:650;white-space:nowrap;margin-left:6px}.direction.up,.signal-label.up{color:#14532d;background:#dcfce7}.direction.down,.signal-label.down{color:#991b1b;background:#fee2e2}.direction.flat,.signal-label.flat{color:#475569;background:#f1f5f9}.signal-label.conditional{color:#854d0e;background:#fef3c7}.direction{padding:3px 7px;border-radius:5px}.signal-label{padding:8px 12px;border-radius:6px;font-size:14px;font-weight:650}.table-scroll{overflow-x:auto;margin:18px 0}h1{font-size:32px;line-height:1.15}h2{margin-top:40px;padding-top:14px;border-top:2px solid #ccd3cb;font-size:23px}h3{font-size:18px}th[scope=row]{font-weight:550}td{font-variant-numeric:tabular-nums}thead{background:#e8ede9}header{font-size:12px;color:#52605a}@media(max-width:650px){body{padding:0 14px}table{min-width:620px}h1{font-size:26px}}</style><header>'+('Accepted after independent review' if status=='accepted' else 'Draft — review pending')+'</header><main>'+body+'</main></html>'
+    return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(title)+'</title><style>body{max-width:1050px;margin:32px auto;padding:0 22px;font:16px/1.55 system-ui;color:#20302a;background:#f7f7f2}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid #ccd3cb}blockquote{border-left:3px solid #859e8c;padding-left:16px;white-space:pre-wrap}a{color:#17634d}.direction{display:inline-block;font-size:12px;font-weight:650;white-space:nowrap;margin-left:6px}.direction.up,.signal-label.up{color:#14532d;background:#dcfce7}.direction.down,.signal-label.down{color:#991b1b;background:#fee2e2}.direction.flat,.signal-label.flat{color:#475569;background:#f1f5f9}.signal-label.conditional{color:#854d0e;background:#fef3c7}.direction{padding:3px 7px;border-radius:5px}.signal-label{padding:8px 12px;border-radius:6px;font-size:14px;font-weight:650}.original-qa{margin:18px 0;padding:14px 18px;border:1px solid #ccd3cb;border-radius:8px;background:#fff}.original-qa summary{cursor:pointer;font-weight:650}.qa-speaker{font-weight:650;margin-bottom:5px}.qa-original{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin-top:0}.source-note{font-size:12px;color:#52605a}.table-scroll{overflow-x:auto;margin:18px 0}h1{font-size:32px;line-height:1.15}h2{margin-top:40px;padding-top:14px;border-top:2px solid #ccd3cb;font-size:23px}h3{font-size:18px}th[scope=row]{font-weight:550}td{font-variant-numeric:tabular-nums}thead{background:#e8ede9}header{font-size:12px;color:#52605a}@media(max-width:650px){body{padding:0 14px}table{min-width:620px}h1{font-size:26px}}</style><header>'+('Accepted after independent review' if status=='accepted' else 'Draft — review pending')+'</header><main>'+body+'</main></html>'
 
 
 def write(path,state,bundle,catalog,pack=None,*,status='draft'):
     from pathlib import Path
     path=Path(path);content=report(state,bundle,catalog,pack)
     legacy.immutable_text(path.with_suffix('.md'),content)
-    legacy.immutable_text(path.with_suffix('.html'),render(content,status=status))
+    from . import earnings_report_template as template
+    exchanges=template.original_exchanges(state,bundle)
+    legacy.immutable_text(path.with_suffix('.html'),render(content,status=status,original_exchanges=exchanges))
     return content
 
 
