@@ -308,7 +308,12 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         role=bindings['role'];meta=base.read(Path(index).parent/'metadata.json');art=base.read(Path(index).parent/'artifacts.json')
         if role=='financial':content=copy.deepcopy(self.financial)
         elif role=='retrieval':content=copy.deepcopy(self.retrieval)
-        elif role=='analysis':content=copy.deepcopy(self.report)
+        elif role=='analysis':
+            content=copy.deepcopy(self.report)
+            if '## Source-led six-section report contract' in prompt:
+                from research import earnings_report_template as template
+                content['report_template']=template.VERSION
+                for finding,section in zip(content['findings'],('demand','earnings','outlook','qa')):finding['section']=section
         elif role=='signal_author':content=self.pack(art['state'])
         elif role=='correction':
             items=art['units'];key='analysis:0';value=copy.deepcopy(items[key]['value']);value['text']='Fictional corrected distinct finding '+str(meta['round'])
@@ -429,6 +434,22 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         with patch.object(r,'run_role') as launch:p.verify(root);launch.assert_not_called()
         (root/'jobs/review-0/retrieval.jsonl').write_text('')
         with self.assertRaises(ValueError):p.verify(root)
+
+    def test_six_section_lifecycle_adds_no_financial_or_table_model_stage(self):
+        from research import earnings_financial_outline
+        root=self.root/'sectioned';writing=self.root/'guide.md';writing.write_text('Fictional source-grounded writing.')
+        p.initialize(self.casepath,root,writing)
+        with patch.object(earnings_financial_outline,'artifact',return_value=copy.deepcopy(self.financial)), patch.object(r,'run_role',side_effect=self.fake_run) as run:
+            for _ in range(8):
+                value=p.advance(root,True)
+                if value['status']=='accepted':break
+            self.assertEqual(value['status'],'accepted')
+            self.assertEqual([call.args[4]['role'] for call in run.call_args_list],['retrieval','analysis','signal_author','review'])
+            text=(root/'report.md').read_text()
+            self.assertIn('## Quarter in Focus',text)
+            self.assertIn('## Questions That Matter',text)
+            self.assertNotIn('## Next tests',text)
+            self.assertEqual(p.verify(root),value)
 
     def test_two_round_limit_and_edited_candidate_needs_fresh_review(self):
         root,value=self.lifecycle(fail=1);self.assertEqual(value['status'],'accepted');self.assertEqual(value['correction_rounds'],1)

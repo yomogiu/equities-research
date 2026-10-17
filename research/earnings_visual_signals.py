@@ -9,6 +9,31 @@ import re
 
 POSITIVE = ('Revenue','Gross profit','Operating income','Net income','Diluted EPS','Earnings Per Share Diluted','Operating cash flow')
 
+def comparison_badges(headers, row):
+    """Colour calculated change columns; inventory/debt/spend remain neutral.
+
+    Labels are conservative exact identities. Unknown or qualified metrics do
+    not inherit a positive interpretation from a shared word prefix.
+    """
+    out = [''] * len(row)
+    metric = plain(row[0]).split(' · ')[0] if row else ''
+    favorable = metric in {
+        'Revenue', 'Gross profit', 'Operating income', 'Operating income (loss)',
+        'Net income', 'Net income (loss)', 'Net income attributable to owners of parent',
+        'Diluted EPS', 'Earnings Per Share Diluted', 'Operating cash flow',
+    }
+    for i, header in enumerate(headers):
+        if plain(header) not in ('QoQ', 'YoY'):
+            continue
+        change = plain(row[i])
+        if not re.fullmatch(r'[+-]?\d+(?:\.\d+)?%', change):
+            continue
+        number = Decimal(change[:-1])
+        cls = ('up' if number > 0 else 'down') if favorable and number else 'flat'
+        arrow = '↑' if number > 0 else '↓' if number < 0 else '→'
+        out[i] = '<span class="direction ' + cls + '">' + arrow + ' ' + change + '</span>'
+    return out
+
 def plain(value):
     return re.sub(r'\[\^[^]]+\]','',value).strip()
 

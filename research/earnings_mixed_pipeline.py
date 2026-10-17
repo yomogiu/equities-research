@@ -134,6 +134,8 @@ def validate_output(role, out, bundle):
             for q in f['quotes']:
                 evidence.resolve_quote(bundle['manifest'],q['scope_id'],q['text'],start=q.get('start'))
         check_items(out.get('next_tests'),allowed,'next tests',4)
+        from . import earnings_report_template
+        earnings_report_template.validate(out)
     elif role == 'review':
         if out.get('verdict') not in ('pass','revise','blocked') or set(out.get('criteria',{}))!=set(CRITERIA):
             raise ValueError('Complete rubric and verdict required')

@@ -35,7 +35,9 @@ def units(state, pack):
     a=state['artifacts']; result={}
     def add(key,value,deps=()): result[key]={'value':copy.deepcopy(value),'depends_on':list(deps)}
     add('financial',a['financial']);add('retrieval',a['retrieval'])
-    add('analysis:opening',{k:a['analysis'][k] for k in ('title','opening','opening_citations','scope')},('financial','retrieval','format'))
+    opening={k:a['analysis'][k] for k in ('title','opening','opening_citations','scope')}
+    if 'report_template' in a['analysis']:opening['report_template']=a['analysis']['report_template']
+    add('analysis:opening',opening,('financial','retrieval','format'))
     for i,f in enumerate(a['analysis']['findings']):add('analysis:'+str(i),f,('financial','retrieval','format'))
     add('analysis:next_tests',a['analysis']['next_tests'],tuple(k for k in result if k.startswith('analysis:')))
     add('format',state['format'],('financial',))
@@ -95,6 +97,8 @@ def apply(items,plan,policy=VERSION):
         if key.startswith('signal-'):
             require(op['value'].get('id')==key and op['value'].get('finding_id')==items[key]['value']['finding_id'],
                     'Signal identity and finding binding cannot be reassigned')
+        if key=='analysis:opening':
+            require(op['value'].get('report_template')==items[key]['value'].get('report_template'),'Report template cannot change during correction')
         candidate[key]['value']=copy.deepcopy(op['value']);changed.add(key)
     invalidating = set(changed)
     if policy in MECHANICAL_POLICIES and 'format' in changed:

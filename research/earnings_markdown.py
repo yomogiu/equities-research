@@ -50,6 +50,9 @@ def financial_markdown(financial,bundle,formatting):
 
 
 def report(state,bundle,catalog,pack=None):
+    from . import earnings_report_template as template
+    if state['artifacts']['analysis'].get('report_template') == template.VERSION:
+        return template.report(state,bundle,catalog,pack)
     hydrated=passages.hydrate('analysis',state['artifacts']['analysis'],catalog)
     out=['# '+hydrated['title'],'',hydrated['opening']+' '+refs(hydrated['opening_citations']),'']
     used=set(hydrated['opening_citations'])
@@ -99,8 +102,20 @@ def render(markdown, *, status='draft'):
             rows=[split_row(line)];i+=2
             while i<len(lines) and lines[i].startswith('| '):rows.append(split_row(lines[i]));i+=1
             if any(len(r)!=len(rows[0]) for r in rows):raise ValueError('Markdown table column mismatch')
-            from .earnings_visual_signals import badges
-            parts.append('<table><thead><tr>'+''.join('<th>'+inline(x)+'</th>' for x in rows[0])+'</tr></thead><tbody>'+''.join('<tr>'+''.join('<td>'+inline(x)+(' '+label if label else '')+'</td>' for x,label in zip(row,badges(rows[0],row)))+'</tr>' for row in rows[1:])+'</tbody></table>');continue
+            from .earnings_visual_signals import badges, comparison_badges
+            sectioned = rows[0][-2:] == ['QoQ','YoY']
+            def cells(row):
+                labels = comparison_badges(rows[0],row) if sectioned else badges(rows[0],row)
+                result = []
+                for n,(x,label) in enumerate(zip(row,labels)):
+                    if sectioned and label:
+                        citations = ' '.join(re.findall(r'\[\^[A-Za-z0-9_-]+\]',x))
+                        content = label + (' '+inline(citations) if citations else '')
+                    else:content = inline(x)+(' '+label if label else '')
+                    tag = 'th scope="row"' if n==0 else 'td'
+                    result.append('<'+tag+'>'+content+'</'+tag.split()[0]+'>')
+                return ''.join(result)
+            parts.append('<div class="table-scroll"><table><thead><tr>'+''.join('<th scope="col">'+inline(x)+'</th>' for x in rows[0])+'</tr></thead><tbody>'+''.join('<tr>'+cells(row)+'</tr>' for row in rows[1:])+'</tbody></table></div>');continue
         if line.startswith('> '):
             rows=[]
             while i<len(lines) and lines[i].startswith('> '):rows.append(lines[i][2:]);i+=1
@@ -111,12 +126,14 @@ def render(markdown, *, status='draft'):
             parts.append('<ul>'+''.join('<li>'+inline(x)+'</li>' for x in rows)+'</ul>');continue
         rows=[line];i+=1
         while i<len(lines) and lines[i].strip() and not re.match(r'^(#{1,3} |> |- |\| |\[\^)',lines[i]):rows.append(lines[i]);i+=1
-        parts.append('<p>'+inline('\n'.join(rows))+'</p>')
+        text='\n'.join(rows)
+        tone=next((key for name,key in [('Improving','up'),('Deteriorating','down'),('Conditional','conditional'),('Unresolved','flat')] if text.startswith(name+' · ')),None)
+        parts.append('<p'+(' class="signal-label '+tone+'"' if tone else '')+'>'+inline(text)+'</p>')
     body=''.join(parts)
     targets=set(re.findall(r'href="#([^\"]+)"',body));ids=set(re.findall(r'id="([^\"]+)"',body))
     if not targets<=ids:raise ValueError('Unresolved Markdown source reference')
     title=next((line[2:] for line in lines if line.startswith('# ')),'Earnings report')
-    return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(title)+'</title><style>body{max-width:1050px;margin:32px auto;padding:0 22px;font:16px/1.55 system-ui;color:#20302a;background:#f7f7f2}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid #ccd3cb}blockquote{border-left:3px solid #859e8c;padding-left:16px;white-space:pre-wrap}a{color:#17634d}.direction{display:inline-block;font-size:12px;font-weight:650;white-space:nowrap;margin-left:6px}.direction.up{color:#166534}.direction.down{color:#a32323}.direction.flat{color:#52605a}</style><header>'+('Accepted after independent review' if status=='accepted' else 'Draft — review pending')+'</header><main>'+body+'</main></html>'
+    return '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+html.escape(title)+'</title><style>body{max-width:1050px;margin:32px auto;padding:0 22px;font:16px/1.55 system-ui;color:#20302a;background:#f7f7f2}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid #ccd3cb}blockquote{border-left:3px solid #859e8c;padding-left:16px;white-space:pre-wrap}a{color:#17634d}.direction{display:inline-block;font-size:12px;font-weight:650;white-space:nowrap;margin-left:6px}.direction.up,.signal-label.up{color:#14532d;background:#dcfce7}.direction.down,.signal-label.down{color:#991b1b;background:#fee2e2}.direction.flat,.signal-label.flat{color:#475569;background:#f1f5f9}.signal-label.conditional{color:#854d0e;background:#fef3c7}.direction{padding:3px 7px;border-radius:5px}.signal-label{padding:8px 12px;border-radius:6px;font-size:14px;font-weight:650}.table-scroll{overflow-x:auto;margin:18px 0}h1{font-size:32px;line-height:1.15}h2{margin-top:40px;padding-top:14px;border-top:2px solid #ccd3cb;font-size:23px}h3{font-size:18px}th[scope=row]{font-weight:550}td{font-variant-numeric:tabular-nums}thead{background:#e8ede9}header{font-size:12px;color:#52605a}@media(max-width:650px){body{padding:0 14px}table{min-width:620px}h1{font-size:26px}}</style><header>'+('Accepted after independent review' if status=='accepted' else 'Draft — review pending')+'</header><main>'+body+'</main></html>'
 
 
 def write(path,state,bundle,catalog,pack=None,*,status='draft'):

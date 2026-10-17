@@ -14,6 +14,7 @@ from . import earnings_passage_pipeline as pipe, earnings_mixed_pipeline as lega
 from . import earnings_mixed_runner as base, earnings_file_runner as runner
 from . import earnings_file_context as context, earnings_markdown as markdown
 from . import earnings_file_checkpoint as checkpoint
+from . import earnings_report_template as template
 from . import earnings_batch_review as batch, earnings_signals as signals
 from . import earnings_mechanical_preflight as mechanical, earnings_qa_grounding as grounding
 
@@ -40,7 +41,7 @@ def verify_budget_authorization(path,case):
     return a
 
 
-def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None, signal_preparation=None):
+def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None, signal_preparation=None, report_template=template.VERSION):
     root=Path(output).resolve();case=Path(case).resolve();writing=Path(writing).resolve()
     require(financial_mode in ('deterministic-original-facts-v1','model-original-selector-v1'),'Known financial preparation mode required')
     require(max_tokens is None and budget_authorization is not None or type(max_tokens) is int and 1<=max_tokens<=1200000,'Explicit lifecycle budget or approved cap removal required')
@@ -58,6 +59,10 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         'code':[{'path':str(q),'sha256':base.sha(q)} for q in sorted(code)],
         'qa_grounding_sha256':base.sha(root/'qa-grounding.json'),'report_signals':True,'deterministic_corrections':True,
         'transport':'file-evidence-ipython-markdown-v1','financial_mode':financial_mode}
+    require(report_template in (None, template.VERSION),'Known report template required')
+    # Prepared continuations retain their authenticated author schema and writing.
+    if report_template and not any(x is not None for x in (recovery, preparation, analysis_preparation, review_preparation, signal_preparation)):
+        p['report_template']=report_template
     if signal_preparation is not None:
         from . import earnings_prepared_signals as prepared_signals
         require(all(x is None for x in (recovery,budget_authorization,preparation,analysis_preparation,review_preparation)),'Signal continuation has separate exact lineage')
@@ -136,6 +141,7 @@ def load(root):
         approved=verify_budget_authorization(p['budget_authorization'],p['case_path'])
         require(p['authorized_prior_tokens']==approved['prior_usage_tokens'],'Prior usage changed')
     else:require(p.get('authorized_prior_tokens',0)==0,'Unbound prior usage')
+    require(p.get('report_template') in (None, template.VERSION),'Unknown frozen report template')
     bundle=evidence.load_bundle(p['evidence_manifest']);catalog=passages.catalog(p['evidence_manifest'])
     require(catalog==base.read(root/'passages.json'),'Source passage catalogue changed')
     return p,bundle,catalog
@@ -149,6 +155,7 @@ def instruction(role,index,job,p):
         ('print(ctx.handoff_batch())\n```' if role in ('analysis','signal_author','review','correction') else 'print(ctx.call_batch())\n```'))
     return ((PROMPTS/'common.md').read_text()+'\n'+(PROMPTS/(role+'.md')).read_text()+\
         '\n## Writing standard\n\n'+Path(p['writing_standard']).read_text()+\
+        ('\n'+template.INSTRUCTIONS if p.get('report_template')==template.VERSION and role in ('analysis','signal_author','review','correction') else '')+\
         '\n## Context access\n\n'+bootstrap+'\n\nInventory counts: '+json.dumps(inventory,sort_keys=True)+\
         '\n\nUse `ctx.scope(id, start=0, limit=6000)`, `ctx.passage(id, neighbors=1)`, `ctx.search(literal)`, '
         '`ctx.financial_row(fact_id, start=0)`, `ctx.artifact(name, start=0)`, or `ctx.file(name, start=0)`. Print the relevant results. '
@@ -273,7 +280,7 @@ def _advance(root,execute):
     for role in (() if continued else ('financial','retrieval','analysis','signal_author')):
         if role=='financial' and p.get('financial_mode')=='deterministic-original-facts-v1':
             from . import earnings_financial_outline
-            artifacts[role]=earnings_financial_outline.artifact(bundle['financial'])
+            artifacts[role]=earnings_financial_outline.artifact(bundle['financial'],expanded=p.get('report_template')==template.VERSION)
             pipe.validate(role,artifacts[role],bundle,catalog)
             context.write(root/'financial-compiled.json',{'status':'source_bound_draft_pending_independent_review','content':artifacts[role],
                 'financial_source_sha256':base.sha(root/'evidence/financial.json')})
@@ -311,7 +318,10 @@ def _advance(root,execute):
         if role=='signal_author':
             pack=signals.validate(value['content'],state,bundle,catalog)
         else:
-            pipe.validate(role,value['content'],bundle,catalog);artifacts[role]=value['content']
+            pipe.validate(role,value['content'],bundle,catalog)
+            if role=='analysis' and p.get('report_template'):
+                require(value['content'].get('report_template')==p['report_template'],'Author must retain frozen report template')
+            artifacts[role]=value['content']
     items=batch.units(state,pack);findings={}
     for round_no in range(3):
         if round_no:
