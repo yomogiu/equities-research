@@ -25,9 +25,9 @@ METRICS = {
 INSTRUCTIONS = '''
 ## Source-led six-section report contract
 
-Structure overrides older requests for next tests, valuation, an investment thesis
-or word/finding quotas. Use supplied documents and call only; no broader market
-research or new forecasts. Script renders Quarter in Focus; Growth & Demand;
+Overrides older next-tests, thesis, valuation and length requirements. Use supplied
+documents and call only; no broader market research or new forecasts. Script renders
+Quarter in Focus; Growth & Demand;
 Earnings & Efficiency; Cash & Financial Capacity; Outlook & Guidance;
 Earnings-Call Q&A. Tables, units, comparisons, references
 and colours are scripted. Do not author tables or repeat numbers without explanation.
@@ -40,23 +40,21 @@ paragraph quota. Existing reviewers must flag material narrative omissions.
 Analysis: retain existing schema; add report_template: "source-led-six-sections-v1"
 and section: demand|earnings|cash|outlook|qa to every finding. Opening supplies
 Quarter in Focus. Return next_tests: []. No watchlist or portfolio conclusion.
-Route each finding once; do not force commentary into unsupported sections.
+Route findings once; leave unsupported sections empty.
 
-Q&A remains substantive: select consequential actual questions and answers from
-existing complete-call retrieval. Use Asked:, Management's answer:, Interpretation:
-paragraphs where useful. Preserve speaker identity, qualifications, partial answers
-and non-answers; cite original exchange/turn scopes. Explain supplied evidence
-without a market thesis. Do not duplicate exchanges or impose an exchange quota.
+Q&A: select consequential actual questions/answers from complete-call retrieval.
+Use Asked:, Management's answer:, Interpretation: paragraphs where useful. Preserve
+speakers, qualifications and non-answers; cite exchange/turn scopes. No market
+thesis, duplicate exchanges or exchange quota.
 If substantive Q&A is unavailable, state the gap rather than inventing exchanges.
 
 Outlook covers company guidance. Optional valuation requires supplied, cited dated
 price and forecast estimates, listing/currency/share-or-ADR basis and forecast
 period. Otherwise omit it; do not request additional data to fill the template.
 
-Review exact compiled candidate and existing Q&A coverage in the same fresh
-session. Corrections retain template marker and section routing. Enabled signals
-reuse existing findings within their sections; no separate Business signals section
-or repeated summaries. Context-dependent movements remain neutral.
+Review the compiled candidate and Q&A in the existing fresh session. Corrections
+retain template/sections. Signals stay with findings, without a Business signals
+section or repeated summaries. Context-dependent movements remain neutral.
 '''
 
 
