@@ -58,3 +58,27 @@ def verify_reservation(output):
     expected_prompt=pipeline.instruction('retrieval',index,job,protocol)+'\nThis is the sole charged retrieval repair, consuming correction round 1 of the original report. The unreviewed prior retrieval is in artifacts.json. Inspect exact originals and repair ALL invalid source, passage, turn and exchange addresses. Preserve source qualification and full Q&A coverage. Never infer an ID from a prefix or treat old output as evidence. Return the complete validated retrieval object; use Evidence.validate_result before final submission.\n'
     c.require(v['prompt']==expected_prompt,'Frozen repair instructions changed')
     return v
+
+def completed(output):
+    """Authenticate a completed repair; never converts incomplete execution."""
+    from . import earnings_file_runner as runner,earnings_file_pipeline as pipeline,earnings_compact_evidence as evidence
+    v=verify_reservation(output);job=Path(v['job']);q=b.read(job/'request.json');value=runner.verify_job(job)
+    c.require(q['bindings']==v['bindings'] and (job/'prompt.md').read_text()==v['prompt'],'Repair request or instructions changed')
+    c.require([q['model'],q['effort']]==v['models']['retrieval'] and q['max_tokens']==v['max_tokens'] and q['max_tool_calls']==48,'Repair changed model or original limits')
+    root=Path(v['previous_root']);protocol=b.read(root/'protocol.json');catalog=b.read(root/'passages.json');bundle=evidence.load_bundle(protocol['evidence_manifest'])
+    pipeline.coverage('retrieval',Path(v['index']),job,value['content'],catalog,{})
+    pipeline.pipe.validate('retrieval',value['content'],bundle,catalog)
+    sid=value['receipt']['session']['id'];c.require(sid!=v['prior']['session_id'],'Fresh retrieval repair session required')
+    tokens=v['prior']['tokens']+value['receipt']['session']['usage']['totalTokens'];c.require(tokens<v['prior']['max_tokens'],'No lifecycle cap reset')
+    return {'content':value['content'],'tokens':tokens,'session_id':sid,'session_ids':[v['prior']['session_id'],sid],'max_tokens':v['prior']['max_tokens'],'models':v['models'],'case_sha256':v['prior']['case_sha256'],'catalog_sha256':v['prior']['catalog_sha256'],'writing_sha256':v['prior']['writing_sha256'],'report_template':v['prior']['report_template'],'spent_correction_rounds':1}
+
+PREPARATION_VERSION='authenticated-charged-retrieval-preparation-v1'
+def prepare(output,case,destination):
+    output=Path(output).resolve();v=completed(output);c.require(v['case_sha256']==b.sha(case),'Original case required')
+    record={'version':PREPARATION_VERSION,'repair_root':str(output),'reservation_sha256':b.sha(output/'reservation.json'),**v};c.write(destination,record);return record
+
+def verify(path,case,catalog):
+    v=b.read(path);root=Path(v['repair_root']);c.require(v['version']==PREPARATION_VERSION and v['reservation_sha256']==b.sha(root/'reservation.json'),'Repair preparation lineage changed')
+    actual=completed(root);c.require(all(v[k]==x for k,x in actual.items()),'Repair preparation changed or usage reset')
+    c.require(v['case_sha256']==b.sha(case) and v['catalog_sha256']==b.digest(catalog) and v['spent_correction_rounds']==1,'Original source identity and spent round required')
+    return v

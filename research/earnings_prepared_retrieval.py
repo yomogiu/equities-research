@@ -48,7 +48,11 @@ def prepare(previous,case,output):
 
 
 def verify(path,case,catalog):
-    a=base.read(path);context.require(a['version']==VERSION and a['case_sha256']==base.sha(case),'Preparation case changed')
+    a=base.read(path)
+    if a.get('version')=='authenticated-charged-retrieval-preparation-v1':
+        from . import earnings_retrieval_repair
+        return earnings_retrieval_repair.verify(path,case,catalog)
+    context.require(a['version']==VERSION and a['case_sha256']==base.sha(case),'Preparation case changed')
     old=Path(a['previous_root']);context.require(a['protocol_sha256']==base.sha(old/'protocol.json') and a['output_sha256']==base.sha(old/'jobs/retrieval/output.json'),'Preparation ancestor changed')
     v=replay(old)
     context.require(a['content']==normalize(v['raw']) and all(a[k]==v[k] for k in ('tokens','session_id','max_tokens','case_sha256','catalog_sha256')) and a['catalog_sha256']==base.digest(catalog),'Preparation derivation changed')
