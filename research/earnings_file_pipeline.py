@@ -180,7 +180,7 @@ def instruction(role,index,job,p):
         'Do not paginate a complete financial extraction or transcript index into model context. '
         'ctx.artifacts and ctx.catalog are already in kernel memory; project relevant fields rather than printing entire large artifacts. '
         'The host saves delivered-source progress after every tool call. Save authored work too with ctx.checkpoint(draft_dict, pending_list), combined with a planned tool call; automatic source checkpoints contain no authored prose. '
-        'Tool exploration is bounded by the actual evidence page counts, with one metadata allowance and at most eight work calls; then the host disables tools for final writing. '
+        'The work plan reserves validation. handoff_batch includes metadata; retrieval reserves a metadata read. Eight work calls maximum. '
         'Your bound work plan is '+json.dumps(runner.work_plan(role,index),sort_keys=True)+'. '
         'Batch handoff fields and all needed original evidence within that plan, keep each response below 60000 characters, and return the requested metadata after the tool phase. '
         'For analysis, review and corrections read handoff_batch, then call_batch, then support_batch. Complete all next_start pages at each stage before proceeding. The work plan reserves every required page; never concatenate outputs past 60000 characters. support_batch includes the complete financial concept inventory and all extraction gaps, grouped without repeating original HTML rows. Reviewers must inspect that inventory and the selected original value/context support, and use their reserved filing check to challenge material claims. '

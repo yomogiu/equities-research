@@ -18,11 +18,14 @@ USAGE=('input','output','cacheRead','cacheWrite','totalTokens')
 
 
 def work_plan(role,index):
-    """Reserve actual required packet pages plus one metadata call, bounded at 8."""
+    """Reserve evidence, metadata and pre-submit validation, bounded at 8."""
     if role not in ('financial','retrieval','analysis','signal_author','review','correction'):return None
     reader=context.Evidence(index,Path(index).parent/'unused-plan.jsonl',_replay=True)
-    plan={'metadata_allowance':1}
-    if role=='financial':return {**plan,'work_tool_limit':3}
+    # Handoff packets already include the complete metadata; do not reserve a
+    # duplicate metadata read at the expense of final result validation.
+    plan={'metadata_allowance':0 if role in ('analysis','signal_author','review','correction') else 1,
+          'validation_checks':1}
+    if role=='financial':return {**plan,'work_tool_limit':4}
     if role in ('retrieval','analysis','review','correction'):
         start=0;pages=0
         while True:

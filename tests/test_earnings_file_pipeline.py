@@ -66,7 +66,7 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
             return 'header\nlocators\n'+json.dumps({'next_start':100 if start==0 else None})+'\ntext'
         with patch.object(c.Evidence,'_call_batch',side_effect=page):
             plan=r.work_plan('retrieval',index)
-        self.assertEqual(plan,{'metadata_allowance':1,'call_pages':2,'filing_checks':1,'work_tool_limit':4})
+        self.assertEqual(plan,{'metadata_allowance':1,'validation_checks':1,'call_pages':2,'filing_checks':1,'work_tool_limit':5})
         self.assertFalse((Path(index).parent/'unused-plan.jsonl').exists())
 
     def test_work_plan_accounts_for_handoff_and_support_continuations(self):

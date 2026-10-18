@@ -10,6 +10,20 @@ from research import earnings_file_runner as runner
 
 
 class ResultPreflightTests(PassageFixture, unittest.TestCase):
+    def test_source_reads_leave_a_call_for_result_validation(self):
+        index=self.reader().root/'index.json'
+        plan=runner.work_plan('retrieval',index)
+        original_reads=plan['call_pages']+plan['filing_checks']+1  # metadata
+        self.assertGreater(plan['work_tool_limit'],original_reads)
+        self.assertLessEqual(plan['work_tool_limit'],8)
+
+    def test_handoff_metadata_does_not_consume_validation_slot(self):
+        index=self.reader().root/'index.json'
+        for role in ('analysis','review','correction','signal_author'):
+            plan=runner.work_plan(role,index)
+            self.assertEqual(plan['metadata_allowance'],0)
+            self.assertEqual(plan['validation_checks'],1)
+
     def reader(self):
         index=context.assemble(self.root/'evidence/manifest.json',self.catalog,self.root/'context',artifacts={},metadata={})
         job=self.root/'job'
