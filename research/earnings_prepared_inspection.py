@@ -3,10 +3,14 @@
 The failed author's output and usage remain immutable and charged. It is never
 accepted as inspected; a new correction must inspect originals and the full report.
 """
-import json,subprocess,sys,re
+import json,subprocess,sys,re,inspect
 from pathlib import Path
 from . import earnings_mixed_runner as b,earnings_file_context as c
 VERSION='authenticated-inspection-correction-continuation-v1'
+def inspection_failure(message):
+    prefix='Required original evidence was not completely inspected: '
+    return message=='Complete candidate Markdown must be inspected' or (message.startswith(prefix) and bool(message[len(prefix):]) and all(re.fullmatch('[A-Za-z0-9_-]+',part) for part in message[len(prefix):].split(', ')))
+
 PROGRAM=r'''
 import sys,json
 from pathlib import Path
@@ -17,7 +21,7 @@ assert not any(protocol.get(k) for k in ('review_preparation_path','signal_prepa
 assert sorted(x.name for x in (root/'jobs').iterdir())==['analysis','correction-1','retrieval','review-0','signal_author']
 try:p.verify(root)
 except ValueError as error:
- assert str(error)=='Complete candidate Markdown must be inspected'
+ assert inspection_failure(str(error))
  t=error.__traceback__;v=None;j=None
  while t:
   f=t.tb_frame
@@ -38,7 +42,7 @@ def replay(previous):
     c.require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=code,text=True).strip()==code.name,'Original verifier changed')
     c.require(not subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=code,text=True).strip(),'Original verifier edits forbidden')
     c.require(subprocess.check_output(['git','remote','get-url','origin'],cwd=code,text=True).strip()=='https://github.com/yomogiu/equities-research.git','Original verifier origin changed')
-    return json.loads(subprocess.check_output([sys.executable,'-I','-B','-c',PROGRAM,str(code),str(root)],text=True))
+    return json.loads(subprocess.check_output([sys.executable,'-I','-B','-c','import re\n'+inspect.getsource(inspection_failure)+PROGRAM,str(code),str(root)],text=True))
 def prepare(previous,case,output):
     root=Path(previous).resolve();v={'version':VERSION,'previous_root':str(root),'protocol_sha256':b.sha(root/'protocol.json'),**replay(root)}
     c.require(v['case_sha256']==b.sha(case) and 0<=v['tokens']<v['max_tokens'] and v['start_round']==2,'Original case, remaining cap and last round required')

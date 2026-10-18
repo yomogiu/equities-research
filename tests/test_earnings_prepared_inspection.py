@@ -11,3 +11,10 @@ class InspectionContinuationTests(unittest.TestCase):
     for key,value in [('tokens',0),('start_round',1),('max_tokens',2400000),('models',{})]:
      record.write_text(json.dumps({**v,key:value}))
      with self.assertRaises(ValueError):p.verify(record,case,catalog)
+
+class InspectionFailureScopeTests(unittest.TestCase):
+ def test_source_coverage_is_exactly_scoped(self):
+  for message in ('Complete candidate Markdown must be inspected','Required original evidence was not completely inspected: D001, F002, Pabc'):
+   self.assertTrue(p.inspection_failure(message))
+  for message in ('fetch failed','Invalid/duplicate/unknown signal passages','Required original evidence was not completely inspected: ','Required original evidence was not completely inspected: not an ID','Complete candidate Markdown was inspected'):
+   self.assertFalse(p.inspection_failure(message))
