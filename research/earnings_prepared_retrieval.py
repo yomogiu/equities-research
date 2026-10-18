@@ -49,6 +49,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     a=base.read(path)
+    if a.get('version')=='authenticated-two-charged-retrieval-preparation-v1':
+        from . import earnings_second_retrieval_repair
+        return earnings_second_retrieval_repair.verify(path,case,catalog)
     if a.get('version')=='authenticated-charged-retrieval-preparation-v1':
         from . import earnings_retrieval_repair
         return earnings_retrieval_repair.verify(path,case,catalog)

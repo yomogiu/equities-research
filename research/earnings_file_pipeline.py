@@ -92,8 +92,8 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         inherited=prepared.verify(preparation,case,catalog)
         require(max_tokens<=inherited['max_tokens'],'Preparation continuation cannot raise original lifecycle ceiling')
         p.update(preparation_path=str(Path(preparation).resolve()),preparation_sha256=base.sha(preparation),inherited_tokens=inherited['tokens'])
-        if inherited.get('version')=='authenticated-charged-retrieval-preparation-v1':
-            p.update(models=inherited['models'],report_template=inherited['report_template'],retrieval_repair_rounds=1)
+        if inherited.get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1'):
+            p.update(models=inherited['models'],report_template=inherited['report_template'],retrieval_repair_rounds=inherited['spent_correction_rounds'])
     if analysis_preparation is not None:
         from . import earnings_prepared_analysis as prepared_analysis
         require(preparation is not None and recovery is None and budget_authorization is None,'Analysis continuation requires verified retrieval lineage')
@@ -139,8 +139,8 @@ def load(root):
         from . import earnings_prepared_retrieval as prepared
         require(base.sha(p['preparation_path'])==p['preparation_sha256'],'Preparation manifest changed')
         inherited=prepared.verify(p['preparation_path'],p['case_path'],base.read(root/'passages.json'))
-        if inherited.get('version')=='authenticated-charged-retrieval-preparation-v1':
-            require(p['models']==inherited['models'] and p.get('retrieval_repair_rounds')==1,'Original retrieval repair models and spent round changed')
+        if inherited.get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1'):
+            require(p['models']==inherited['models'] and p.get('retrieval_repair_rounds')==inherited['spent_correction_rounds'],'Original retrieval repair models and spent round changed')
         require(p['max_tokens']<=inherited['max_tokens'],'Preparation ceiling changed')
         if p.get('analysis_preparation_path'):
             from . import earnings_prepared_analysis as prepared_analysis
@@ -354,10 +354,10 @@ def _advance(root,execute):
     if continued and continued.get('version')=='authenticated-completed-role-coverage-continuation-v1':
         require(continued['start_round'] in (1,2),'Original remaining correction required')
         start_round=continued['start_round'];findings=continued['findings']
-    if p.get('retrieval_repair_rounds')==1:
-        start_round=1
+    if p.get('retrieval_repair_rounds') in (1,2):
+        start_round=p['retrieval_repair_rounds']
     for round_no in range(start_round,3):
-        if round_no and not (p.get('retrieval_repair_rounds')==1 and round_no==1):
+        if round_no and not (p.get('retrieval_repair_rounds')==round_no):
             name='correction-'+str(round_no);before=copy.deepcopy(items)
             if continued and continued.get('version')=='authenticated-completed-role-coverage-continuation-v1' and round_no==continued['start_round']:
                 state,pack=batch.materialize(items)
