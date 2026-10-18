@@ -82,6 +82,16 @@ class BatchTests(PassageFixture, unittest.TestCase):
             self.assertEqual(fixed['changes'][0]['value']['basis']['citations'],['F001','F002'])
             self.assertEqual(fixed['changes'][0]['value']['basis']['text'],value['basis']['text'])
             self.assertEqual(len(notes),1)
+            generic=copy.deepcopy(plan)
+            generic['changes'][0]['value']['basis']['text']='Financial tables present reported GAAP figures; periods and units are shown in their headers.'
+            resolved,audit=b.resolve_basis_citations(items,generic,bundle)
+            self.assertEqual(resolved['changes'][0]['value']['basis']['citations'],['F001','F002'])
+            self.assertEqual(audit[0]['label'],generic['changes'][0]['value']['basis']['text'])
+            self.assertEqual(generic['changes'][0]['value']['basis']['citations'],[])
+            display['groups'].append({'unit':'million shares'})
+            self.assertTrue(b.resolve_basis_citations(items,generic,bundle)[1])
+            self.assertEqual(b.resolve_basis_citations(items,plan,bundle),(plan,[]))
+            display['groups'].pop()
             bad=copy.deepcopy(plan);bad['changes'][0]['value']['basis']['text']='Unrelated unsupported claim'
             self.assertEqual(b.resolve_basis_citations(items,bad,bundle),(bad,[]))
             bundle['financial']['observations'][0]['concept']='fake:AdjustedRevenue'

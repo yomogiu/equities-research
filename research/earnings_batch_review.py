@@ -162,7 +162,7 @@ def resolve_basis_citations(items,plan,bundle):
     facts=[observations[k] for k in rendered['selected_fact_ids']]
     units={g['unit'] for g in rendered['groups']}
     currencies=[u.split()[0] for u in units if re.fullmatch(r'[A-Z]{3} millions',u)]
-    if len(currencies)!=1 or units!={currencies[0]+' millions',currencies[0]+'/share'}:return result,changes
+    if len(currencies)!=1 or not units<={currencies[0]+' millions',currencies[0]+'/share','million shares'}:return result,changes
     if not facts or not all(o['concept'].startswith('us-gaap:') for o in facts):return result,changes
     if not isinstance(bundle['financial']['units'],dict):return result,changes
     eps=[o for o in facts if display.scaled_value(o,bundle['financial']['units'][o['unit_id']])[1].endswith('/share')]
@@ -170,10 +170,10 @@ def resolve_basis_citations(items,plan,bundle):
     expected='Financial tables: GAAP; '+currencies[0]+' millions except diluted EPS in '+currencies[0]+'/share.'
     for op in result['changes']:
         basis=op['value'].get('basis') if op['unit_id']=='format' else None
-        if isinstance(basis,dict) and basis.get('text')==expected and basis.get('citations')==[]:
+        if isinstance(basis,dict) and (basis.get('text')!=expected or units=={currencies[0]+' millions',currencies[0]+'/share'}) and basis.get('text') in (expected, 'Financial tables present reported GAAP figures; periods and units are shown in their headers.') and basis.get('citations')==[]:
             basis['citations']=rendered['selected_fact_ids'][:]
             changes.append({'unit_id':'format','field_path':['basis','citations'],
-                'selected_fact_ids':rendered['selected_fact_ids'],'label':expected,
+                'selected_fact_ids':rendered['selected_fact_ids'],'label':basis['text'],
                 'financial_sha256':runner.digest(items['financial']['value'])})
     return result,changes
 
