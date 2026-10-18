@@ -4,6 +4,10 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {installDelivery} from './earnings_file_delivery.mjs';
+import {instrumentFetch} from './earnings_transport_diagnostics.mjs';
+const transportFailures=[];
+const originalFetch=globalThis.fetch;
+globalThis.fetch=instrumentFetch(originalFetch,(value)=>{if(transportFailures.length<16)transportFailures.push(value);});
 
 const [sdkRoot, job, mode] = process.argv.slice(2);
 const {AuthStorage, ModelRegistry, SettingsManager, DefaultResourceLoader,
@@ -133,6 +137,7 @@ try {
 } catch (_) {
   try { manager?.flushNow(); if(!fs.existsSync(path.join(job,'wire.json'))) save('wire.json',wires); } catch (_) {}
   // Provider errors may contain account details; never print or persist them.
+  try { if(transportFailures.length)save('transport-failure.json',transportFailures); } catch (_) {}
   try { save('runtime-failure.json', {stage:localFailure?'local_guard':stage, ...(localFailure?{code:localFailure}:{} )}); } catch (_) {}
   if (session) { try { await session.disposeAsync({kernelSnapshot:false}); } catch (_) {} }
   process.stderr.write('Prime role failed at '+stage+'; inspect private session status.\n');
