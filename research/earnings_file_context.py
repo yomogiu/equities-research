@@ -164,6 +164,22 @@ class Evidence:
         self.verify()
         bundle=evidence.load_bundle(self.index['manifest'])
         try:
+            # Report all mistyped exchange bindings together; never guess or rewrite IDs.
+            exchange_ids=set(self.index['exchange_ids'])
+            invalid=[]
+            def check_ids(node):
+                if isinstance(node,dict):
+                    for key,item in node.items():
+                        if key=='exchange_id' and (not isinstance(item,str) or item not in exchange_ids):
+                            invalid.append(item)
+                        else:check_ids(item)
+                elif isinstance(node,list):
+                    for item in node:check_ids(item)
+            check_ids(value)
+            if invalid:
+                return {'valid':False,'acceptance':False,'error':'Unknown Q&A coverage entry exchange IDs',
+                        'invalid_exchange_ids':invalid,'valid_exchange_ids':sorted(exchange_ids),
+                        'instruction':'Copy exact IDs from the delivered call locators; do not infer bindings from similar spelling.'}
             if role in ('financial','retrieval','analysis'):
                 pipe.validate(role,value,bundle,self.catalog)
                 if role=='analysis':

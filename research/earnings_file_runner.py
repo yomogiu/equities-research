@@ -206,18 +206,26 @@ def run_role(job_path,prompt,model,effort,bindings,index,*,max_tokens,max_tool_c
         raise RuntimeError('Incomplete role cannot be launched again')
     if job.exists() and any(job.iterdir()):raise ValueError('Fresh job directory required')
     job.mkdir(parents=True,exist_ok=True);old.save(job/'request.json',q);(job/'prompt.md').write_text(prompt)
+    # Every fresh attempt owns an explicit empty audit, including restore-only calls.
+    (job/'retrieval.jsonl').touch(exist_ok=False)
     if resume is not None:
         old.save(job/'resume.json',resume)
         verify_request(job,q)
     launch={'id':str(uuid.uuid4()),'request_sha256':old.digest(q),'started_at':old.datetime.now(old.timezone.utc).isoformat()};old.save(job/'launch.json',launch)
     node,sdk=old._runtime_paths();started=time.monotonic();process=subprocess.Popen([str(node),str(HELPER),str(sdk),str(job)],cwd=job,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+    timed_out=False
     try:code=process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
+        timed_out=True
         os.killpg(process.pid,signal.SIGTERM)
         try:process.wait(timeout=5)
         except subprocess.TimeoutExpired:os.killpg(process.pid,signal.SIGKILL);process.wait()
         code=process.returncode
     execution={'request_sha256':old.digest(q),'launch_sha256':old.sha(job/'launch.json'),'exit_code':code,'seconds':round(time.monotonic()-started,3),'status':'execution_failed'}
+    if timed_out:
+        execution['failure_kind']='worker_timeout'
+        execution['execution_certainty']='unknown'
+        execution['retry_authorized']=False
     if code!=0:old.save(job/'execution.json',execution);raise RuntimeError('Prime/IPython role failed; immutable launch retained, no retry')
     try:
         execution['session']=receipt(job,q);context.audit(index,job/'retrieval.jsonl');content=parse((job/'response.md').read_text())
