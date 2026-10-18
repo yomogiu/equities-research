@@ -32,14 +32,31 @@ def equivalent_html(old,new,url,doc,extract,financial):
   facts.append({'observations':[{k:v for k,v in o.items() if k not in ('observation_id','source_raw_sha256','support')} for o in f['observations']],'gaps':[{k:v for k,v in g.items() if k!='start'} for g in f['gaps']]})
  return facts[0]==facts[1]
 
-def checked(root,old_id,new_id,receipt_path):
+def historical_packet(root,packet,as_of):
+ from . import freshness
+ from datetime import datetime,timezone
+ stamp=freshness.timestamp(as_of);c.require(stamp is not None,'Recorded timezone-aware launch required')
+ moment=datetime.fromisoformat(stamp);c.require(moment<=datetime.now(timezone.utc),'Future role launch rejected')
+ library.materialize(root,packet,historical_currentness=True)
+ snapshot=b.read(root/f"library/snapshots/{packet['catalog_id']}.json")
+ c.require(packet['identity_verified'] and not packet['translation_required'] and snapshot['issuers'].get(packet['issuer_id'],{}).get('monitoring_eligible') is True,'Historical qualified issuer required')
+ c.require(freshness.assess_packet(packet,now=moment)['status']=='ready','Sources were not fresh at role launch')
+ return packet
+
+def checked(root,old_id,new_id,receipt_path,*,as_of=None):
  from .earnings_report_flow import validate_packet
  packet_ids(old_id,new_id)
  root=Path(root).resolve();old_path=library.resolve(root,'library/packets/'+old_id+'.json');new_path=library.resolve(root,'library/packets/'+new_id+'.json')
  old=b.read(old_path);new=b.read(new_path);c.require(old['packet_id']==old_id and new['packet_id']==new_id,'Packet identity changed')
  library.materialize(root,old,historical_currentness=True)
- current=validate_packet(root,new_id)  # Exact immutable successor, latest, eligible, and fresh NOW.
- receipt=b.read(receipt_path);rows=[r for r in receipt['companies'] if r['issuer_id']==old['issuer_id']]
+ current=validate_packet(root,new_id) if as_of is None else historical_packet(root,new,as_of)
+ # Historical replay authenticates launch-time qualification; live gates remain fresh NOW.
+ receipt=b.read(receipt_path)
+ if as_of is not None:
+  from . import freshness
+  observed=freshness.timestamp(receipt.get('checked_at'));launch=freshness.timestamp(as_of)
+  c.require(observed is not None and launch is not None and observed<=launch,'Source observation must precede recorded launch')
+ rows=[r for r in receipt['companies'] if r['issuer_id']==old['issuer_id']]
  c.require(len(rows)==1 and rows[0]['old_packet_id']==old_id and rows[0]['new_packet_id']==new_id,'Fresh source observation must bind this exact old/new packet')
  c.require(len(rows[0]['documents'])==len(old['documents']) and all(d['status'] in ('raw_identical','already_fresh','scoped_transcript_currentness_verified','identical_extracted_text_fiscal_tags_and_structured_facts') for d in rows[0]['documents']),'Every original source must be revalidated without substantive change')
  c.require({d['source_url'] for d in rows[0]['documents']}=={d['source_url'] for d in old['documents']},'Observation source membership changed')
@@ -63,13 +80,13 @@ def prepare(root,old_id,new_id,receipt,output):
  record={'version':VERSION,'old_packet_id':old_id,'new_packet_id':new_id,'old_packet_sha256':b.sha(root/f'library/packets/{old_id}.json'),'new_packet_sha256':b.sha(root/f'library/packets/{new_id}.json'),'source_receipt':str(receipt.relative_to(root)),'source_receipt_sha256':b.sha(receipt)}
  c.require(not Path(output).exists(),'New immutable currentness proof required');c.write(output,record);return record
 
-def verify(root,path):
+def verify(root,path,*,as_of=None):
  root=Path(root).resolve();v=b.read(path);packet_ids(v['old_packet_id'],v['new_packet_id']);c.require(v['version']==VERSION,'Known exact-source currentness proof required');receipt=library.resolve(root,v['source_receipt'])
  c.require(v['old_packet_sha256']==b.sha(root/f"library/packets/{v['old_packet_id']}.json") and v['new_packet_sha256']==b.sha(root/f"library/packets/{v['new_packet_id']}.json") and v['source_receipt_sha256']==b.sha(receipt),'Currentness proof sources changed')
- old,_=checked(root,v['old_packet_id'],v['new_packet_id'],receipt);return old
+ old,_=checked(root,v['old_packet_id'],v['new_packet_id'],receipt,**({} if as_of is None else {'as_of':as_of}));return old
 
 def input_bindings(root,path):
- root=Path(root).resolve();path=library.resolve(root,path);v=b.read(path);old=verify(root,path);new=b.read(root/f"library/packets/{v['new_packet_id']}.json")
+ root=Path(root).resolve();path=Path(path);path=library.resolve(root,str(path.relative_to(root)) if path.is_absolute() else str(path));v=b.read(path);old=verify(root,path);new=b.read(root/f"library/packets/{v['new_packet_id']}.json")
  names={str(path.relative_to(root)),v['source_receipt']}
  for packet in (old,new):
   names.add('library/packets/'+packet['packet_id']+'.json');names.add('library/snapshots/'+packet['catalog_id']+'.json')

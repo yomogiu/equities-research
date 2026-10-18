@@ -29,3 +29,12 @@ class FinalReviewRoutingTests(PassageFixture,unittest.TestCase):
    return {'status':'pending','stage':name},tokens
   with patch.object(pipeline,'load',return_value=(protocol,self.bundle,self.catalog)),patch.object(pipeline,'_job',side_effect=pending) as job:
    self.assertEqual(pipeline._advance(root,False)['stage'],'review-2');self.assertEqual(job.call_count,1)
+
+class LaunchBindingTests(unittest.TestCase):
+ def test_historical_clock_requires_exact_launch_request_binding(self):
+  with tempfile.TemporaryDirectory() as d:
+   job=Path(d);self.assertIsNone(second.launched_at(job));request={'bindings':{'original_tokens':340011}}
+   (job/'request.json').write_text(json.dumps(request));launch={'request_sha256':second.b.digest(request),'started_at':'2026-01-01T01:00:00+00:00'}
+   (job/'launch.json').write_text(json.dumps(launch));self.assertEqual(second.launched_at(job),launch['started_at'])
+   request['bindings']['original_tokens']=0;(job/'request.json').write_text(json.dumps(request))
+   with self.assertRaises(ValueError):second.launched_at(job)

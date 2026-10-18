@@ -59,3 +59,22 @@ class SourceIdentityTests(unittest.TestCase):
     with self.assertRaises(ValueError):p.validate_request(r,bad)
     bad=copy.deepcopy(request);bad['spec']['issuer_id']='other'
     with self.assertRaises(ValueError):p.validate_request(r,bad)
+
+ def test_input_bindings_normalizes_paths_and_rejects_escape(self):
+  with tempfile.TemporaryDirectory() as d:
+   r=Path(d).resolve();(r/'library/packets').mkdir(parents=True);(r/'library/snapshots').mkdir()
+   packet={'packet_id':'a'*64,'catalog_id':'snapshot','issuer_id':'fictional','documents':[]}
+   for path,value in [('proof.json',{'new_packet_id':'a'*64,'source_receipt':'receipt.json'}),('receipt.json',{'companies':[]}),('library/packets/'+'a'*64+'.json',packet),('library/snapshots/snapshot.json',{})]:(r/path).write_text(json.dumps(value))
+   with patch.object(p,'verify',return_value=packet):
+    expected=p.input_bindings(r,'proof.json')
+    self.assertEqual(p.input_bindings(r,Path('proof.json')),expected)
+    self.assertEqual(p.input_bindings(r,r/'proof.json'),expected)
+    with self.assertRaises(ValueError):p.input_bindings(r,r.parent/'outside')
+
+ def test_historical_replay_uses_launch_freshness_but_live_gate_still_checks_now(self):
+  packet=self.packet();packet.update(catalog_id='snapshot',freshness_policy={'event_max_age_hours':24,'annual_background_max_age_hours':720})
+  packet['documents'][0].update(checked_at='2026-01-01T00:00:00+00:00',retrieved_at='2026-01-01T00:00:00+00:00')
+  with patch.object(p.library,'materialize'),patch.object(p.b,'read',return_value={'issuers':{'fictional':{'monitoring_eligible':True}}}):
+   self.assertEqual(p.historical_packet(Path('/tmp'),packet,'2026-01-01T01:00:00+00:00'),packet)
+   for stamp in ('2026-01-03T00:00:00+00:00','2026-01-01T01:00:00','2999-01-01T00:00:00+00:00'):
+    with self.assertRaises(ValueError):p.historical_packet(Path('/tmp'),packet,stamp)
