@@ -108,7 +108,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
 
 def load(root):
     p=base.read(root/'protocol.json')
-    require(p['version']==VERSION and p['models']=={k:list(v) for k,v in MODELS.items()} and p['max_correction_rounds']==2
+    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version')=='authenticated-header-basis-continuation-v1') and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
@@ -125,6 +125,8 @@ def load(root):
         from . import earnings_prepared_review as prepared_review
         require(base.sha(p['review_preparation_path'])==p['review_preparation_sha256'],'Review continuation manifest changed')
         inherited_review=prepared_review.verify(p['review_preparation_path'],p['case_path'],base.read(root/'passages.json'))
+        if inherited_review.get('version')=='authenticated-header-basis-continuation-v1':
+            require(p['models']==inherited_review['models'],'Original continuation model assignments changed')
         require(p['inherited_tokens']==inherited_review['tokens'] and p['max_tokens']<=inherited_review['max_tokens'] and p['writing_sha256']==inherited_review['writing_sha256'],'Review continuation usage, ceiling or guide changed')
     elif p.get('recovery_path'):
         from . import earnings_file_recovery
