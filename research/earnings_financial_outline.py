@@ -49,7 +49,7 @@ def build(data, *, expanded=False):
                 q=max(previous,key=lambda x:x[2])
                 if q not in facts:facts.append(q)
         if expanded and first[3] is None:
-            previous=[x for x in candidates if x[0]['concept']==first[0]['concept'] and x[0]['unit_id']==first[0]['unit_id'] and x[1].get('entity')==first[1].get('entity') and x[3] is None and 70<=(date.fromisoformat(current)-date.fromisoformat(x[2])).days<=105]
+            previous=[x for x in candidates if x[0]['concept']==first[0]['concept'] and x[0]['unit_id']==first[0]['unit_id'] and x[1].get('entity')==first[1].get('entity') and x[3] is None and x[2]<current]
             if previous:
                 q=max(previous,key=lambda x:x[2])
                 if q not in facts:facts.append(q)
