@@ -79,7 +79,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         inherited_review=prepared_review.verify(review_preparation,case,catalog)
         require(max_tokens<=inherited_review['max_tokens'] and inherited_review['writing_sha256']==base.sha(writing),'Review continuation cannot raise ceiling or change writing guide')
         p.update(review_preparation_path=str(Path(review_preparation).resolve()),review_preparation_sha256=base.sha(review_preparation),inherited_tokens=inherited_review['tokens'])
-        if inherited_review.get('version')=='authenticated-header-basis-continuation-v1':
+        if inherited_review.get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1'):
             p['models']=inherited_review['models']
             p['report_template']=inherited_review['report_template']
     if budget_authorization is not None:
@@ -108,7 +108,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
 
 def load(root):
     p=base.read(root/'protocol.json')
-    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version')=='authenticated-header-basis-continuation-v1') and p['max_correction_rounds']==2
+    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1')) and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
@@ -125,7 +125,7 @@ def load(root):
         from . import earnings_prepared_review as prepared_review
         require(base.sha(p['review_preparation_path'])==p['review_preparation_sha256'],'Review continuation manifest changed')
         inherited_review=prepared_review.verify(p['review_preparation_path'],p['case_path'],base.read(root/'passages.json'))
-        if inherited_review.get('version')=='authenticated-header-basis-continuation-v1':
+        if inherited_review.get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1'):
             require(p['models']==inherited_review['models'],'Original continuation model assignments changed')
         require(p['inherited_tokens']==inherited_review['tokens'] and p['max_tokens']<=inherited_review['max_tokens'] and p['writing_sha256']==inherited_review['writing_sha256'],'Review continuation usage, ceiling or guide changed')
     elif p.get('recovery_path'):
@@ -338,7 +338,11 @@ def _advance(root,execute):
                 require(value['content'].get('report_template')==p['report_template'],'Author must retain frozen report template')
             artifacts[role]=value['content']
     items=batch.units(state,pack);findings={}
-    for round_no in range(3):
+    start_round=0
+    if continued and continued.get('version')=='authenticated-inspection-correction-continuation-v1':
+        require(continued['start_round']==2,'Only the original final correction remains')
+        start_round=2;findings=continued['findings']
+    for round_no in range(start_round,3):
         if round_no:
             name='correction-'+str(round_no);before=copy.deepcopy(items)
             state,pack=batch.validate(items,bundle,catalog);report=markdown.report(state,bundle,catalog,pack)

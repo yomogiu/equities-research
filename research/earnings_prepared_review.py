@@ -86,6 +86,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     value=b.read(path)
+    if value.get('version')=='authenticated-inspection-correction-continuation-v1':
+        from . import earnings_prepared_inspection
+        return earnings_prepared_inspection.verify(path,case,catalog)
     if value.get('version')=='authenticated-header-basis-continuation-v1':
         from . import earnings_prepared_basis
         return earnings_prepared_basis.verify(path,case,catalog)
