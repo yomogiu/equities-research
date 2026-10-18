@@ -39,18 +39,31 @@ def expected(first,output,v):
  artifacts={'unreviewed_prior_retrieval':v['raw'],'qa_grounding':b.read(source/'qa-grounding.json')}
  return source,protocol,catalog,artifacts
 
-def initialize(first,output):
- first=Path(first).resolve();output=Path(output).resolve();c.require(not output.exists(),'New immutable second repair required');v=prior(first);source,protocol,catalog,artifacts=expected(first,output,v)
+def currentness(first,ref):
+ if ref is None:return None
+ from . import earnings_source_revalidation as proof
+ first=Path(first).resolve();code=Path(b.read(first/'jobs/retrieval-repair/request.json')['code_root']);root=code.parent.parent.resolve()
+ c.require(set(ref)=={'path','sha256'},'Explicit currentness reference required');path=proof.library.resolve(root,ref['path'])
+ c.require(b.sha(path)==ref['sha256'],'Currentness proof changed')
+ old=proof.verify(root,path);source=Path(b.read(first/'reservation.json')['previous_root'])
+ request=b.read(source.parent/'request.json')
+ c.require(all(old[k]==request['spec'][k] for k in ('packet_id','issuer_id','period')),'Currentness proof changed original repair scope')
+ return ref
+
+def initialize(first,output,*,source_currentness=None):
+ first=Path(first).resolve();output=Path(output).resolve();c.require(not output.exists(),'New immutable second repair required');v=prior(first);source_currentness=currentness(first,source_currentness);source,protocol,catalog,artifacts=expected(first,output,v)
  output.mkdir();metadata={'role':'retrieval','repair_version':VERSION,'source_protocol_sha256':b.sha(source/'protocol.json'),'spent_correction_rounds':2,'case_scope_notes':b.read(protocol['case_path']).get('scope_notes',[])}
  index=c.assemble(protocol['evidence_manifest'],catalog,output/'context',artifacts=artifacts,metadata=metadata);job=output/'jobs/retrieval-repair-2'
  bindings={'role':'retrieval','repair_version':VERSION,'source_protocol_sha256':b.sha(source/'protocol.json'),'first_reservation_sha256':b.sha(first/'reservation.json'),'first_output_sha256':b.sha(first/'jobs/retrieval-repair/output.json'),'context_sha256':b.sha(index),'artifact_sha256':b.digest(artifacts),'inherited_tokens':v['tokens'],'spent_correction_rounds':2}
- record={'version':VERSION,'previous_repair':str(first),'prior':v,'job':str(job),'index':str(index),'bindings':bindings,'models':v['models'],'max_tokens':v['max_tokens']-v['tokens'],'spent_correction_rounds':2,'prompt':instruction(protocol,index,job)}
+ if source_currentness:bindings['source_currentness_sha256']=source_currentness['sha256']
+ record={'version':VERSION,'source_currentness':source_currentness,'previous_repair':str(first),'prior':v,'job':str(job),'index':str(index),'bindings':bindings,'models':v['models'],'max_tokens':v['max_tokens']-v['tokens'],'spent_correction_rounds':2,'prompt':instruction(protocol,index,job)}
  c.write(output/'reservation.json',record);return record
 
 def verify_reservation(output):
- output=Path(output).resolve();record=b.read(output/'reservation.json');first=Path(record['previous_repair']);v=prior(first);source,protocol,catalog,artifacts=expected(first,output,v);index=output/'context/index.json';job=output/'jobs/retrieval-repair-2'
+ output=Path(output).resolve();record=b.read(output/'reservation.json');first=Path(record['previous_repair']);v=prior(first);source,protocol,catalog,artifacts=expected(first,output,v);index=output/'context/index.json';job=output/'jobs/retrieval-repair-2';source_currentness=currentness(first,record.get('source_currentness'))
  bindings={'role':'retrieval','repair_version':VERSION,'source_protocol_sha256':b.sha(source/'protocol.json'),'first_reservation_sha256':b.sha(first/'reservation.json'),'first_output_sha256':b.sha(first/'jobs/retrieval-repair/output.json'),'context_sha256':b.sha(index),'artifact_sha256':b.digest(artifacts),'inherited_tokens':v['tokens'],'spent_correction_rounds':2}
- c.require(record=={'version':VERSION,'previous_repair':str(first),'prior':v,'job':str(job),'index':str(index),'bindings':bindings,'models':v['models'],'max_tokens':v['max_tokens']-v['tokens'],'spent_correction_rounds':2,'prompt':instruction(protocol,index,job)},'Second repair lineage, limits or prompt changed')
+ if source_currentness:bindings['source_currentness_sha256']=source_currentness['sha256']
+ c.require(record=={'version':VERSION,'source_currentness':source_currentness,'previous_repair':str(first),'prior':v,'job':str(job),'index':str(index),'bindings':bindings,'models':v['models'],'max_tokens':v['max_tokens']-v['tokens'],'spent_correction_rounds':2,'prompt':instruction(protocol,index,job)},'Second repair lineage, limits or prompt changed')
  c.require(b.read(index.parent/'artifacts.json')==artifacts,'Second repair original context changed');return record
 
 def completed(output):
