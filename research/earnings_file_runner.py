@@ -95,7 +95,10 @@ def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,tim
     if not prompt.strip() or type(max_tokens) is not int or not 1<=max_tokens<=1200000 or type(max_tool_calls) is not int or not 1<=max_tool_calls<=64 or timeout<=0:raise ValueError('Explicit bounded role settings required')
     index=Path(index).resolve();context.Evidence(index,job/'retrieval.jsonl')
     plan=work_plan(bindings.get('role'),index) if max_tool_calls>1 else None
-    policy={**plan,'work_tool_limit':min(plan['work_tool_limit'],max_tool_calls-1),'automatic_checkpoints':True,'finalization_margin_tokens':65536} if plan else None
+    # The worker already reserves the registered full model output maximum
+    # before EVERY turn. A second fixed reserve can close evidence tools while
+    # ample output budget remains, producing an inevitably unreviewable draft.
+    policy={**plan,'work_tool_limit':min(plan['work_tool_limit'],max_tool_calls-1),'automatic_checkpoints':True,'finalization_margin_tokens':0} if plan else None
     if execution_plan is not None:
         if (not isinstance(execution_plan,dict) or set(execution_plan)!={'work_tool_limit','finalization_margin_tokens','preflight_sha256'}
             or type(execution_plan['work_tool_limit']) is not int or not 1<=execution_plan['work_tool_limit']<=min(8,max_tool_calls-1)

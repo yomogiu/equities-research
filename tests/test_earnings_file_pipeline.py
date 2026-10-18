@@ -25,7 +25,14 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         self.assertEqual(q['execution_policy']['finalization_margin_tokens'],0)
         self.assertIn('maxTokens:128000',r.HELPER.read_text())
         default=r.request(job,'Fictional default review','gpt-6.1-sol','medium',{'role':'review'},index,225973,48,1200)
-        self.assertEqual(default['execution_policy']['finalization_margin_tokens'],65536)
+        self.assertEqual(default['execution_policy']['finalization_margin_tokens'],0)
+        self.assertEqual(default['max_tokens'],225973)
+        self.assertEqual(default['max_tool_calls'],48)
+        # 150k remaining covers the registered 128k maximum output. The former
+        # extra 64k reserve disabled tools here despite that full safety reserve.
+        remaining=150000;registered_output=128000
+        self.assertGreaterEqual(remaining,registered_output)
+        self.assertGreaterEqual(remaining,registered_output+default['execution_policy']['finalization_margin_tokens'])
         for bad in [{**plan,'work_tool_limit':0},{**plan,'work_tool_limit':9},{**plan,'finalization_margin_tokens':-1},{**plan,'preflight_sha256':'unbound'}]:
             with self.assertRaisesRegex(ValueError,'preflighted execution plan'):r.request(job,'Fictional invalid review','gpt-6.1-sol','medium',{'role':'review'},index,225973,3,1200,execution_plan=bad)
 
