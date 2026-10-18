@@ -13,6 +13,27 @@ from pathlib import Path
 sys.path.insert(0,sys.argv[1]);root=Path(sys.argv[2])
 from research import earnings_file_pipeline as p,earnings_file_runner as r,earnings_mixed_runner as b,earnings_financial_outline as f
 protocol,bundle,catalog=p.load(root)
+if protocol.get('review_preparation_path'):
+ assert sorted(x.name for x in (root/'jobs').iterdir())==['correction-1']
+ inherited=b.read(protocol['review_preparation_path'])
+ assert inherited['version']=='authenticated-completed-role-coverage-continuation-v1' and inherited['start_round']==1
+ try:p.verify(root)
+ except ValueError as error:
+  assert str(error)=='Invalid/duplicate/unknown signal passages'
+  trace=error.__traceback__;found=None
+  while trace:
+   frame=trace.tb_frame
+   if frame.f_globals.get('__name__')=='research.earnings_file_pipeline' and frame.f_code.co_name=='_advance':found=frame.f_locals.copy()
+   trace=trace.tb_next
+  assert found and found['round_no']==1
+  v=r.verify_job(root/'jobs/correction-1');assert v['receipt']['session']['id'] in found['sessions']
+  assert b.read(root/'coverage/correction-1.json')['status']=='passed'
+  state,pack=p.batch.materialize(found['items'])
+  assert found['tokens']==inherited['tokens']+v['receipt']['session']['usage']['totalTokens']
+  assert len(found['sessions'])==len(inherited['session_ids'])+1
+  print(json.dumps({'state':state,'signals':pack,'findings':{s['id']:'Invalid original signal passage IDs remain after correction1; inspect exact originals and replace invalid passage references, preserving signal and finding identity.' for s in pack['signals']},'tokens':found['tokens'],'session_ids':sorted(found['sessions']),'models':protocol['models'],'writing_sha256':protocol['writing_sha256'],'max_tokens':protocol['max_tokens'],'case_sha256':protocol['case_sha256'],'catalog_sha256':b.digest(catalog),'report_template':protocol['report_template'],'start_round':2,'original_outputs_sha256':{'correction-1':b.sha(root/'jobs/correction-1/output.json')}}))
+  sys.exit(0)
+ else:raise AssertionError('Exact closed correction1 signal-reference failure required')
 assert sorted(x.name for x in (root/'jobs').iterdir())==['analysis','retrieval','signal_author']
 assert not any(protocol.get(k) for k in ('preparation_path','review_preparation_path','analysis_preparation_path','signal_preparation_path','recovery_path','budget_authorization'))
 assert protocol['financial_mode']=='deterministic-original-facts-v1' and protocol['max_correction_rounds']==2
@@ -48,7 +69,8 @@ assert missing and 0<tokens<protocol['max_tokens']<=1200000
 print(json.dumps({'state':state,'signals':pack,'findings':findings,'tokens':tokens,'session_ids':sessions,'models':protocol['models'],'writing_sha256':protocol['writing_sha256'],'max_tokens':protocol['max_tokens'],'case_sha256':protocol['case_sha256'],'catalog_sha256':b.digest(catalog),'report_template':protocol['report_template'],'start_round':1,'original_outputs_sha256':{role:b.sha(root/'jobs'/role/'output.json') for role in ('retrieval','analysis','signal_author')}}))
 '''
 def replay(previous):
- root=Path(previous).resolve();code=Path(b.read(root/'jobs/retrieval/request.json')['code_root']).resolve()
+ root=Path(previous).resolve();job=root/'jobs/retrieval' if (root/'jobs/retrieval').exists() else root/'jobs/correction-1'
+ code=Path(b.read(job/'request.json')['code_root']).resolve()
  c.require(re.fullmatch('[a-f0-9]{40}',code.name) and code.parent.name=='.report-workflow','Managed frozen verifier required')
  c.require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=code,text=True).strip()==code.name and not subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=code,text=True).strip(),'Original verifier changed')
  c.require(subprocess.check_output(['git','remote','get-url','origin'],cwd=code,text=True).strip()=='https://github.com/yomogiu/equities-research.git','Original origin changed')
@@ -59,4 +81,4 @@ def prepare(previous,case,output):
 def verify(path,case,catalog):
  v=b.read(path);root=Path(v['previous_root']);c.require(v['version']==VERSION and v['protocol_sha256']==b.sha(root/'protocol.json'),'Coverage lineage changed')
  actual=replay(root);c.require(all(v[k]==x for k,x in actual.items()),'Completed work, usage or limits changed')
- c.require(v['case_sha256']==b.sha(case) and v['catalog_sha256']==b.digest(catalog) and v['start_round']==1,'Original source and charged first correction required');return v
+ c.require(v['case_sha256']==b.sha(case) and v['catalog_sha256']==b.digest(catalog) and v['start_round'] in (1,2),'Original source and remaining correction required');return v

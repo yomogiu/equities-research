@@ -352,14 +352,14 @@ def _advance(root,execute):
         require(continued['start_round']==2,'Only the original final correction remains')
         start_round=2;findings=continued['findings']
     if continued and continued.get('version')=='authenticated-completed-role-coverage-continuation-v1':
-        require(continued['start_round']==1,'Original first correction required')
-        start_round=1;findings=continued['findings']
+        require(continued['start_round'] in (1,2),'Original remaining correction required')
+        start_round=continued['start_round'];findings=continued['findings']
     if p.get('retrieval_repair_rounds')==1:
         start_round=1
     for round_no in range(start_round,3):
         if round_no and not (p.get('retrieval_repair_rounds')==1 and round_no==1):
             name='correction-'+str(round_no);before=copy.deepcopy(items)
-            if continued and continued.get('version')=='authenticated-completed-role-coverage-continuation-v1' and round_no==1:
+            if continued and continued.get('version')=='authenticated-completed-role-coverage-continuation-v1' and round_no==continued['start_round']:
                 state,pack=batch.materialize(items)
                 report=markdown.report(state,bundle,catalog)+'\n## Unaccepted original signals for correction\n\n'+json.dumps(pack,ensure_ascii=False)
             else:

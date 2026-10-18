@@ -53,3 +53,12 @@ class CoverageAdvanceTests(PassageFixture,unittest.TestCase):
    return {'status':'pending','stage':name},tokens
   with patch.object(pipeline,'load',return_value=(p,self.bundle,self.catalog)),patch.object(pipeline,'_job',side_effect=pending) as job:
    self.assertEqual(pipeline._advance(root,False)['stage'],'correction-1');self.assertEqual(job.call_count,1)
+ def test_closed_first_correction_resumes_only_final_round_with_all_usage(self):
+  state=template_fixture.TemplateTests.state(self);pack=signal_fixture.SignalTests.pack(self,state)
+  pack['signals'][0]['passage_ids']=['Punknown-ancestor'];inherited={'version':c.VERSION,'state':state,'signals':pack,'session_ids':['r','a','s','c1'],'tokens':700000,'start_round':2,'findings':{'signal-1':'Invalid original passage ID'}}
+  root=Path(self.tmp.name)/'last-correction';root.mkdir();record=root/'prepared.json';record.write_text(json.dumps(inherited));p={'review_preparation_path':str(record),'inherited_tokens':700000}
+  def pending(root,p,bundle,catalog,role,name,deps,metadata,report,execute,sessions,tokens):
+   self.assertEqual((role,name),('correction','correction-2'));self.assertEqual(tokens,700000);self.assertEqual(sessions,{'r','a','s','c1'});self.assertIn('Punknown-ancestor',report)
+   return {'status':'pending','stage':name},tokens
+  with patch.object(pipeline,'load',return_value=(p,self.bundle,self.catalog)),patch.object(pipeline,'_job',side_effect=pending) as job:
+   self.assertEqual(pipeline._advance(root,False)['stage'],'correction-2');self.assertEqual(job.call_count,1)
