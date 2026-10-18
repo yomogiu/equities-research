@@ -85,7 +85,11 @@ def prepare(previous,case,output):
 
 
 def verify(path,case,catalog):
-    value=b.read(path);previous=Path(value['previous_root'])
+    value=b.read(path)
+    if value.get('version')=='authenticated-header-basis-continuation-v1':
+        from . import earnings_prepared_basis
+        return earnings_prepared_basis.verify(path,case,catalog)
+    previous=Path(value['previous_root'])
     context.require(value['version']==VERSION and value['protocol_sha256']==b.sha(previous/'protocol.json'),'Continuation lineage changed')
     actual=replay(previous)
     context.require(all(value[k]==v for k,v in actual.items()),'Authenticated baseline handoff changed')

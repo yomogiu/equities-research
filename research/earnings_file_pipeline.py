@@ -79,6 +79,9 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         inherited_review=prepared_review.verify(review_preparation,case,catalog)
         require(max_tokens<=inherited_review['max_tokens'] and inherited_review['writing_sha256']==base.sha(writing),'Review continuation cannot raise ceiling or change writing guide')
         p.update(review_preparation_path=str(Path(review_preparation).resolve()),review_preparation_sha256=base.sha(review_preparation),inherited_tokens=inherited_review['tokens'])
+        if inherited_review.get('version')=='authenticated-header-basis-continuation-v1':
+            p['models']=inherited_review['models']
+            p['report_template']=inherited_review['report_template']
     if budget_authorization is not None:
         require(max_tokens is None and recovery is None,'Cap removal is a separately authorized trial, not a historical protocol edit')
         authorization=verify_budget_authorization(budget_authorization,case)
@@ -251,7 +254,7 @@ def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessi
         if cap<1024:return {'status':'budget_exhausted','stage':name,'tokens':tokens},tokens
         if not execute:return {'status':'pending','stage':name,'tokens':tokens,'prompt_characters':len(text),'context_index':str(index),'resume':bool(resume)},tokens
         try:
-            runner.run_role(job,text,*MODELS[role],bindings,index,max_tokens=cap,max_tool_calls=p['max_tool_calls_per_job'],**({'resume':resume} if resume else {}))
+            runner.run_role(job,text,*p['models'][role],bindings,index,max_tokens=cap,max_tool_calls=p['max_tool_calls_per_job'],**({'resume':resume} if resume else {}))
         except RuntimeError:
             # Yield to the caller. Next advance independently proves closure and
             # selects a checkpoint, never launches a second role in this call.
