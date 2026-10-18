@@ -173,7 +173,8 @@ class Evidence:
                 signals.validate(value,artifacts['state'],bundle,self.catalog)
             elif role=='correction':
                 if set(value)!={'blocked'}:
-                    plan,_=batch.resolve_correction_hashes(artifacts['units'],value)
+                    plan,_=batch.resolve_correction_hashes(artifacts['units'],value,
+                        bound_batch_sha256=base.read(self.root/'metadata.json')['before_sha256'])
                     plan,_=batch.resolve_basis_citations(artifacts['units'],plan,bundle)
                     units,_=batch.apply(artifacts['units'],plan,batch.EDITORIAL_VERSION)
                     batch.validate(units,bundle,self.catalog)

@@ -344,7 +344,7 @@ def _advance(root,execute):
                 if not existed:launched=True
                 correction_job=checkpoint.select(root/'jobs'/name)[0]
             if set(value['content'])=={'blocked'}:return {'status':'blocked','stage':name,'reason':value['content']['blocked'],'tokens':tokens}
-            canonical,derivation=batch.resolve_correction_hashes(items,value['content'])
+            canonical,derivation=batch.resolve_correction_hashes(items,value['content'],bound_batch_sha256=metadata['before_sha256'])
             canonical,basis_sources=batch.resolve_basis_citations(items,canonical,bundle)
             items,_=batch.apply(items,canonical,batch.EDITORIAL_VERSION);batch.validate(items,bundle,catalog)
             context.write(root/'decisions'/f'{name}.json',{'before_sha256':base.digest(before),'after_sha256':base.digest(items),'changes':canonical['changes'],

@@ -46,6 +46,26 @@ class BatchTests(PassageFixture, unittest.TestCase):
         bad=copy.deepcopy(plan);bad['before_sha256']='stale'
         with self.assertRaises(ValueError):b.resolve_correction_hashes(items,bad)
 
+    def test_bound_addresses_require_exact_authenticated_batch_and_preserve_values(self):
+        items=self.items();plan=self.plan(items,['analysis:1']);plan['before_sha256']='bound'
+        plan['changes'][0]['before_sha256']='bound';original=copy.deepcopy(plan)
+        for authority in (None,'stale'):
+            with self.assertRaisesRegex(ValueError,'Authenticated job batch'):
+                b.resolve_correction_hashes(items,plan,bound_batch_sha256=authority)
+        fixed,note=b.resolve_correction_hashes(items,plan,bound_batch_sha256=b.runner.digest(items))
+        self.assertEqual(plan,original)
+        self.assertEqual(fixed['before_sha256'],b.runner.digest(items))
+        self.assertEqual(fixed['changes'][0]['before_sha256'],b.runner.digest(items['analysis:1']['value']))
+        self.assertEqual(fixed['changes'][0]['value'],original['changes'][0]['value'])
+        self.assertEqual(note['version'],'bound-context-correction-address-v1')
+        b.apply(items,fixed,b.EDITORIAL_VERSION)
+        for field,bad_value in [('before_sha256','stale'),('unit_id','unknown')]:
+            bad=copy.deepcopy(plan)
+            if field=='unit_id':bad['changes'][0][field]=bad_value
+            else:bad[field]=bad_value
+            with self.assertRaises(ValueError):
+                b.resolve_correction_hashes(items,bad,bound_batch_sha256=b.runner.digest(items))
+
     def test_basis_citation_binding_only_uses_exact_compiled_label(self):
         items=self.items();value=copy.deepcopy(items['format']['value'])
         value['basis']={'text':'Financial tables: GAAP; USD millions except diluted EPS in USD/share.','citations':[]}

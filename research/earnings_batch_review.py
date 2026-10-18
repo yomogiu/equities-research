@@ -113,17 +113,27 @@ def apply(items,plan,policy=VERSION):
     return candidate,changed | affected(candidate,invalidating)
 
 
-def resolve_correction_hashes(items,plan):
-    """Rebind an adjacent analysis-unit hash only within the exact bound batch.
+def resolve_correction_hashes(items,plan,*,bound_batch_sha256=None):
+    """Resolve authenticated context addresses or adjacent analysis-unit hashes.
 
     Call only after authenticating the correction role and its request/context.
+    Literal 'bound' additionally requires the exact batch digest supplied by the
+    host from that authenticated job's immutable metadata, never author input.
     Proposed values and reasons are unchanged and still need a fresh reviewer.
     Unknown/stale batch hashes, arbitrary hashes and ambiguous values fail shut.
     """
-    require(plan.get('before_sha256')==runner.digest(items),'Stale batch')
+    batch_hash=runner.digest(items)
+    uses_bound=plan.get('before_sha256')=='bound' or any(x.get('before_sha256')=='bound' for x in plan.get('changes',[]))
+    if uses_bound:
+        require(bound_batch_sha256==batch_hash,'Authenticated job batch required for bound addresses')
+    require(plan.get('before_sha256')==batch_hash or (uses_bound and plan.get('before_sha256')=='bound'),'Stale batch')
     result=copy.deepcopy(plan);hashes={k:runner.digest(v['value']) for k,v in items.items()};changes=[]
+    result['before_sha256']=batch_hash
     for op in result.get('changes',[]):
         key=op['unit_id'];require(key in hashes,'Unknown correction target')
+        if op['before_sha256']=='bound':
+            changes.append({'unit_id':key,'original_hash_unit_id':key,'original_sha256':'bound','resolved_sha256':hashes[key]})
+            op['before_sha256']=hashes[key];continue
         if op['before_sha256']==hashes[key]:continue
         origins=[k for k,v in hashes.items() if v==op['before_sha256']]
         require(len(origins)==1,'Correction hash must identify one original bound unit')
@@ -133,7 +143,7 @@ def resolve_correction_hashes(items,plan):
             'Only an adjacent analysis-unit hash may be rebound')
         changes.append({'unit_id':key,'original_hash_unit_id':origin,'original_sha256':op['before_sha256'],'resolved_sha256':hashes[key]})
         op['before_sha256']=hashes[key]
-    return result,{'version':'bound-adjacent-correction-hash-v1','batch_sha256':runner.digest(items),
+    return result,{'version':'bound-context-correction-address-v1' if uses_bound else 'bound-adjacent-correction-hash-v1','batch_sha256':runner.digest(items),
         'original_plan_sha256':runner.digest(plan),'resolved_plan_sha256':runner.digest(result),'changes':changes}
 
 
