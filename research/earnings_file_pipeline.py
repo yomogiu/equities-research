@@ -20,7 +20,11 @@ from . import earnings_mechanical_preflight as mechanical, earnings_qa_grounding
 
 VERSION='file-backed-markdown-review-v1'
 PROMPTS=Path(__file__).resolve().parent.parent/'prompts/earnings'
-MODELS={**pipe.MODELS,'signal_author':signals.DRAFT_MODEL,'correction':('gpt-6-luna','max'),'review':signals.MODEL}
+# Narrative authors use the already configured reviewed-writing model. Keep
+# factual retrieval on its own route and retain fresh independent sessions.
+# Existing protocols pin their original assignments; only new freezes use this.
+MODELS={**pipe.MODELS,'analysis':signals.MODEL,'signal_author':signals.DRAFT_MODEL,
+        'correction':signals.MODEL,'review':signals.MODEL}
 
 
 def require(ok,message):
