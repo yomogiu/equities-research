@@ -86,6 +86,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     value=b.read(path)
+    if value.get('version')=='authenticated-completed-role-coverage-continuation-v1':
+        from . import earnings_prepared_coverage
+        return earnings_prepared_coverage.verify(path,case,catalog)
     if value.get('version')=='authenticated-inspection-correction-continuation-v1':
         from . import earnings_prepared_inspection
         return earnings_prepared_inspection.verify(path,case,catalog)

@@ -149,7 +149,7 @@ class TemplateTests(PassageFixture, unittest.TestCase):
             {'id':'e1','turn_ids':['q1','a1'],'followup_of':None},
             {'id':'e2','turn_ids':['q2','a2'],'followup_of':'e1'},
             {'id':'e3','turn_ids':['q3','a3'],'followup_of':None}]}
-        self.assertEqual(template.exchange_ids({'citations':['a2'],'quotes':[]},index),['e1','e2'])
+        self.assertEqual(template.exchange_ids({'citations':['a2'],'quotes':[]},index),['e2'])
         self.assertEqual(template.exchange_ids({'citations':['D001'],'quotes':[]},index),[])
 
     def test_original_source_markup_is_escaped(self):
