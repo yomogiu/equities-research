@@ -162,7 +162,7 @@ def instruction(role,index,job,p):
         'Follow `next_start` for complete inspection; search previews do not satisfy coverage. '
         'Read metadata with a planned handoff/source call, projecting only necessary fields. '
         'Use Evidence.for_job() exactly; the runner binds the context and retrieval log automatically. '
-        'Reserve one work call for print(ctx.validate_result(draft)) on your final JSON before submission. '
+        'Reserve a separate final call: build draft, then print(ctx.validate_result(draft)). No checkpoint or other API calls before validation in that call. '
         'Repair returned errors or inspect missing originals; this grants no acceptance. Copy exact exchange and selected-document IDs from sources. '
         'Do not inspect catalogue keys or API attributes; the required APIs and schemas are supplied here. '
         'Tool responses have no enforced byte-size cap. Complete responses are retained in private delivery files; '

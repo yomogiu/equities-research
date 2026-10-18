@@ -130,7 +130,17 @@ class Evidence:
     def checkpoint(self, draft, pending):
         """Save data and exact inspected-source progress, never approval authority."""
         from . import earnings_file_checkpoint as checkpoint
-        return checkpoint.save(self.log.parent,draft,pending)
+        try:
+            return checkpoint.save(self.log.parent,draft,pending)
+        except ValueError as error:
+            if str(error) not in ('Checkpoint draft must be an object of at most 12KB',
+                                  'Explicit bounded pending work required'):
+                raise
+            # Invalid authored checkpoint data must not abort a subsequent
+            # result preflight in the same tool call. Integrity failures still
+            # propagate; no checkpoint or source delivery is invented here.
+            return {'saved':False,'error':str(error),'acceptance':False,
+                    'instruction':'Continue result validation. Checkpoints require a small draft and nonempty pending work.'}
 
     def validate_result(self, value):
         """Pre-submit feedback only; never an acceptance or coverage waiver.

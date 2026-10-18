@@ -10,6 +10,22 @@ from research import earnings_file_runner as runner
 
 
 class ResultPreflightTests(PassageFixture, unittest.TestCase):
+    def test_invalid_authored_checkpoint_does_not_abort_result_preflight(self):
+        reader=self.reader()
+        for draft,pending in [({},[]),({'large':'x'*13000},['unfinished'])]:
+            result=reader.checkpoint(draft,pending)
+            self.assertFalse(result['saved']);self.assertFalse(result['acceptance'])
+            self.assertFalse((reader.log.parent/'checkpoints').exists())
+        feedback=reader.validate_result(self.retrieval)
+        self.assertFalse(feedback['valid'])
+        self.assertIn('delivery log',feedback['error'])
+
+    def test_checkpoint_integrity_errors_remain_blocking(self):
+        reader=self.reader()
+        with patch('research.earnings_file_checkpoint.save',side_effect=ValueError('Original source changed')):
+            with self.assertRaisesRegex(ValueError,'Original source changed'):
+                reader.checkpoint({},['unfinished'])
+
     def test_source_reads_leave_a_call_for_result_validation(self):
         index=self.reader().root/'index.json'
         plan=runner.work_plan('retrieval',index)
