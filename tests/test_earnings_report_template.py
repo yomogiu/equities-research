@@ -15,6 +15,20 @@ def group(periods, values, unit='USD millions'):
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_shifted_fiscal_quarter_retains_growth(self):
+        g,r=group([['duration','2026-04-27','2026-07-26'],
+                   ['duration','2025-04-28','2025-07-27']],[9115,7302])
+        self.assertEqual(template.comparisons(g,r)['YoY'],'+24.8% [^F0] [^F1]')
+
+    def test_53_week_calendar_allowed_but_wrong_period_rejected(self):
+        from research.earnings_period_comparisons import year_ago
+        current=['duration','2026-04-27','2026-07-26']
+        self.assertTrue(year_ago(current,['duration','2025-04-21','2025-07-20']))
+        self.assertFalse(year_ago(current,['duration','2025-01-27','2025-07-27']))
+        self.assertFalse(year_ago(current,['duration','2025-04-07','2025-07-06']))
+        self.assertFalse(year_ago(current,['duration','2024-04-28','2024-07-27']))
+        self.assertFalse(year_ago(current,['instant','2025-07-27']))
+
     def test_quarters_calculate_both_changes_and_keep_input_citations(self):
         g, r = group([['duration','2026-07-01','2026-09-30'],
                       ['duration','2026-04-01','2026-06-30'],

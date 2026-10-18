@@ -2,6 +2,18 @@ import unittest
 from research.earnings_financial_outline import build
 
 class OutlineTests(unittest.TestCase):
+    def test_shifted_year_ago_source_selected_without_currency_or_ytd_mix(self):
+        data={'contexts':{},'observations':[],'gaps':[]}
+        for fid,start,end,unit in [('Q','2026-04-27','2026-07-26','USD'),
+                                   ('YEAR','2025-04-28','2025-07-27','USD'),
+                                   ('YTD','2024-10-28','2025-07-27','USD'),
+                                   ('OTHER','2025-04-28','2025-07-27','EUR')]:
+            data['contexts'][fid]={'start_date':start,'end_date':end,'dimensions':[],'entity':'fictional'}
+            data['observations'].append({'id':fid,'canonical_metric':'revenue',
+                'concept':'us-gaap:Revenues','context_id':fid,
+                'status':'extracted','nil':False,'value':'10','unit_id':unit})
+        self.assertEqual(build(data,expanded=True)['rows'][0]['fact_ids'],['Q','YEAR'])
+
     def test_expanded_cash_flow_prefers_quarter_and_keeps_same_currency_comparisons(self):
         data={'contexts':{},'observations':[],'gaps':[]}
         for fid,start,end,unit in [('Q','2026-07-01','2026-09-30','USD'),

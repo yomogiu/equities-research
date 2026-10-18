@@ -1,6 +1,7 @@
 """Mechanical starting rows from original consolidated observations; never acceptance."""
 from datetime import date
 from .financial_reviewed_proposals import usable
+from .earnings_period_comparisons import year_ago
 
 # Read-time aliases never rewrite frozen proposal records or their source basis.
 IFRS_METRICS = {
@@ -33,7 +34,13 @@ def build(data, *, expanded=False):
         if not candidates:continue
         current=max(x[2] for x in candidates);selected=[x for x in candidates if x[2]==current]
         first=min(selected,key=lambda x:((date.fromisoformat(x[2])-date.fromisoformat(x[3])).days if x[3] and (expanded or x[0]['concept'] in IFRS_METRICS) else 0,x[3] or '',x[0]['id']))
-        comparable=[x for x in candidates if x[2]<current and x[0]['concept']==first[0]['concept'] and x[0]['unit_id']==first[0]['unit_id'] and x[1].get('entity')==first[1].get('entity') and (x[3] is None)==(first[3] is None) and (x[3] is None or (x[3][5:],x[2][5:])==(first[3][5:],first[2][5:]))]
+        def annual_match(x):
+            if expanded:
+                a=['duration',first[3],first[2]] if first[3] else ['instant',first[2]]
+                b=['duration',x[3],x[2]] if x[3] else ['instant',x[2]]
+                return year_ago(a,b)
+            return x[3] is None or (x[3][5:],x[2][5:])==(first[3][5:],first[2][5:])
+        comparable=[x for x in candidates if x[2]<current and x[0]['concept']==first[0]['concept'] and x[0]['unit_id']==first[0]['unit_id'] and x[1].get('entity')==first[1].get('entity') and (x[3] is None)==(first[3] is None) and annual_match(x)]
         facts=[first]
         if comparable:facts.append(max(comparable,key=lambda x:x[2]))
         if (expanded or first[0]['concept'] in IFRS_METRICS) and first[3] and 70<=(date.fromisoformat(first[2])-date.fromisoformat(first[3])).days+1<=105:
@@ -42,7 +49,7 @@ def build(data, *, expanded=False):
                 q=max(previous,key=lambda x:x[2])
                 if q not in facts:facts.append(q)
         if expanded and first[3] is None:
-            previous=[x for x in candidates if x[0]['concept']==first[0]['concept'] and x[0]['unit_id']==first[0]['unit_id'] and x[1].get('entity')==first[1].get('entity') and x[3] is None and 70<=(date.fromisoformat(current)-date.fromisoformat(x[2])).days<=105]
+            previous=[x for x in candidates if x[0]['concept']==first[0]['concept'] and x[0]['unit_id']==first[0]['unit_id'] and x[1].get('entity')==first[1].get('entity') and x[3] is None and x[2]<current]
             if previous:
                 q=max(previous,key=lambda x:x[2])
                 if q not in facts:facts.append(q)

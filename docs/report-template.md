@@ -92,3 +92,9 @@ Only exchange-ID directives enter report Markdown; the original text is assemble
 locally into HTML. This adds no model stage or repeated transcript payload to
 review context. Render through `earnings_markdown.write` with the source bundle;
 standalone rendering of a directive without source payload fails explicitly.
+
+Fiscal-calendar comparisons allow at most eight days of year-over-year boundary
+shift, retaining the same duration family and a matching entity, concept and unit.
+Both start and end boundaries must qualify, and duration differences are bounded.
+This supports 52/53-week quarters while rejecting quarter/YTD mixing, remote
+periods and currency changes. Filed dates remain visible in the table.
