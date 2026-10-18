@@ -5,6 +5,8 @@ import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {installDelivery} from './earnings_file_delivery.mjs';
 import {instrumentFetch} from './earnings_transport_diagnostics.mjs';
+import {configureWorkerConnections} from './earnings_transport_connection.mjs';
+configureWorkerConnections();
 const transportFailures=[];
 const originalFetch=globalThis.fetch;
 globalThis.fetch=instrumentFetch(originalFetch,(value)=>{if(transportFailures.length<16)transportFailures.push(value);});
