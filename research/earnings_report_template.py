@@ -2,6 +2,7 @@
 from collections import OrderedDict
 from datetime import date
 from decimal import Decimal, localcontext
+from .earnings_period_comparisons import year_ago
 
 VERSION = 'source-led-six-sections-v1'
 SECTIONS = OrderedDict([
@@ -147,14 +148,13 @@ def comparisons(group, row):
             if not 70 <= days <= 105:
                 continue
             sequential = (date.fromisoformat(p[1]) - old_end).days == 1
-            annual = (end.year == old_end.year + 1 and
-                      (p[1][5:], p[2][5:]) == (prior[1][5:], prior[2][5:]))
+            annual = year_ago(p, prior)
         else:
             # Calendar/fiscal quarter-end dates are explicit; arbitrary 90-day
             # snapshots do not become quarterly comparisons.
             sequential = ((end.year * 12 + end.month) - (old_end.year * 12 + old_end.month) == 3
                           and (end.day == old_end.day or end.day >= 28 and old_end.day >= 28))
-            annual = end.year == old_end.year + 1 and (end.month, end.day) == (old_end.month, old_end.day)
+            annual = year_ago(p, prior)
         kind = 'QoQ' if sequential else 'YoY' if annual else None
         if kind is None:
             continue
