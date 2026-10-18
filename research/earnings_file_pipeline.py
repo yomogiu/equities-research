@@ -160,8 +160,10 @@ def instruction(role,index,job,p):
         '\n\nUse `ctx.scope(id, start=0, limit=6000)`, `ctx.passage(id, neighbors=1)`, `ctx.search(literal)`, '
         '`ctx.financial_row(fact_id, start=0)`, `ctx.artifact(name, start=0)`, or `ctx.file(name, start=0)`. Print the relevant results. '
         'Follow `next_start` for complete inspection; search previews do not satisfy coverage. '
-        'Read metadata.json and the appropriate handoffs, projecting only necessary fields. '
+        'Read metadata with a planned handoff/source call, projecting only necessary fields. '
         'Use Evidence.for_job() exactly; the runner binds the context and retrieval log automatically. '
+        'Reserve one work call for print(ctx.validate_result(draft)) on your final JSON before submission. '
+        'Repair returned errors or inspect missing originals; this grants no acceptance. Copy exact exchange and selected-document IDs from sources. '
         'Do not inspect catalogue keys or API attributes; the required APIs and schemas are supplied here. '
         'Tool responses have no enforced byte-size cap. Complete responses are retained in private delivery files; '
         'optional `ctx.output(delivery_id, start=0, limit=768)` provides paged rereading. Undelivered pages do not count as inspection. '
@@ -258,14 +260,18 @@ def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessi
     return value,tokens
 
 
-def review_result(value,items,state,pack,catalog,job):
+def review_payload(value,items,state):
     required={'batch_sha256','report_sha256','report_criteria','signal_criteria','decisions','reopen'}
     require(set(value)==required and value['batch_sha256']==base.digest(items) and value['report_sha256']==signals.report_digest(state),'Reviewer assessed another candidate')
     for name,criteria in [('report_criteria',legacy.CRITERIA),('signal_criteria',signals.CRITERIA)]:
         require(set(value[name])==set(criteria),'Every global criterion required')
         for x in value[name].values():
             require(set(x)=={'status','evidence'} and x['status'] in ('pass','fail','unavailable') and isinstance(x['evidence'],str) and x['evidence'].strip(),'Specific complete rubric assessment required')
-    payload={k:value[k] for k in ('batch_sha256','decisions','reopen')}
+    return {k:value[k] for k in ('batch_sha256','decisions','reopen')}
+
+
+def review_result(value,items,state,pack,catalog,job):
+    payload=review_payload(value,items,state)
     accepted,findings=batch.adjudicate(items,set(items),{},payload,catalog,base.sha(job/'output.json'),batch.EDITORIAL_VERSION)
     global_pass=all(x['status']=='pass' for name in ('report_criteria','signal_criteria') for x in value[name].values())
     require(global_pass or findings,'Failed global criterion must identify affected units')

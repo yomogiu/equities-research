@@ -132,6 +132,54 @@ class Evidence:
         from . import earnings_file_checkpoint as checkpoint
         return checkpoint.save(self.log.parent,draft,pending)
 
+    def validate_result(self, value):
+        """Pre-submit feedback only; never an acceptance or coverage waiver.
+
+        Uses the same immutable context, schemas and delivered-source checks as
+        the host. Does not write an output, mutate the draft or launch a model.
+        The current tool response cannot count as previously delivered evidence.
+        """
+        from . import earnings_file_pipeline as pipeline
+        from . import earnings_passage_pipeline as pipe
+        from . import earnings_signals as signals, earnings_batch_review as batch
+        job=self.log.parent
+        request=base.read(job/'request.json')
+        require(request.get('version')=='file-prime-role-v1' and
+                Path(request['context_index']).resolve()==self.root/'index.json',
+                'Bound active role context required')
+        role=request['bindings']['role']
+        import copy
+        value=copy.deepcopy(value)
+        artifacts=base.read(self.root/'artifacts.json')
+        self.verify()
+        bundle=evidence.load_bundle(self.index['manifest'])
+        try:
+            if role in ('financial','retrieval','analysis'):
+                pipe.validate(role,value,bundle,self.catalog)
+                if role=='analysis':
+                    from . import earnings_report_template as template
+                    template.validate(value)
+            elif role=='signal_author':
+                signals.validate(value,artifacts['state'],bundle,self.catalog)
+            elif role=='correction':
+                if set(value)!={'blocked'}:
+                    plan,_=batch.resolve_correction_hashes(artifacts['units'],value)
+                    plan,_=batch.resolve_basis_citations(artifacts['units'],plan,bundle)
+                    units,_=batch.apply(artifacts['units'],plan,batch.EDITORIAL_VERSION)
+                    batch.validate(units,bundle,self.catalog)
+            elif role=='review':
+                payload=pipeline.review_payload(value,artifacts['units'],artifacts['state'])
+                batch.adjudicate(artifacts['units'],set(artifacts['units']),{},payload,
+                                 self.catalog,base.digest(value),batch.EDITORIAL_VERSION)
+            else:
+                raise ValueError('Unknown role')
+            pipeline.coverage(role,self.root/'index.json',job,value,self.catalog,artifacts)
+        except (ValueError,KeyError,TypeError) as error:
+            return {'valid':False,'error':str(error),'acceptance':False,
+                    'instruction':'Repair the draft or inspect the missing original evidence; do not waive the check.'}
+        return {'valid':True,'acceptance':False,
+                'instruction':'Preflight only. Host validation and fresh independent review remain mandatory.'}
+
     def restore(self):
         from . import earnings_file_checkpoint as checkpoint
         value=checkpoint.restore(self.log.parent)
