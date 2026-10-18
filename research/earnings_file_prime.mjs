@@ -4,14 +4,16 @@ import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {installDelivery} from './earnings_file_delivery.mjs';
-import {instrumentFetch} from './earnings_transport_diagnostics.mjs';
+import {instrumentFetch, completionStage} from './earnings_transport_diagnostics.mjs';
 import {configureWorkerConnections} from './earnings_transport_connection.mjs';
 configureWorkerConnections();
+const [sdkRoot, job, mode] = process.argv.slice(2);
 const transportFailures=[];
 const originalFetch=globalThis.fetch;
-globalThis.fetch=instrumentFetch(originalFetch,(value)=>{if(transportFailures.length<16)transportFailures.push(value);});
+globalThis.fetch=instrumentFetch(originalFetch,(value)=>{if(transportFailures.length<16)transportFailures.push(value);}, value=>{
+  if(mode !== '--probe') fs.appendFileSync(path.join(job,'transport-lifecycle.jsonl'),JSON.stringify(value)+'\n',{mode:0o600});
+});
 
-const [sdkRoot, job, mode] = process.argv.slice(2);
 const {AuthStorage, ModelRegistry, SettingsManager, DefaultResourceLoader,
   SessionManager, createAgentSession} = await import(pathToFileURL(path.join(sdkRoot, 'dist/index.js')));
 const {getOAuthProvider} = await import(pathToFileURL(path.join(sdkRoot, 'node_modules/@earendil-works/pi-ai/dist/oauth.js')));
@@ -125,7 +127,7 @@ try {
   };
   stage = 'model_request';
   await session.prompt(fs.readFileSync(path.join(job,'prompt.md'),'utf8'));
-  stage = 'output_validation';
+  stage = completionStage(session.agent.state.messages.at(-1));
   manager.flushNow();
   save('wire.json', wires);
   const messages = session.agent.state.messages;

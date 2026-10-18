@@ -74,3 +74,42 @@ class ResultPreflightTests(PassageFixture, unittest.TestCase):
             result=reader.validate_result(draft)
         check.assert_called_once();self.assertTrue(result['valid']);self.assertFalse(result['acceptance'])
         self.assertEqual(draft,self.retrieval);self.assertFalse((reader.log.parent/'output.json').exists())
+
+    def test_multiple_exchange_errors_return_exact_ids_without_mutation(self):
+        reader=self.reader();draft=copy.deepcopy(self.retrieval)
+        draft['exchange_coverage']=[{'exchange_id':'wrong-one'},{'exchange_id':'wrong-two'}]
+        before=copy.deepcopy(draft)
+        feedback=reader.validate_result(draft)
+        self.assertEqual(feedback['invalid_exchange_ids'],['wrong-one','wrong-two'])
+        self.assertEqual(feedback['valid_exchange_ids'],sorted(reader.index['exchange_ids']))
+        self.assertFalse(feedback['acceptance']);self.assertEqual(draft,before)
+
+    def test_fresh_launch_initializes_empty_audit_and_cannot_relaunch(self):
+        reader=self.reader();job=self.root/'fresh-launch'
+        def launch(*args,**kwargs):
+            self.assertEqual((job/'retrieval.jsonl').read_text(),'')
+            from unittest.mock import Mock
+            process=Mock();process.wait.return_value=1
+            return process
+        from pathlib import Path
+        with patch.object(runner.old,'_runtime_paths',return_value=(Path('/fake/node'),Path('/fake/sdk'))), patch.object(runner.subprocess,'Popen',side_effect=launch) as process:
+            with self.assertRaisesRegex(RuntimeError,'no retry'):
+                runner.run_role(job,'Fictional role','gpt-6-luna','max',{'role':'retrieval'},reader.root/'index.json',max_tokens=200000)
+            with self.assertRaisesRegex(RuntimeError,'cannot be launched again'):
+                runner.run_role(job,'Fictional role','gpt-6-luna','max',{'role':'retrieval'},reader.root/'index.json',max_tokens=200000)
+            self.assertEqual(process.call_count,1)
+
+    def test_timeout_is_explicit_and_never_authorizes_retry(self):
+        reader=self.reader();job=self.root/'timeout-launch'
+        from pathlib import Path
+        from unittest.mock import Mock
+        process=Mock();process.pid=123;process.returncode=-15
+        process.wait.side_effect=[runner.subprocess.TimeoutExpired('fictional-worker',1),-15]
+        with patch.object(runner.old,'_runtime_paths',return_value=(Path('/fake/node'),Path('/fake/sdk'))), patch.object(runner.subprocess,'Popen',return_value=process), patch.object(runner.os,'killpg') as kill:
+            with self.assertRaisesRegex(RuntimeError,'no retry'):
+                runner.run_role(job,'Fictional role','gpt-6-luna','max',{'role':'retrieval'},reader.root/'index.json',max_tokens=200000)
+            kill.assert_called_once_with(123,runner.signal.SIGTERM)
+        receipt=json.loads((job/'execution.json').read_text())
+        self.assertEqual(receipt['failure_kind'],'worker_timeout')
+        self.assertEqual(receipt['execution_certainty'],'unknown')
+        self.assertFalse(receipt['retry_authorized'])

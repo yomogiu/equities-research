@@ -17,9 +17,25 @@ export function failureCodes(error) {
   return {version:'sanitized-network-codes-v1', codes:[...found].sort(),
     execution_certainty:'unknown', retry_authorized:false};
 }
-export function instrumentFetch(fetchImpl, record) {
+// Header receipt does not prove that the response stream or model turn completed.
+export function completionStage(last) {
+  if (last?.role === 'assistant' && ['error','aborted'].includes(last.stopReason)) return 'model_request';
+  return 'output_validation';
+}
+export function instrumentFetch(fetchImpl, record, lifecycle = () => {}) {
+  let sequence = 0;
+  const emit = value => { try { lifecycle(value); } catch {} };
   return async function(...args) {
-    try { return await fetchImpl.apply(this,args); }
-    catch (error) { try { record(failureCodes(error)); } catch {} throw error; }
+    const request_sequence = ++sequence;
+    emit({request_sequence, phase:'fetch_started', execution_certainty:'unknown', retry_authorized:false});
+    try {
+      const response = await fetchImpl.apply(this,args);
+      emit({request_sequence, phase:'headers_received', execution_certainty:'unknown', retry_authorized:false});
+      return response;
+    } catch (error) {
+      const diagnostic = failureCodes(error);
+      emit({request_sequence, phase:'fetch_failed', ...diagnostic});
+      try { record(diagnostic); } catch {} throw error;
+    }
   };
 }
