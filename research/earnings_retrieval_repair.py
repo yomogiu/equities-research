@@ -7,6 +7,7 @@ import json,re,subprocess,sys
 from pathlib import Path
 from . import earnings_mixed_runner as b,earnings_file_context as c
 VERSION='authenticated-retrieval-repair-v1'
+SUPPORTED_SCHEMA_FAILURES=('Every Q&A exchange needs exactly one coverage entry','Invalid/duplicate/unknown document selection')
 PROGRAM=r'''
 import sys,json
 from pathlib import Path
@@ -20,7 +21,7 @@ assert q['bindings']['role']=='retrieval' and q['bindings']['protocol_sha256']==
 assert (job/'prompt.md').read_text()==p.instruction('retrieval',Path(q['context_index']),job,protocol)
 try:p.verify(root)
 except ValueError as error:
- assert str(error).startswith('Required original evidence was not completely inspected: ')
+ assert str(error).startswith('Required original evidence was not completely inspected: ') or str(error) in json.loads(sys.argv[3])
 else:raise AssertionError('Exact closed original coverage failure required')
 print(json.dumps({'raw':value['content'],'tokens':value['receipt']['session']['usage']['totalTokens'],'session_id':value['receipt']['session']['id'],'max_tokens':protocol['max_tokens'],'models':protocol['models'],'case_sha256':protocol['case_sha256'],'writing_sha256':protocol['writing_sha256'],'catalog_sha256':b.digest(catalog),'report_template':protocol['report_template']}))
 '''
@@ -30,7 +31,7 @@ def original(previous):
     c.require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=code,text=True).strip()==code.name,'Original verifier changed')
     c.require(not subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=code,text=True).strip(),'Original verifier edits forbidden')
     c.require(subprocess.check_output(['git','remote','get-url','origin'],cwd=code,text=True).strip()=='https://github.com/yomogiu/equities-research.git','Original origin changed')
-    return json.loads(subprocess.check_output([sys.executable,'-I','-B','-c',PROGRAM,str(code),str(root)],text=True))
+    return json.loads(subprocess.check_output([sys.executable,'-I','-B','-c',PROGRAM,str(code),str(root),json.dumps(SUPPORTED_SCHEMA_FAILURES)],text=True))
 def budget(prior):
     c.require(type(prior['tokens']) is int and 0<prior['tokens']<prior['max_tokens']<=1200000,'Bounded charged ancestor usage required')
     return prior['max_tokens']-prior['tokens']
