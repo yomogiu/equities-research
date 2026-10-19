@@ -35,26 +35,54 @@ def original(previous):
 def budget(prior):
     c.require(type(prior['tokens']) is int and 0<prior['tokens']<prior['max_tokens']<=1200000,'Bounded charged ancestor usage required')
     return prior['max_tokens']-prior['tokens']
-def initialize(previous,output):
+def currentness(previous,ref,*,as_of=None):
+    if ref is None:return
+    from . import earnings_source_revalidation as proof
+    root=Path(previous).resolve();code=Path(b.read(root/'jobs/retrieval/request.json')['code_root']);private=code.parent.parent.resolve()
+    c.require(set(ref)=={'path','sha256'},'Explicit source currentness reference required');path=proof.library.resolve(private,ref['path'])
+    c.require(b.sha(path)==ref['sha256'],'Source currentness proof changed')
+    old=proof.verify(private,path,**({} if as_of is None else {'as_of':as_of}));request=b.read(root.parent/'request.json')
+    c.require(all(old[k]==request['spec'][k] for k in ('packet_id','issuer_id','period')),'Source proof changed original report identity')
+
+def frozen_reservation(output,job):
+    """Replay a launched reservation with its own immutable instruction producer."""
+    code=Path(b.read(job/'request.json')['code_root']).resolve()
+    if code==Path(__file__).resolve().parent.parent:return None
+    c.require(re.fullmatch('[a-f0-9]{40}',code.name) and code.parent.name=='.report-workflow','Managed repair verifier required')
+    c.require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=code,text=True).strip()==code.name and not subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=code,text=True).strip(),'Frozen repair verifier changed')
+    c.require(subprocess.check_output(['git','remote','get-url','origin'],cwd=code,text=True).strip()=='https://github.com/yomogiu/equities-research.git','Repair verifier origin changed')
+    program='import sys,json;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from research.earnings_retrieval_repair import verify_reservation;print(json.dumps(verify_reservation(Path(sys.argv[2]))))'
+    return json.loads(subprocess.check_output([sys.executable,'-I','-B','-c',program,str(code),str(output)],text=True))
+
+def initialize(previous,output,*,source_currentness=None):
     from . import earnings_file_pipeline as pipeline
     root=Path(previous).resolve();output=Path(output).resolve();c.require(not output.exists(),'New immutable repair reservation required')
-    prior=original(root);cap=budget(prior);protocol=b.read(root/'protocol.json');catalog=b.read(root/'passages.json')
+    prior=original(root);currentness(root,source_currentness);cap=budget(prior);protocol=b.read(root/'protocol.json');catalog=b.read(root/'passages.json')
     output.mkdir();metadata={'role':'retrieval','repair_version':VERSION,'source_protocol_sha256':b.sha(root/'protocol.json'),'spent_correction_rounds':1,'case_scope_notes':b.read(protocol['case_path']).get('scope_notes',[])}
     artifacts={'unreviewed_prior_retrieval':prior['raw'],'qa_grounding':b.read(root/'qa-grounding.json')}
     index=c.assemble(protocol['evidence_manifest'],catalog,output/'context',artifacts=artifacts,metadata=metadata)
     job=output/'jobs/retrieval-repair';prompt=pipeline.instruction('retrieval',index,job,protocol)+'\nThis is the sole charged retrieval repair, consuming correction round 1 of the original report. The unreviewed prior retrieval is in artifacts.json. Inspect exact originals and repair ALL invalid source, passage, turn and exchange addresses. Preserve source qualification and full Q&A coverage. Never infer an ID from a prefix or treat old output as evidence. Return the complete validated retrieval object; use Evidence.validate_result before final submission.\n'
     c.require(len(prompt.encode())<=24000,'Bounded repair instructions required');bindings={'role':'retrieval','repair_version':VERSION,'source_protocol_sha256':b.sha(root/'protocol.json'),'source_output_sha256':b.sha(root/'jobs/retrieval/output.json'),'context_sha256':b.sha(index),'artifact_sha256':b.digest(artifacts),'inherited_tokens':prior['tokens'],'spent_correction_rounds':1}
     record={'version':VERSION,'previous_root':str(root),'source_protocol_sha256':b.sha(root/'protocol.json'),'source_output_sha256':b.sha(root/'jobs/retrieval/output.json'),'prior':prior,'max_tokens':cap,'spent_correction_rounds':1,'job':str(job),'index':str(index),'bindings':bindings,'prompt':prompt,'models':prior['models']}
+    if source_currentness:
+        record['source_currentness']=source_currentness;bindings['source_currentness_sha256']=source_currentness['sha256']
     c.write(output/'reservation.json',record);return record
 
 def verify_reservation(output):
-    output=Path(output).resolve();v=b.read(output/'reservation.json');root=Path(v['previous_root']);c.require(v['version']==VERSION and v['source_protocol_sha256']==b.sha(root/'protocol.json') and v['source_output_sha256']==b.sha(root/'jobs/retrieval/output.json'),'Repair lineage changed')
+    output=Path(output).resolve();job=output/'jobs/retrieval-repair'
+    if (job/'request.json').exists():
+        frozen=frozen_reservation(output,job)
+        if frozen is not None:return frozen
+    v=b.read(output/'reservation.json');root=Path(v['previous_root']);c.require(v['version']==VERSION and v['source_protocol_sha256']==b.sha(root/'protocol.json') and v['source_output_sha256']==b.sha(root/'jobs/retrieval/output.json'),'Repair lineage changed')
     prior=original(root);c.require(v['prior']==prior and v['models']==prior['models'] and v['max_tokens']==budget(prior) and v['spent_correction_rounds']==1,'Repair cannot reset usage, models or rounds')
     c.require(Path(v['job'])==output/'jobs/retrieval-repair' and Path(v['index'])==output/'context/index.json','Repair path changed')
     from . import earnings_file_pipeline as pipeline
     protocol=b.read(root/'protocol.json');index=Path(v['index']);job=Path(v['job'])
     expected_artifacts={'unreviewed_prior_retrieval':prior['raw'],'qa_grounding':b.read(root/'qa-grounding.json')}
     expected={'role':'retrieval','repair_version':VERSION,'source_protocol_sha256':b.sha(root/'protocol.json'),'source_output_sha256':b.sha(root/'jobs/retrieval/output.json'),'context_sha256':b.sha(index),'artifact_sha256':b.digest(expected_artifacts),'inherited_tokens':prior['tokens'],'spent_correction_rounds':1}
+    if v.get('source_currentness'):
+        from .earnings_second_retrieval_repair import launched_at
+        currentness(root,v['source_currentness'],as_of=launched_at(job));expected['source_currentness_sha256']=v['source_currentness']['sha256']
     c.require(v['bindings']==expected and b.read(index.parent/'artifacts.json')==expected_artifacts,'Exact repair context and dependencies required')
     expected_prompt=pipeline.instruction('retrieval',index,job,protocol)+'\nThis is the sole charged retrieval repair, consuming correction round 1 of the original report. The unreviewed prior retrieval is in artifacts.json. Inspect exact originals and repair ALL invalid source, passage, turn and exchange addresses. Preserve source qualification and full Q&A coverage. Never infer an ID from a prefix or treat old output as evidence. Return the complete validated retrieval object; use Evidence.validate_result before final submission.\n'
     c.require(v['prompt']==expected_prompt,'Frozen repair instructions changed')

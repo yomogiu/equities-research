@@ -20,3 +20,29 @@ class RetrievalCompletionTests(unittest.TestCase):
     for key,value in [('tokens',0),('spent_correction_rounds',0)]:
      record.write_text(json.dumps({**v,key:value}))
      with self.assertRaises(ValueError):p.verify(record,case,catalog)
+
+class QualifiedRetrievalRepairTests(unittest.TestCase):
+ def test_proof_must_bind_original_identity_hash_and_recorded_clock(self):
+  import tempfile,json
+  from pathlib import Path
+  from unittest.mock import patch
+  from research import earnings_retrieval_repair as p,earnings_source_revalidation as proof
+  with tempfile.TemporaryDirectory() as d:
+   r=Path(d).resolve();source=r/'reporting/runs/original/pipeline';job=source/'jobs/retrieval';job.mkdir(parents=True)
+   (job/'request.json').write_text(json.dumps({'code_root':str(r/'.report-workflow'/('a'*40))}));identity={'packet_id':'old','issuer_id':'fictional','period':'FY26Q2'};(source.parent/'request.json').write_text(json.dumps({'spec':identity}));(r/'proof.json').write_text('{}');ref={'path':'proof.json','sha256':p.b.sha(r/'proof.json')}
+   with patch.object(proof,'verify',return_value=identity) as verify:
+    p.currentness(source,ref,as_of='2026-01-01T00:00:00+00:00');self.assertEqual(verify.call_args.kwargs,{'as_of':'2026-01-01T00:00:00+00:00'})
+    with self.assertRaises(ValueError):p.currentness(source,{**ref,'sha256':'changed'})
+   with patch.object(proof,'verify',return_value={**identity,'issuer_id':'other'}):
+    with self.assertRaises(ValueError):p.currentness(source,ref)
+ def test_legacy_reservations_require_no_new_proof(self):
+  from pathlib import Path
+  from research import earnings_retrieval_repair as p
+  self.assertIsNone(p.currentness(Path('/unused'),None))
+ def test_foreign_instruction_producer_is_not_silently_recomputed(self):
+  import tempfile,json
+  from pathlib import Path
+  from research import earnings_retrieval_repair as p
+  with tempfile.TemporaryDirectory() as d:
+   job=Path(d);(job/'request.json').write_text(json.dumps({'code_root':'/private/tmp/unmanaged-producer'}))
+   with self.assertRaisesRegex(ValueError,'Managed repair verifier'):p.frozen_reservation(job,job)
