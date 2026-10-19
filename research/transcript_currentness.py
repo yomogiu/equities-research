@@ -19,6 +19,7 @@ MOBILE_VERSION = 'stockanalysis-market-app-counter-country-and-mobile-controls-c
 PUBLISHER_LINK_VERSION = 'stockanalysis-exact-publisher-link-currentness-v5'
 VERSION = 'stockanalysis-exact-tsx-publisher-currentness-v6'
 LISTING_VERSION = 'stockanalysis-authenticated-listing-header-currentness-v7'
+MARKET_OPEN_VERSION = 'stockanalysis-exact-market-open-widget-currentness-v8'
 STATUS = 'scoped_transcript_verified'
 
 
@@ -165,7 +166,36 @@ def publisher_links(html, url):
     return re.sub(pattern, filing, html)
 
 
-def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False, allow_tsx=False):
+def prepared_downloads(html, url):
+    """Exact same-event added Prepared remarks controls, never call evidence."""
+    require(urlsplit(url).path.startswith('/stocks/'),'Exact stock publisher download scope required')
+    symbol=urlsplit(url).path.split('/')[2].upper()
+    event=re.findall(r'quartrEventId:([0-9]+),fiscalYear:([0-9]{4}),quarterLabel:"(Q[1-4] [0-9]{4})"',html)
+    require(len(event)==1 and event[0][2].endswith(event[0][1]) and urlsplit(url).path.split('/')[4].startswith(event[0][0]+'-'),'Exact publisher earnings event required')
+    groups=list(re.finditer(r'<ul[^>]*aria-label="Downloads"[^>]*>.*?</ul>',html,re.S))
+    require(len(groups)==2,'Two complete publisher download groups required')
+    links=[];prepared=[];spans=[]
+    for group in groups:
+        require('transcript-sentence' not in group.group(),'Download group overlaps call')
+        anchors=list(re.finditer(r'<a href="(/filings/([A-Z0-9.-]+)/([0-9]+)/)" class="[^"]+"><span>([^<>]+)</span></a>',group.group()))
+        require(anchors and len(anchors)==len(re.findall(r'<a\b',group.group())),'Exact publisher filing controls required')
+        rows=[];seen=0
+        for anchor in anchors:
+            href,issuer,identifier,label=anchor.groups();require(issuer==symbol,'Other issuer download control')
+            if label=='Prepared remarks':
+                seen+=1;require(seen==1 and anchors[0]==anchor,'Unique first prepared control required')
+                literal='<li class="mb-0">'+anchor.group()+'</li>';relative=group.group().find(literal);require(relative>=0,'Exact prepared control structure required')
+                spans.append((group.start()+relative,group.start()+relative+len(literal)));prepared.append(href)
+                require(len(re.findall(r'\{id:'+identifier+r',label:"Prepared remarks"\}',html))==1,'Prepared control must bind one event file')
+            else:rows.append([href,label])
+        links.append(rows)
+    require(links[0]==links[1] and (not prepared or len(prepared)==2 and prepared[0]==prepared[1]),'Repeated download identity/order differs')
+    require(len(re.findall('label:"Prepared remarks"',html))==(1 if prepared else 0),'Unbound prepared event file')
+    for a,b in reversed(spans):html=html[:a]+html[b:]
+    return html,{'event':event[0],'existing_downloads':links,'prepared':prepared}
+
+
+def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False, allow_tsx=False, allow_market_open=False):
     require(urlsplit(url).hostname == 'stockanalysis.com' and
             (re.fullmatch(r'/stocks/[a-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path) or
              allow_tsx and re.fullmatch(r'/quote/tsx/[A-Za-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path)),
@@ -189,7 +219,8 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
     widget_text = source_parse.page(html[a:b].encode(), url).text
     tsx_widget = (allow_tsx and urlsplit(url).path.startswith('/quote/tsx/') and
                   re.fullmatch(r'[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\n[+-][0-9]+(?:\.[0-9]+)? \([+-]?[0-9]+(?:\.[0-9]+)?%\)\n(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}, [0-9]{4}, [0-9]{1,2}:[0-9]{2} [AP]M (?:EST|EDT)', widget_text))
-    require(re.search(r'(?:Market closed|At close:|Pre-market:|After-hours:)', widget_text) or tsx_widget, 'Unrecognized quote widget')
+    market_open = allow_market_open and re.fullmatch(r'[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\n[+-][0-9]+(?:\.[0-9]+)? \([+-]?[0-9]+(?:\.[0-9]+)?%\)\n(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}, [0-9]{4}, (?:[1-9]|1[0-2]):[0-5][0-9] [AP]M (?:EST|EDT) - Market open', widget_text)
+    require(re.search(r'(?:Market closed|At close:|Pre-market:|After-hours:)', widget_text) or tsx_widget or market_open, 'Unrecognized quote widget')
     require('transcript-sentence' not in html[a:b], 'Widget overlaps call evidence')
     outside_html = html[:a] + '<div>QUOTE_WIDGET</div>' + html[b:]
     if allow_app_counters:
@@ -200,6 +231,8 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
         outside_html = mobile_controls(outside_html)
     if allow_publisher_links:
         outside_html = publisher_links(outside_html, url)
+    downloads=None
+    if allow_market_open:outside_html,downloads=prepared_downloads(outside_html,url)
     outside = source_parse.page(outside_html.encode(), url).text
     facts = financial_evidence.extract_inline_xbrl(html, {'document_id': 'scope', 'raw_sha256': sha(raw), 'text_sha256': sha(page.text.encode())})
     facts = {'observations': [{k:v for k,v in o.items() if k not in ('observation_id','source_raw_sha256','support')} for o in facts['observations']],
@@ -208,12 +241,15 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
             'block_sha256': [sha(b.encode()) for b in blocks.blocks],
             'block_text_sha256': [sha(b.encode()) for b in bodies], 'facts': facts}, {
             'fulltext_sha256': sha(page.text.encode()), 'call_span': [spans[0][0],spans[-1][1]],
-            'widget_html_span': [a,b], 'widget_sha256': sha(html[a:b].encode())}
+            'widget_html_span': [a,b], 'widget_sha256': sha(html[a:b].encode()), **({'downloads':downloads} if allow_market_open else {})}
 
 
-def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True, allow_publisher_links=True, allow_tsx=True):
-    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx)
-    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx)
+def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True, allow_publisher_links=True, allow_tsx=True, allow_market_open=False):
+    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open)
+    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open)
+    if allow_market_open:
+        a,b=old_spans['downloads'],new_spans['downloads']
+        require(a['event']==b['event'] and a['existing_downloads']==b['existing_downloads'] and (a['prepared']==b['prepared'] or not a['prepared'] and len(b['prepared'])==2),'Only same-event prepared control addition permitted')
     require(old == new, 'Complete transcript, metadata or non-widget content changed')
     require(old['title'] and old['block_sha256'], 'Transcript metadata missing')
     return {'signature': old, 'archived': old_spans, 'observed': new_spans,
@@ -226,7 +262,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -239,7 +275,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
         auth,_=listing.authority(root,value['listing_authority'],value['issuer_id'],value['source_url'],value['checked_at'])
         require(listing.compare(before,after,value['source_url'],auth)==value['comparison'],'Listing comparison changed')
     else:
-        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version']==VERSION) == value['comparison'], 'Scoped comparison changed')
+        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version'] in (MARKET_OPEN_VERSION, VERSION), allow_market_open=value['version']==MARKET_OPEN_VERSION) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
@@ -267,7 +303,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     return value
 
 
-def create(root, packet, doc, observed, cache_path, *, listing_authority=None):
+def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False):
     from . import library
     before = library.load_bytes(root,doc['raw_path'],doc['raw_sha256'])
     after = library.load_bytes(root,observed['raw_path'],observed['observed_sha256'])
@@ -276,12 +312,14 @@ def create(root, packet, doc, observed, cache_path, *, listing_authority=None):
     destination = library.resolve(root,observed_text_path)
     if destination.exists(): require(destination.read_bytes() == observed_text, 'Conflicting immutable observed extraction')
     else: destination.write_bytes(observed_text)
-    comparison=compare(before,after,doc['source_url']) if listing_authority is None else None
+    require(type(market_open) is bool, 'Explicit widget qualification flag required')
+    require(not market_open or listing_authority is None, 'Separate explicit market widget and listing transitions required')
+    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open) if listing_authority is None else None
     if listing_authority is not None:
         from . import transcript_listing_transition as listing
         auth,_=listing.authority(root,listing_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
         comparison=listing.compare(before,after,doc['source_url'],auth)
-    value = {'version': VERSION if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
+    value = {'version': (MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
              'source_url': doc['source_url'], 'qualification_id': doc['qualification_id'],
              'archived': {k:doc[k] for k in ('raw_path','raw_sha256','text_path','text_sha256')},
              'observed': {'raw_path': observed['raw_path'], 'raw_sha256': observed['observed_sha256'],
