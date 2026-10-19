@@ -52,6 +52,11 @@ def checked(root,old_id,new_id,receipt_path,*,as_of=None):
  current=validate_packet(root,new_id) if as_of is None else historical_packet(root,new,as_of)
  # Historical replay authenticates launch-time qualification; live gates remain fresh NOW.
  receipt=b.read(receipt_path)
+ derivation=receipt.get('derivation',{})
+ if derivation.get('legacy_equivalence'):
+  from . import legacy_equivalent_source as legacy
+  ref=derivation['legacy_equivalence'];proof_path=library.resolve(root,ref['path']);c.require(set(ref)=={'path','sha256'} and b.sha(proof_path)==ref['sha256'],'Legacy equivalence proof changed');proof=legacy.verify(root,proof_path)
+  c.require(proof['packet_id']==old_id and proof['receipt_path']==derivation['original_receipt'] and b.sha(library.resolve(root,derivation['original_receipt']))==derivation['original_receipt_sha256'],'Original failed source receipt must remain bound')
  if as_of is not None:
   from . import freshness
   observed=freshness.timestamp(receipt.get('checked_at'));launch=freshness.timestamp(as_of)
@@ -95,6 +100,10 @@ def input_bindings(root,path):
  for row in b.read(root/v['source_receipt'])['companies']:
   if row['issuer_id']==old['issuer_id']:
    names.update(doc['raw_path'] for doc in row['documents'] if doc.get('raw_path'))
+ derivation=b.read(root/v['source_receipt']).get('derivation',{})
+ if derivation.get('legacy_equivalence'):
+  from . import legacy_equivalent_source as legacy
+  reference=derivation['legacy_equivalence'];proof_path=library.resolve(root,reference['path']);proof=legacy.verify(root,proof_path);names.update(proof['input_sha256']);names.update((reference['path'],derivation['manifest_path'],derivation['original_receipt']))
  result={name:b.sha(library.resolve(root,name)) for name in names}
  from .transcript_currentness import bindings
  for doc in new['documents']:result.update(bindings(root,doc))
