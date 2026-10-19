@@ -49,6 +49,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     a=base.read(path)
+    if a.get('version')=='authenticated-single-retrieval-address-preparation-v1':
+        from . import earnings_single_retrieval_addresses
+        return earnings_single_retrieval_addresses.verify(path,case,catalog)
     if a.get('version')=='authenticated-reference-retrieval-preparation-v1':
         from . import earnings_retrieval_reference_repair
         return earnings_retrieval_reference_repair.verify(path,case,catalog)
