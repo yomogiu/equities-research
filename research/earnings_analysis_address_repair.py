@@ -132,10 +132,18 @@ def currentness(previous,ref,*,as_of=None):
     return qualified_identity(request['spec'],case,record,old,new)
 
 
+def reservation_path(previous,output):
+    previous=Path(previous).resolve();output=Path(output).resolve()
+    code=Path(b.read(previous/'jobs/analysis/request.json')['code_root']).resolve();private=code.parent.parent
+    run=previous.parent.name
+    c.require(re.fullmatch('[a-f0-9]{24}',run) and previous==private/'reporting/runs'/run/'pipeline','Canonical original report required')
+    c.require(output==private/'reporting/repairs/analysis-addresses'/run,'One canonical repair reservation per original run required')
+
+
 def initialize(previous,output,*,source_currentness):
     from . import earnings_retrieval_repair as retrieval,earnings_file_runner as runner
     previous=Path(previous).resolve();output=Path(output).resolve();c.require(not output.exists(),'New immutable address repair required')
-    prior=original(previous);currentness(previous,source_currentness);cap=retrieval.budget(prior);protocol=b.read(previous/'protocol.json');catalog=b.read(previous/'passages.json');output.mkdir()
+    prior=original(previous);reservation_path(previous,output);currentness(previous,source_currentness);cap=retrieval.budget(prior);protocol=b.read(previous/'protocol.json');catalog=b.read(previous/'passages.json');output.mkdir()
     metadata={'role':'analysis','repair_version':VERSION,'case':b.read(protocol['case_path'])['scope_notes'],'period':b.read(protocol['case_path']).get('period')}
     artifacts=contents(prior);index=c.assemble(protocol['evidence_manifest'],catalog,output/'context',artifacts=artifacts,metadata=metadata);job=output/'jobs/address-repair'
     bindings={'role':'analysis','repair_version':VERSION,'source_protocol_sha256':b.sha(previous/'protocol.json'),'source_output_sha256':b.sha(previous/'jobs/analysis/output.json'),'context_sha256':b.sha(index),'artifact_sha256':b.digest(artifacts),'metadata_sha256':b.digest(metadata),'inherited_tokens':prior['tokens'],'spent_correction_rounds':1,'source_currentness_sha256':source_currentness['sha256']}
@@ -161,7 +169,7 @@ def verify_reservation(root):
     if historical is not None:return historical
     from . import earnings_retrieval_repair as retrieval,earnings_file_runner as runner
     from .earnings_second_retrieval_repair import launched_at
-    root=Path(root).resolve();v=b.read(root/'reservation.json');c.require(v['version']==VERSION,'Known address repair required');previous=Path(v['previous_root']);prior=original(previous)
+    root=Path(root).resolve();v=b.read(root/'reservation.json');c.require(v['version']==VERSION,'Known address repair required');previous=Path(v['previous_root']);prior=original(previous);reservation_path(previous,root)
     c.require(v['prior']==prior and v['models']==prior['models'] and v['max_tokens']==retrieval.budget(prior) and v['spent_correction_rounds']==1,'Original work/usage/models/rounds changed')
     job=root/'jobs/address-repair';index=root/'context/index.json';protocol=b.read(previous/'protocol.json');artifacts=contents(prior)
     currentness(previous,v['source_currentness'],as_of=launched_at(job))

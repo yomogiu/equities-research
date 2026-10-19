@@ -41,6 +41,12 @@ packet hashes and the full qualification lineage are verified first. Unrelated
 packets, issuer/period changes and a mismatched case are refused. Existing
 currentness proof versions and ordinary packet validation remain unchanged.
 
+The one executable repair reservation is fixed at
+`reporting/repairs/analysis-addresses/<original-run-id>` in the private controller.
+A different folder or copied original is refused, and initialization never
+overwrites an existing slot. A stopped/uncertain repair therefore cannot be
+replaced by a fresh reservation to erase usage.
+
 Publish/test code first; use only new compatible authenticated preparations.
 Never edit frozen worker checkouts, requests or outputs. An offline eligibility
 or context preflight is not a model reservation, activated report repair, reviewer

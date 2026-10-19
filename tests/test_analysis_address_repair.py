@@ -130,3 +130,13 @@ class QualifiedEndpointTests(unittest.TestCase):
   for spec,case in [({**new,'packet_id':'unrelated'},new),(new,old),({**new,'issuer_id':'another'},new),(new,{**new,'period':'Q3'})]:
    with self.assertRaises(ValueError):a.qualified_identity(spec,case,proof,old,new)
   with self.assertRaises(ValueError):a.qualified_identity(new,new,{**proof,'new_packet_id':'renamed'},old,new)
+
+class CanonicalReservationTests(unittest.TestCase):
+ def test_fresh_folder_or_copied_source_cannot_erase_a_prior_repair_attempt(self):
+  with tempfile.TemporaryDirectory() as d:
+   private=Path(d).resolve();run='c'*24;previous=private/'reporting/runs'/run/'pipeline';job=previous/'jobs/analysis';job.mkdir(parents=True);code=private/'.report-workflow'/('d'*40);(job/'request.json').write_text(json.dumps({'code_root':str(code)}));slot=private/'reporting/repairs/analysis-addresses'/run
+   a.reservation_path(previous,slot)
+   for alternate in [slot.with_name(run+'-fresh'),private/'reporting/repairs/other-folder',private/'outside']:
+    with self.assertRaisesRegex(ValueError,'One canonical'):a.reservation_path(previous,alternate)
+   copied=private/'copied'/run/'pipeline';(copied/'jobs/analysis').mkdir(parents=True);(copied/'jobs/analysis/request.json').write_text((job/'request.json').read_text())
+   with self.assertRaisesRegex(ValueError,'Canonical original'):a.reservation_path(copied,slot)
