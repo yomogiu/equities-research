@@ -49,7 +49,7 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     a=base.read(path)
-    if a.get('version')=='authenticated-single-retrieval-address-preparation-v1':
+    if a.get('version') in ('authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1'):
         from . import earnings_single_retrieval_addresses
         return earnings_single_retrieval_addresses.verify(path,case,catalog)
     if a.get('version')=='authenticated-reference-retrieval-preparation-v1':

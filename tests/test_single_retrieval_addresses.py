@@ -39,3 +39,32 @@ class DuplicateMembershipTests(unittest.TestCase):
    if change=='ambiguous':idx['exchanges'][0]['question_turn_ids']+=['q2'];idx['exchanges'][0]['answer_turn_ids']+=['a2']
    if change=='cardinality':raw['exchange_coverage'].append(copy.deepcopy(raw['exchange_coverage'][0]))
    with self.subTest(change=change),self.assertRaises(ValueError):s.exact_duplicate_membership(raw,cat,idx)
+
+class QuotedAddressTests(unittest.TestCase):
+ def fixture(self):
+  candidate={'quotes':[{'passage_id':'MISSING'},{'passage_id':'KNOWN'}],'exchange_coverage':[{'exchange_id':'e','answer_passage_ids':['MISSING'],'answer':'unchanged'}]}
+  cat={'passages':[{'passage_id':'KNOWN','scope_id':'a'},{'passage_id':'NEW','scope_id':'a'},{'passage_id':'OTHER','scope_id':'other'}]}
+  targets=[{'exchange_id':'e','field':'answer_passage_ids','before_ids':['MISSING'],'allowed_passage_ids':['NEW','KNOWN']}]
+  proposal={'repairs':[{'exchange_id':'e','field':'answer_passage_ids','before_ids':['MISSING'],'after_ids':['NEW']}]}
+  return candidate,targets,proposal,cat
+ def test_exact_shared_unknown_quote_follows_single_source_adjudication(self):
+  candidate,targets,proposal,cat=self.fixture();before=copy.deepcopy(candidate)
+  out=s.apply_quoted(candidate,targets,proposal,cat)
+  self.assertEqual(candidate,before);self.assertEqual(out['quotes'],[{'passage_id':'NEW'},{'passage_id':'KNOWN'}]);self.assertEqual(out['exchange_coverage'][0]['answer'],'unchanged')
+  self.assertEqual(s.quoted_targets(candidate,targets,cat),[{'quote_index':0,'before_id':'MISSING','exchange_id':'e'}])
+ def test_quote_prose_multiple_answer_or_ambiguous_link_rejected(self):
+  for mode in ['prose','multi_before','multi_after','outside','duplicate','unlinked']:
+   candidate,targets,proposal,cat=self.fixture()
+   if mode=='prose':candidate['quotes'][0]['text']='invented'
+   if mode=='multi_before':targets[0]['before_ids']+=['KNOWN']
+   if mode=='multi_after':proposal['repairs'][0]['after_ids']+=['KNOWN']
+   if mode=='outside':proposal['repairs'][0]['after_ids']=['OTHER']
+   if mode=='duplicate':candidate['quotes'].append({'passage_id':'MISSING'})
+   if mode=='unlinked':candidate['quotes'][0]['passage_id']='DIFFERENT'
+   with self.subTest(mode=mode),self.assertRaises(ValueError):s.apply_quoted(candidate,targets,proposal,cat)
+ def test_quoted_derive_excludes_only_bound_unknown_quote_from_prior_inspection(self):
+  raw,cat,bundle=SingleAddressTests().fixture();raw['exchange_coverage'][0]['answer_passage_ids']=['MISSING'];raw['quotes']=[{'passage_id':'MISSING'},{'passage_id':'A'}]
+  with patch.object(s.original,'original',return_value={'raw':raw}),patch.object(s.b,'read',side_effect=[{'evidence_manifest':'manifest'},cat,{'context_index':'index'}]),patch.object(evidence,'load_bundle',return_value=bundle),patch.object(pipeline,'coverage') as coverage:
+   prior,candidate,targets=s.derive(Path('/original'),quoted=True)
+  self.assertEqual(coverage.call_args.args[3]['quotes'],[{'passage_id':'A'}]);self.assertEqual(candidate,raw)
+  self.assertEqual(s.instruction(),s.instruction(quoted=False));self.assertNotEqual(s.instruction(),s.instruction(quoted=True))
