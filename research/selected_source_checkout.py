@@ -6,10 +6,13 @@ def paths(root,issuer_ids):
  root=Path(root).resolve();selected=set(issuer_ids)
  if not 1<=len(selected)<=3:raise ValueError('One to three issuers required')
  def read(p):return json.loads((root/p).read_text())
- config=read('config.json');catalog=read('library/catalog.json');latest=read('published/latest.json')['issuers']
+ config=read('config.json');catalog=read('library/catalog.json');publication=read('published/latest.json');latest=publication['issuers']
  if not selected<=set(latest):raise ValueError('Selected issuer has no packet')
  files={'config.json','workflow.json','library/catalog.json','library/review-queue.json','collection/document-index.json','published/latest.json','published/review-queue.json','published/receipt.json','pipeline/source-coverage.json'}
  files.update(str(p.relative_to(root)) for p in (root/'scripts').glob('*.py'))
+ # Incremental publication authenticates the whole baseline snapshot even
+ # when the selected packet was built against an older catalogue.
+ if publication.get('catalog_id'):files.add('library/snapshots/'+publication['catalog_id']+'.json')
  seen=set()
  def collect(value):
   if isinstance(value,dict):
