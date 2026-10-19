@@ -26,6 +26,21 @@ class MarketOpenTests(unittest.TestCase):
   with self.assertRaises(ValueError):t.compare(page(prepared=True),page(OPEN),URL,allow_market_open=True)
   with self.assertRaises(ValueError):t.compare(page(prepared=True),page(OPEN,True).replace(b'/FAKE/900/',b'/FAKE/901/').replace(b'{id:900',b'{id:901'),URL,allow_market_open=True)
   with self.assertRaises(ValueError):t.compare(page(),page(OPEN,True).replace(b'aria-label="Downloads"',b'aria-label="Other"',1),URL,allow_market_open=True)
+ def test_comparison_roundtrips_exactly_through_immutable_json(self):
+  v=t.compare(page(),page(OPEN,True),URL,allow_market_open=True);self.assertEqual(v,json.loads(json.dumps(v)))
+ def test_create_replay_keeps_original_qualification_and_fetch_bound(self):
+  from research import source_parse
+  from research.contracts import digest
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp).resolve();before=page();after=page(OPEN,True);text=source_parse.page(before,URL).text.encode()
+   for name,body in [('old.html',before),('old.txt',text),('sources/test/objects/new.html',after)]:
+    f=root/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_bytes(body)
+   q={'document_id':digest(['fictional:1',t.sha(text)]),'text_sha256':t.sha(text),'period':'FY2026-Q2','kind':'transcript','completeness':'full','source_accepted':True,'source_spans':[{'start':0,'end':9,'text':text.decode()[:9]}]};qid=digest(q);library.save(root/'library/qualifications'/(qid+'.json'),q)
+   cache={'sha256':t.sha(after),'checked_at':'2026-10-19T14:00:00+00:00','final_url':URL,'content_type':'text/html','body_path':'objects/new.html'};library.save(root/'sources/test/http-cache.json',{URL:cache});doc={'source_url':URL,'raw_path':'old.html','raw_sha256':t.sha(before),'text_path':'old.txt','text_sha256':t.sha(text),'qualification_id':qid};observed={'raw_path':'sources/test/objects/new.html','observed_sha256':t.sha(after),'checked_at':cache['checked_at']}
+   ref=t.create(root,{'issuer_id':'fictional:1','period':'FY2026-Q2'},doc,observed,'sources/test/http-cache.json',market_open=True);doc.update(scoped_currentness=ref,source_check_status=t.STATUS,scoped_checked_at=cache['checked_at']);self.assertEqual(t.replay(root,ref,doc)['version'],t.MARKET_OPEN_VERSION)
+   library.save(root/'sources/later/http-cache.json',{URL:{'checked_at':'2026-10-19T15:00:00+00:00','sha256':'f'*64}})
+   with self.assertRaises(ValueError):t.replay(root,ref,doc)
+   t.replay(root,ref,doc,historical=True)
  def test_derived_receipt_changes_only_rejected_widget_and_packet(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp).resolve();original={'companies':[{'issuer_id':'fictional:1','old_packet_id':'old','new_packet_id':'partial','documents':[{'source_url':URL,'status':'changed_requires_review','scope_reason':'Unrecognized quote widget','expected_sha256':'oldraw','observed_sha256':'newraw','raw_path':'observed.bin','checked_at':'2026-10-19T14:00:00Z'}]}]};(root/'failed.json').write_text(json.dumps(original));ref={'path':'scoped.json','sha256':'bound'};proof={'version':t.MARKET_OPEN_VERSION,'issuer_id':'fictional:1','source_url':URL,'archived':{'raw_sha256':'oldraw'},'observed':{'raw_sha256':'newraw','raw_path':'observed.bin'},'checked_at':'2026-10-19T14:00:00+00:00'};receipt=copy.deepcopy(original);row=receipt['companies'][0];row['new_packet_id']='qualified';row['documents'][0].update(status='scoped_transcript_currentness_verified',scoped_currentness=ref);row['documents'][0].pop('scope_reason');receipt['derivation']={'version':d.VERSION,'original_receipt':'failed.json','original_receipt_sha256':t.sha((root/'failed.json').read_bytes()),'scoped_currentness':ref}

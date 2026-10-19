@@ -192,7 +192,7 @@ def prepared_downloads(html, url):
     require(links[0]==links[1] and (not prepared or len(prepared)==2 and prepared[0]==prepared[1]),'Repeated download identity/order differs')
     require(len(re.findall('label:"Prepared remarks"',html))==(1 if prepared else 0),'Unbound prepared event file')
     for a,b in reversed(spans):html=html[:a]+html[b:]
-    return html,{'event':event[0],'existing_downloads':links,'prepared':prepared}
+    return html,{'event':list(event[0]),'existing_downloads':links,'prepared':prepared}
 
 
 def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False, allow_tsx=False, allow_market_open=False):
