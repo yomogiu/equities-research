@@ -210,3 +210,25 @@ class CurrentnessTest(unittest.TestCase):
                 with self.assertRaises(ValueError):scope.replay(root,ref,doc)
 
 if __name__=='__main__':unittest.main()
+
+class TsxCurrentnessTest(unittest.TestCase):
+    def test_exact_tsx_url_and_market_widget_only(self):
+        url='https://stockanalysis.com/quote/tsx/FAKE/transcripts/123-q2-2026/'
+        before=html(quote='35.02\n-1.21 (-3.34%)\nOct 2, 2026, 4:00 PM EST')
+        after=html(quote='35.23\n+0.46 (1.32%)\nOct 16, 2026, 4:00 PM EST')
+        scope.compare(before,after,url)
+        with self.assertRaises(ValueError):scope.compare(before,after,url,allow_tsx=False)
+        for changed in [after.replace(b'Fictional dialogue',b'Changed guidance'),after.replace(b'Q2',b'Q3'),after.replace(b'Oct 16',b'Profit doubled Oct 16'),after.replace(b'4:00 PM EST',b'New forecast')]:
+            with self.assertRaises(ValueError):scope.compare(before,changed,url)
+        for other in ['https://stockanalysis.com/quote/nyse/FAKE/transcripts/123-q2-2026/','https://other.example/quote/tsx/FAKE/transcripts/123-q2-2026/','https://stockanalysis.com/quote/tsx/FAKE/news/123-q2-2026/']:
+            with self.assertRaises(ValueError):scope.compare(before,after,other)
+        with self.assertRaises(ValueError):scope.compare(before,after,URL)
+
+    def test_tsx_filing_destination_and_exchange_remain_bound(self):
+        url='https://stockanalysis.com/quote/tsx/FAKE/transcripts/123-q2-2026/'
+        link='<a href="/filings/TSX:FAKE/123/"><span>Registration statement</span></a>'
+        before=html().replace(b'<h1>',(link+'<h1>').encode());after=before.replace(b'Registration statement',b'MD&amp;A')
+        scope.compare(before,after,url)
+        for changed in [after.replace(b'TSX:FAKE/123',b'TSX:OTHER/123'),after.replace(b'TSX:FAKE/123',b'TSX:FAKE/124'),after.replace(b'TSX:FAKE/123',b'NYSE:FAKE/123')]:
+            with self.assertRaises(ValueError):scope.compare(before,changed,url)
+        with self.assertRaises(ValueError):scope.compare(before,after,url,allow_tsx=False)

@@ -16,7 +16,8 @@ LEGACY_VERSION = 'stockanalysis-market-widget-currentness-v1'
 APP_COUNTER_VERSION = 'stockanalysis-market-and-app-counter-currentness-v2'
 COUNTRY_VERSION = 'stockanalysis-market-app-counter-and-country-navigation-currentness-v3'
 MOBILE_VERSION = 'stockanalysis-market-app-counter-country-and-mobile-controls-currentness-v4'
-VERSION = 'stockanalysis-exact-publisher-link-currentness-v5'
+PUBLISHER_LINK_VERSION = 'stockanalysis-exact-publisher-link-currentness-v5'
+VERSION = 'stockanalysis-exact-tsx-publisher-currentness-v6'
 STATUS = 'scoped_transcript_verified'
 
 
@@ -129,24 +130,29 @@ def mobile_controls(html):
 
 def publisher_links(html, url):
     """Normalize exact non-call directory controls; keep filing destinations bound."""
-    symbol = urlsplit(url).path.split('/')[2]
+    path = urlsplit(url).path
+    parts = path.split('/')
+    symbol = parts[3].lower() if path.startswith('/quote/tsx/') else parts[2]
+    prefix = '/quote/tsx/'+parts[3] if path.startswith('/quote/tsx/') else '/stocks/'+symbol
     menus = list(re.finditer(r'<ul\b(?=[^>]*\bclass="navmenu")[^>]*>.*?</ul>', html, re.S))
     require(len(menus) <= 1, 'Ambiguous stock navigation')
     if menus:
         menu = menus[0]
         require('transcript-sentence' not in menu.group(), 'Navigation overlaps call')
-        pattern = (r'<li><a href="/stocks/' + re.escape(symbol) +
+        pattern = (r'<li><a href="' + re.escape(prefix) +
                    r'/forecast/" data-title="Forecast">Forecast(?:<!--.*?-->)*</a></li>')
         matches = list(re.finditer(pattern, menu.group(), re.S))
         require(len(matches) <= 1, 'Ambiguous Forecast control')
         if matches:
             m = matches[0]; start = menu.start() + m.start(); end = menu.start() + m.end()
             html = html[:start] + html[end:]
-    pattern = r'<a\b[^>]*href="(/filings/[A-Z0-9.-]+/[0-9]+/)"[^>]*><span>(Registration statement|Report|MD&amp;A)</span></a>'
+    filing_id = r'TSX:[A-Z0-9.-]+' if path.startswith('/quote/tsx/') else r'[A-Z0-9.-]+'
+    expected_issuer = 'tsx:'+symbol if path.startswith('/quote/tsx/') else symbol
+    pattern = r'<a\b[^>]*href="(/filings/'+filing_id+r'/[0-9]+/)"[^>]*><span>(Registration statement|Report|MD&amp;A)</span></a>'
     seen = {}
     def filing(match):
         href, label = match.groups()
-        require(href.split('/')[2].lower() == symbol, 'Other issuer filing control')
+        require(href.split('/')[2].lower() == expected_issuer, 'Other issuer filing control')
         count, previous = seen.get(href, (0, label))
         require(count < 2 and previous == label, 'Ambiguous filing controls')
         seen[href] = (count + 1, label)
@@ -158,9 +164,10 @@ def publisher_links(html, url):
     return re.sub(pattern, filing, html)
 
 
-def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False):
+def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False, allow_tsx=False):
     require(urlsplit(url).hostname == 'stockanalysis.com' and
-            re.fullmatch(r'/stocks/[a-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path),
+            (re.fullmatch(r'/stocks/[a-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path) or
+             allow_tsx and re.fullmatch(r'/quote/tsx/[A-Za-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path)),
             'Unsupported transcript publisher URL')
     html = raw.decode('utf-8')
     page = source_parse.page(raw, url)
@@ -179,7 +186,9 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
     require(len(widget.spans) == 1 and widget.active is None and widget.depth == 0, 'Ambiguous quote widget')
     a, b = widget.spans[0]
     widget_text = source_parse.page(html[a:b].encode(), url).text
-    require(re.search(r'(?:Market closed|At close:|Pre-market:|After-hours:)', widget_text), 'Unrecognized quote widget')
+    tsx_widget = (allow_tsx and urlsplit(url).path.startswith('/quote/tsx/') and
+                  re.fullmatch(r'[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\n[+-][0-9]+(?:\.[0-9]+)? \([+-]?[0-9]+(?:\.[0-9]+)?%\)\n(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}, [0-9]{4}, [0-9]{1,2}:[0-9]{2} [AP]M (?:EST|EDT)', widget_text))
+    require(re.search(r'(?:Market closed|At close:|Pre-market:|After-hours:)', widget_text) or tsx_widget, 'Unrecognized quote widget')
     require('transcript-sentence' not in html[a:b], 'Widget overlaps call evidence')
     outside_html = html[:a] + '<div>QUOTE_WIDGET</div>' + html[b:]
     if allow_app_counters:
@@ -201,9 +210,9 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
             'widget_html_span': [a,b], 'widget_sha256': sha(html[a:b].encode())}
 
 
-def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True, allow_publisher_links=True):
-    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links)
-    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links)
+def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True, allow_publisher_links=True, allow_tsx=True):
+    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx)
+    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx)
     require(old == new, 'Complete transcript, metadata or non-widget content changed')
     require(old['title'] and old['block_sha256'], 'Transcript metadata missing')
     return {'signature': old, 'archived': old_spans, 'observed': new_spans,
@@ -216,7 +225,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -224,7 +233,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     observed_text = library.load_bytes(root, new['text_path'], new['text_sha256'])
     require(source_parse.page(after,value['source_url']).text.encode() == observed_text, 'Observed extraction mismatch')
     require(source_parse.page(before,value['source_url']).text.encode() == text, 'Archived extraction mismatch')
-    require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] == VERSION) == value['comparison'], 'Scoped comparison changed')
+    require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version']==VERSION) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
