@@ -13,3 +13,15 @@ def validate(root,expected):
  c.require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=code,text=True).strip()==code.name and not subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=code,text=True).strip() and subprocess.check_output(['git','remote','get-url','origin'],cwd=code,text=True).strip()=='https://github.com/yomogiu/equities-research.git','Official frozen pipeline required')
  program="import sys,json;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from research import earnings_file_pipeline as p,earnings_mixed_runner as b;v,_,_=p.load(Path(sys.argv[2]));print(json.dumps({'model_profile':v.get('model_profile'),'models':v['models'],'preparation_version':b.read(v['analysis_preparation_path'])['version']}))"
  value=json.loads(subprocess.check_output([sys.executable,'-I','-B','-c',program,str(code),str(root)],text=True));matches(value,expected);return {'version':VERSION,'protocol_sha256':b.sha(root/'protocol.json'),'reserved_model_profile':expected,**value}
+
+HEADING_HANDLER='authenticated-final-heading-proposal-continuation-v1'
+def matches_heading(value,expected):
+ from .earnings_file_pipeline import profile_models
+ c.require(expected=='original-file-review-routes-v1' and value['model_profile'] is None and value['preparation_version']==HEADING_HANDLER and value['models']==profile_models(expected) and value['spent_correction_rounds']==2 and value['session_count']==6,'Exact final-heading inherited routes and accounting required');return True
+
+def validate_heading(root,expected):
+ root=Path(root).resolve();protocol=b.read(root/'protocol.json');code=Path(next(x['path'] for x in protocol['code'] if x['path'].endswith('/earnings_file_pipeline.py'))).parent.parent
+ c.require(code.parent.name=='.report-workflow' and re.fullmatch('[a-f0-9]{40}',code.name),'Managed frozen pipeline required')
+ c.require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=code,text=True).strip()==code.name and not subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=code,text=True).strip() and subprocess.check_output(['git','remote','get-url','origin'],cwd=code,text=True).strip()=='https://github.com/yomogiu/equities-research.git','Official frozen pipeline required')
+ program="import sys,json;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from research import earnings_file_pipeline as p,earnings_mixed_runner as b;v,_,_=p.load(Path(sys.argv[2]));h=b.read(v['review_preparation_path']);print(json.dumps({'model_profile':v.get('model_profile'),'models':v['models'],'preparation_version':h['version'],'spent_correction_rounds':h['spent_correction_rounds'],'session_count':len(h['session_ids'])}))"
+ value=json.loads(subprocess.check_output([sys.executable,'-I','-B','-c',program,str(code),str(root)],text=True));matches_heading(value,expected);return {'version':'authenticated-inherited-heading-model-profile-v1','protocol_sha256':b.sha(root/'protocol.json'),'reserved_model_profile':expected,**value}
