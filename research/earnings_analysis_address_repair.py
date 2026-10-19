@@ -100,7 +100,11 @@ def original(previous):
 def contents(prior):
     # A JSON string is explicit unreviewed output, not a source inventory. The
     # invalid original address must never be supplied as an evidence locator.
-    return {**prior['dependencies'],'unreviewed_prior_analysis_json':json.dumps(prior['raw'],ensure_ascii=False,sort_keys=True),'address_targets':prior['targets']}
+    from . import earnings_file_pipeline as pipeline
+    diagnostic=copy.deepcopy(prior['raw'])
+    for target in prior['targets']:field(diagnostic,target['field_path']).pop(target['position'])
+    inventory={'citations':sorted(pipeline.refs(diagnostic))}
+    return {**prior['dependencies'],'original_valid_source_inventory':inventory,'unreviewed_prior_analysis_json':json.dumps(prior['raw'],ensure_ascii=False,sort_keys=True),'address_targets':prior['targets']}
 
 
 def prompt(protocol,index,job):
@@ -108,10 +112,30 @@ def prompt(protocol,index,job):
     return pipeline.instruction('analysis',index,job,protocol)+'\nThis is a bounded source-adjudicated citation repair, spending original correction round one. Decode artifacts["unreviewed_prior_analysis_json"] as the ORIGINAL unreviewed author. Inspect the complete original call and supporting source pages. Return that complete original analysis with changes ONLY at the invalid citation positions named in address_targets. Select one to three exact allowed ORIGINAL exchange IDs at each position based on original source support, never prefix/similarity guesses. Preserve all prose, titles, scope, valid citations, order, quotes and other structure byte-for-byte as JSON values. Do not rewrite analysis or treat original author prose as evidence. Use ctx.validate_result(candidate) before final submission. Fresh independent FULL report review remains mandatory; this is not acceptance.\n'
 
 
+def qualified_identity(spec,case,proof,old,new):
+    identifiers=(proof['old_packet_id'],proof['new_packet_id'])
+    c.require(old['packet_id']==identifiers[0] and new['packet_id']==identifiers[1],'Exact qualified proof endpoints required')
+    c.require(spec['packet_id'] in identifiers,'Qualification belongs to another packet')
+    packet=old if spec['packet_id']==identifiers[0] else new
+    c.require(all(case.get(k)==spec.get(k)==packet.get(k) for k in ('packet_id','issuer_id','period')),'Original report/case/qualified identity changed')
+    return 'old_packet' if packet is old else 'new_packet'
+
+
+def currentness(previous,ref,*,as_of=None):
+    from . import earnings_source_revalidation as proof
+    previous=Path(previous).resolve();q=b.read(previous/'jobs/analysis/request.json');code=Path(q['code_root']).resolve();private=code.parent.parent
+    c.require(isinstance(ref,dict) and set(ref)=={'path','sha256'},'Explicit source qualification reference required')
+    path=proof.library.resolve(private,ref['path']);c.require(b.sha(path)==ref['sha256'],'Source qualification proof changed')
+    old=proof.verify(private,path,**({} if as_of is None else {'as_of':as_of}));record=b.read(path)
+    new=b.read(proof.library.resolve(private,'library/packets/'+record['new_packet_id']+'.json'))
+    request=b.read(previous.parent/'request.json');case=b.read(b.read(previous/'protocol.json')['case_path'])
+    return qualified_identity(request['spec'],case,record,old,new)
+
+
 def initialize(previous,output,*,source_currentness):
     from . import earnings_retrieval_repair as retrieval,earnings_file_runner as runner
     previous=Path(previous).resolve();output=Path(output).resolve();c.require(not output.exists(),'New immutable address repair required')
-    prior=original(previous);retrieval.currentness(previous,source_currentness);cap=retrieval.budget(prior);protocol=b.read(previous/'protocol.json');catalog=b.read(previous/'passages.json');output.mkdir()
+    prior=original(previous);currentness(previous,source_currentness);cap=retrieval.budget(prior);protocol=b.read(previous/'protocol.json');catalog=b.read(previous/'passages.json');output.mkdir()
     metadata={'role':'analysis','repair_version':VERSION,'case':b.read(protocol['case_path'])['scope_notes'],'period':b.read(protocol['case_path']).get('period')}
     artifacts=contents(prior);index=c.assemble(protocol['evidence_manifest'],catalog,output/'context',artifacts=artifacts,metadata=metadata);job=output/'jobs/address-repair'
     bindings={'role':'analysis','repair_version':VERSION,'source_protocol_sha256':b.sha(previous/'protocol.json'),'source_output_sha256':b.sha(previous/'jobs/analysis/output.json'),'context_sha256':b.sha(index),'artifact_sha256':b.digest(artifacts),'metadata_sha256':b.digest(metadata),'inherited_tokens':prior['tokens'],'spent_correction_rounds':1,'source_currentness_sha256':source_currentness['sha256']}
@@ -140,7 +164,7 @@ def verify_reservation(root):
     root=Path(root).resolve();v=b.read(root/'reservation.json');c.require(v['version']==VERSION,'Known address repair required');previous=Path(v['previous_root']);prior=original(previous)
     c.require(v['prior']==prior and v['models']==prior['models'] and v['max_tokens']==retrieval.budget(prior) and v['spent_correction_rounds']==1,'Original work/usage/models/rounds changed')
     job=root/'jobs/address-repair';index=root/'context/index.json';protocol=b.read(previous/'protocol.json');artifacts=contents(prior)
-    retrieval.currentness(previous,v['source_currentness'],as_of=launched_at(job))
+    currentness(previous,v['source_currentness'],as_of=launched_at(job))
     metadata={'role':'analysis','repair_version':VERSION,'case':b.read(protocol['case_path'])['scope_notes'],'period':b.read(protocol['case_path']).get('period')}
     expected={'role':'analysis','repair_version':VERSION,'source_protocol_sha256':b.sha(previous/'protocol.json'),'source_output_sha256':b.sha(previous/'jobs/analysis/output.json'),'context_sha256':b.sha(index),'artifact_sha256':b.digest(artifacts),'metadata_sha256':b.digest(metadata),'inherited_tokens':prior['tokens'],'spent_correction_rounds':1,'source_currentness_sha256':v['source_currentness']['sha256']}
     c.require(Path(v['job'])==job and Path(v['index'])==index and v['bindings']==expected,'Exact repair paths/bindings required')

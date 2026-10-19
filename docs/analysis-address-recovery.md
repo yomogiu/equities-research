@@ -23,7 +23,8 @@ spelling never authorizes a mapping. Broader failures remain ineligible.
 The old unreviewed analysis is explicitly serialized handoff data, so its invalid
 address cannot masquerade as an evidence locator. It remains immutable. Supporting
 sources come from the authenticated original dependencies, not a substituted
-candidate. Fresh source coverage and schema validation are mandatory. A launched
+candidate. Every valid original author reference is also retained in an explicit
+source inventory for complete supporting-page planning. Fresh source coverage and schema validation are mandatory. A launched
 repair replays its own frozen producer when checked by later code.
 
 A completed repair produces `authenticated-analysis-address-preparation-v1`,
@@ -33,7 +34,12 @@ sessions, original models, writing, source-led template and cap, starts a fresh
 full review at round one after signals, and retains only original final correction
 two. That final round requires a separately reassessed complete author/review path.
 No budget, tool or resume limit is reset, and the full registered per-turn output
-reservation remains in force. Source currentness is checked at launch/replay.
+reservation remains in force. Source currentness is checked at launch/replay. The exact frozen report/case may
+match either authenticated endpoint of an existing qualification transition; this
+supports reports first reserved from the newly qualified packet. Both endpoint
+packet hashes and the full qualification lineage are verified first. Unrelated
+packets, issuer/period changes and a mismatched case are refused. Existing
+currentness proof versions and ordinary packet validation remain unchanged.
 
 Publish/test code first; use only new compatible authenticated preparations.
 Never edit frozen worker checkouts, requests or outputs. An offline eligibility

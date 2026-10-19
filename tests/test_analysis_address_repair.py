@@ -50,6 +50,7 @@ class AnalysisAddressTests(unittest.TestCase):
   result=a.contents(prior)
   self.assertEqual(json.loads(result['unreviewed_prior_analysis_json']),raw)
   self.assertNotIn('unreviewed_prior_analysis',result)
+  self.assertNotIn('exchange-unknown',result['original_valid_source_inventory']['citations']);self.assertIn('Pexact',result['original_valid_source_inventory']['citations']);self.assertIn('D002',result['original_valid_source_inventory']['citations'])
  def test_preparation_refuses_reset_dropped_session_changed_models_or_case(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);(root/'reservation.json').write_text('{}');case=root/'case';case.write_text('{}')
@@ -121,3 +122,11 @@ class FrozenAnalysisAddressTests(unittest.TestCase):
    (job/'request.json').write_text(json.dumps({'code_root':str(code)}))
    with patch.object(a.subprocess,'check_output',side_effect=['b'*40+'\n','','https://github.com/yomogiu/equities-research.git\n','{"tokens":410000}']) as process:
     self.assertEqual(a.frozen(root,'completed'),{'tokens':410000});command=process.call_args.args[0];self.assertIn('-I',command);self.assertEqual(command[-1],'completed');self.assertIn(str(code.resolve()),command)
+
+class QualifiedEndpointTests(unittest.TestCase):
+ def test_report_must_use_an_exact_authenticated_qualification_endpoint(self):
+  old={'packet_id':'old-digest','issuer_id':'fictitious:1','period':'Q2'};new={**old,'packet_id':'new-digest'};proof={'old_packet_id':old['packet_id'],'new_packet_id':new['packet_id']}
+  self.assertEqual(a.qualified_identity(old,old,proof,old,new),'old_packet');self.assertEqual(a.qualified_identity(new,new,proof,old,new),'new_packet')
+  for spec,case in [({**new,'packet_id':'unrelated'},new),(new,old),({**new,'issuer_id':'another'},new),(new,{**new,'period':'Q3'})]:
+   with self.assertRaises(ValueError):a.qualified_identity(spec,case,proof,old,new)
+  with self.assertRaises(ValueError):a.qualified_identity(new,new,{**proof,'new_packet_id':'renamed'},old,new)
