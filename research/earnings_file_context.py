@@ -181,6 +181,9 @@ class Evidence:
                         'invalid_exchange_ids':invalid,'valid_exchange_ids':sorted(exchange_ids),
                         'instruction':'Copy exact IDs from the delivered call locators; do not infer bindings from similar spelling.'}
             if role in ('financial','retrieval','analysis'):
+                if role=='analysis' and base.read(self.root/'metadata.json').get('repair_version')=='authenticated-analysis-address-repair-v1':
+                    from . import earnings_analysis_address_repair as addresses
+                    addresses.checked_candidate(json.loads(artifacts['unreviewed_prior_analysis_json']),value,bundle['transcript_index'])
                 pipe.validate(role,value,bundle,self.catalog)
                 if role=='analysis':
                     from . import earnings_report_template as template

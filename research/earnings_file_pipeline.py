@@ -122,6 +122,9 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         if inherited_analysis.get('version') in (prepared_analysis.DUPLICATE_VERSION,prepared_analysis.EXCHANGE_VERSION):
             require(inherited_analysis['spent_correction_rounds']==0 and base.sha(writing)==inherited_analysis['writing_sha256'],'Original analysis settings changed')
             p.update(models=inherited_analysis['models'],report_template=inherited_analysis['report_template'])
+        if inherited_analysis.get('version')=='authenticated-analysis-address-preparation-v1':
+            require(inherited_analysis['spent_correction_rounds']==1 and not p.get('retrieval_repair_rounds') and base.sha(writing)==inherited_analysis['writing_sha256'],'Original analysis repair settings changed')
+            p.update(models=inherited_analysis['models'],report_template=inherited_analysis['report_template'],analysis_repair_rounds=1)
         require(max_tokens<=inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis lifecycle or retrieval lineage differs')
         p.update(analysis_preparation_path=str(Path(analysis_preparation).resolve()),analysis_preparation_sha256=base.sha(analysis_preparation),inherited_tokens=inherited_analysis['tokens'])
     if recovery is not None:
@@ -134,7 +137,9 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
 
 def load(root):
     p=base.read(root/'protocol.json')
-    require(p['version']==VERSION and (validate_profile(p) or p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-exact-review-proposals-continuation-v1')) and p['max_correction_rounds']==2
+    if 'analysis_repair_rounds' in p:
+        require(type(p['analysis_repair_rounds']) is int and p['analysis_repair_rounds']==1 and p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version')=='authenticated-analysis-address-preparation-v1','Unbound analysis correction round')
+    require(p['version']==VERSION and (validate_profile(p) or p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1','authenticated-analysis-address-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-exact-review-proposals-continuation-v1')) and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
@@ -172,6 +177,8 @@ def load(root):
             inherited_analysis=prepared_analysis.verify(p['analysis_preparation_path'],p['case_path'],base.read(root/'passages.json'))
             if inherited_analysis.get('version') in (prepared_analysis.DUPLICATE_VERSION,prepared_analysis.EXCHANGE_VERSION):
                 require(p['models']==inherited_analysis['models'] and p.get('report_template')==inherited_analysis['report_template'] and p['writing_sha256']==inherited_analysis['writing_sha256'] and inherited_analysis['spent_correction_rounds']==0,'Original analysis settings changed')
+            if inherited_analysis.get('version')=='authenticated-analysis-address-preparation-v1':
+                require(p['models']==inherited_analysis['models'] and p.get('report_template')==inherited_analysis['report_template'] and p['writing_sha256']==inherited_analysis['writing_sha256'] and p.get('analysis_repair_rounds')==inherited_analysis['spent_correction_rounds']==1 and not p.get('retrieval_repair_rounds'),'Analysis repair cannot reset rounds/models/guide')
             require(p['inherited_tokens']==inherited_analysis['tokens'] and p['max_tokens']<=inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis usage or lineage changed')
         else:require(p['inherited_tokens']==inherited['tokens'],'Preparation usage changed')
     else:require(p.get('inherited_tokens',0)==0,'Unbound inherited usage')
@@ -344,6 +351,9 @@ def _advance(root,execute):
             inherited_analysis=base.read(p['analysis_preparation_path'])
             pipe.validate(role,inherited_analysis['content'],bundle,catalog)
             artifacts[role]=copy.deepcopy(inherited_analysis['content'])
+            if inherited_analysis.get('version')=='authenticated-analysis-address-preparation-v1':
+                ids=inherited_analysis['session_ids'];require(len(ids)==len(set(ids))==3 and ids[0] in sessions and not (set(ids[1:]) & sessions),'Three distinct charged role sessions required')
+                sessions.update(ids[1:]);continue
             require(inherited_analysis['session_ids'][0] in sessions and inherited_analysis['session_ids'][1] not in sessions,'Analysis session lineage differs')
             sessions.add(inherited_analysis['session_ids'][1]);continue
         state=None;report=None;dependencies={**artifacts,'qa_grounding':base.read(root/'qa-grounding.json')}
@@ -383,10 +393,11 @@ def _advance(root,execute):
     if continued and continued.get('version') in ('authenticated-completed-review-inspection-continuation-v1','authenticated-exact-review-proposals-continuation-v1'):
         require(continued['start_round']==1 and continued['spent_correction_rounds']==1,'Original review1 and only final correction2 remain')
         start_round=1;findings=continued['findings']
-    if p.get('retrieval_repair_rounds') in (1,2):
-        start_round=p['retrieval_repair_rounds']
+    repair_rounds=p.get('analysis_repair_rounds',p.get('retrieval_repair_rounds'))
+    if repair_rounds in (1,2):
+        start_round=repair_rounds
     for round_no in range(start_round,3):
-        if round_no and not (p.get('retrieval_repair_rounds')==round_no) and not (continued and continued.get('version') in ('authenticated-completed-review-inspection-continuation-v1','authenticated-exact-review-proposals-continuation-v1') and round_no==1):
+        if round_no and not (repair_rounds==round_no) and not (continued and continued.get('version') in ('authenticated-completed-review-inspection-continuation-v1','authenticated-exact-review-proposals-continuation-v1') and round_no==1):
             name='correction-'+str(round_no);before=copy.deepcopy(items)
             if continued and continued.get('version')=='authenticated-completed-role-coverage-continuation-v1' and round_no==continued['start_round']:
                 state,pack=batch.materialize(items)

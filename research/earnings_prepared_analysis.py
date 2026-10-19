@@ -134,7 +134,11 @@ def prepare(previous,case,output,*,duplicate_quotes=False,quoted_exchange=False)
 
 
 def verify(path,case,catalog):
-    a=base.read(path);old=Path(a['previous_root'])
+    a=base.read(path)
+    if a.get('version')=='authenticated-analysis-address-preparation-v1':
+        from . import earnings_analysis_address_repair
+        return earnings_analysis_address_repair.verify(path,case,catalog)
+    old=Path(a['previous_root'])
     context.require(a['version'] in (VERSION,DUPLICATE_VERSION,EXCHANGE_VERSION) and a['case_sha256']==base.sha(case),'Analysis case changed')
     context.require(a['protocol_sha256']==base.sha(old/'protocol.json') and a['output_sha256']==base.sha(old/'jobs/analysis/output.json'),'Analysis ancestor changed')
     v=replay(old,duplicate_quotes=True) if a['version']==DUPLICATE_VERSION else replay(old,quoted_exchange=True) if a['version']==EXCHANGE_VERSION else replay(old)
