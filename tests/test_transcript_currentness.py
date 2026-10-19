@@ -14,6 +14,32 @@ def html(quote='100 At close:', block=BLOCK):
     return ('<html><head><title>Fictional Q2 2026</title></head><body><div class="mb-5 flex flex-row items-end">'+quote+'</div><h1>Earnings Call: Q2 2026</h1>'+block+'<footer>Fictional attribution</footer></body></html>').encode()
 
 class CurrentnessTest(unittest.TestCase):
+    def test_exact_filing_labels_and_forecast_control(self):
+        link = '<a href="/filings/FAKE/123/" class="pill"><span>Registration statement</span></a>'
+        nav = '<ul class="navmenu"><li>Overview</li></ul>'
+        forecast = '<li><a href="/stocks/fake/forecast/" data-title="Forecast">Forecast<!--[-1--><!--]--></a></li>'
+        before = html().replace(b'<h1>', (nav+link+link+'<h1>').encode())
+        after = before.replace(b'<li>Overview</li>', ('<li>Overview</li>'+forecast).encode()).replace(b'Registration statement', b'MD&amp;A')
+        scope.compare(before, after, URL)
+        with self.assertRaises(ValueError):
+            scope.compare(before, after, URL, allow_publisher_links=False)
+        mutations = [after.replace(b'/123/', b'/124/'), after.replace(b'MD&amp;A', b'New profit claim'),
+                     after.replace(b'FAKE/123', b'OTHER/123'), after.replace(b'dialogue', b'new claim'),
+                     after.replace(b'data-title="Forecast"', b'data-title="New Claim"'),
+                     after.replace(b'/stocks/fake/forecast/', b'/stocks/fake/earnings/'),
+                     after.replace(b'class="navmenu"', b'class="report"'),
+                     after.replace(forecast.encode(), (forecast+forecast).encode()),
+                     after.replace(b'Overview', b'New outlook'), after.replace(b'Q2', b'Q3')]
+        for changed in mutations:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                scope.compare(before, changed, URL)
+        with self.assertRaises(ValueError):
+            scope.compare(before, after.replace(b'<footer>', forecast.encode()+b'<footer>'), URL)
+        # Evidence paragraphs never become an allowlisted control region.
+        with self.assertRaises(ValueError):
+            scope.compare(html(block=BLOCK.replace('Fictional dialogue.', link+'Fictional dialogue.')),
+                          html(block=BLOCK.replace('Fictional dialogue.', link.replace('Registration statement','Report')+'Fictional dialogue.')), URL)
+
     def test_market_only(self):
         proof = scope.compare(html(),html('99 Pre-market:'),URL)
         self.assertFalse(proof['whole_page_bytes_equal'])
@@ -87,7 +113,7 @@ class CurrentnessTest(unittest.TestCase):
         with self.assertRaises(ValueError):scope.compare(before,after.replace(b'</ul>',BLOCK.encode()+b'</ul>'),URL)
 
     def test_old_receipt_versions_replay_original_rules(self):
-        for version in (scope.LEGACY_VERSION,scope.APP_COUNTER_VERSION):
+        for version in (scope.LEGACY_VERSION,scope.APP_COUNTER_VERSION,scope.COUNTRY_VERSION,scope.MOBILE_VERSION):
             with tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp).resolve();ref,doc=self.fixture(root)
                 value=library.read_json(root/ref['path']);value['version']=version
