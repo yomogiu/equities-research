@@ -27,6 +27,24 @@ MODELS={**pipe.MODELS,'analysis':signals.MODEL,'signal_author':signals.DRAFT_MOD
         'correction':signals.MODEL,'review':signals.MODEL}
 
 
+ORIGINAL_MODEL_PROFILE='original-file-review-routes-v1'
+ORIGINAL_MODELS={'financial':['gpt-6-luna','max'],'retrieval':['gpt-6-luna','max'],
+                 'analysis':['gpt-6-luna','max'],'review':['gpt-6.1-sol','medium'],
+                 'signal_author':['gpt-6.1-sol','low'],'correction':['gpt-6-luna','max']}
+
+def profile_models(profile):
+    if profile is None:return {k:list(v) for k,v in MODELS.items()}
+    require(profile==ORIGINAL_MODEL_PROFILE,'Unknown immutable model profile')
+    return copy.deepcopy(ORIGINAL_MODELS)
+
+def validate_profile(protocol):
+    if protocol.get('model_profile') is None:return False
+    expected=profile_models(protocol['model_profile'])
+    require(protocol['models']==expected,'Frozen model profile assignments changed')
+    require(not any(protocol.get(k) for k in ('preparation_path','analysis_preparation_path','review_preparation_path','signal_preparation_path','recovery_path')),'Profile cannot replace inherited assignments')
+    return True
+
+
 def require(ok,message):
     if not ok:raise ValueError(message)
 
@@ -45,7 +63,9 @@ def verify_budget_authorization(path,case):
     return a
 
 
-def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None, signal_preparation=None, report_template=template.VERSION):
+def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None, signal_preparation=None, report_template=template.VERSION, model_profile=None):
+    selected_models=profile_models(model_profile)
+    require(model_profile is None or not any(x is not None for x in (recovery,preparation,analysis_preparation,review_preparation,signal_preparation)),'Profile is for new requests only')
     root=Path(output).resolve();case=Path(case).resolve();writing=Path(writing).resolve()
     require(financial_mode in ('deterministic-original-facts-v1','model-original-selector-v1'),'Known financial preparation mode required')
     require(max_tokens is None and budget_authorization is not None or type(max_tokens) is int and 1<=max_tokens<=1200000,'Explicit lifecycle budget or approved cap removal required')
@@ -58,11 +78,12 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
     code=[*Path(__file__).parent.glob('*.py'),*Path(__file__).parent.glob('earnings_*.mjs'),*PROMPTS.glob('*.md')]
     p={'version':VERSION,'case_path':str(case),'case_sha256':base.sha(case),'evidence_manifest':str(root/'evidence/manifest.json'),
         'evidence_sha256':base.sha(root/'evidence/manifest.json'),'passages_sha256':base.sha(root/'passages.json'),
-        'writing_standard':str(writing),'writing_sha256':base.sha(writing),'models':{k:list(v) for k,v in MODELS.items()},
+        'writing_standard':str(writing),'writing_sha256':base.sha(writing),'models':selected_models,
         'max_tokens':max_tokens,'max_correction_rounds':2,'max_tool_calls_per_job':48,
         'code':[{'path':str(q),'sha256':base.sha(q)} for q in sorted(code)],
         'qa_grounding_sha256':base.sha(root/'qa-grounding.json'),'report_signals':True,'deterministic_corrections':True,
         'transport':'file-evidence-ipython-markdown-v1','financial_mode':financial_mode}
+    if model_profile is not None:p['model_profile']=model_profile
     require(report_template in (None, template.VERSION),'Known report template required')
     # Prepared continuations retain their authenticated author schema and writing.
     if report_template and not any(x is not None for x in (recovery, preparation, analysis_preparation, review_preparation, signal_preparation)):
@@ -113,7 +134,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
 
 def load(root):
     p=base.read(root/'protocol.json')
-    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-exact-review-proposals-continuation-v1')) and p['max_correction_rounds']==2
+    require(p['version']==VERSION and (validate_profile(p) or p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-exact-review-proposals-continuation-v1')) and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
