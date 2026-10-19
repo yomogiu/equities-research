@@ -110,7 +110,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
 
 def load(root):
     p=base.read(root/'protocol.json')
-    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-charged-retrieval-preparation-v1' or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1')) and p['max_correction_rounds']==2
+    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1')) and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
