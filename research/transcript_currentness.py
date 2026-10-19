@@ -21,6 +21,7 @@ VERSION = 'stockanalysis-exact-tsx-publisher-currentness-v6'
 LISTING_VERSION = 'stockanalysis-authenticated-listing-header-currentness-v7'
 MARKET_OPEN_VERSION = 'stockanalysis-exact-market-open-widget-currentness-v8'
 KASE_VERSION = 'stockanalysis-exact-kase-publisher-currentness-v9'
+NASDAQ_VERSION = 'stockanalysis-authenticated-nasdaq-market-open-currentness-v10'
 STATUS = 'scoped_transcript_verified'
 
 
@@ -277,7 +278,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (NASDAQ_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -285,8 +286,11 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     observed_text = library.load_bytes(root, new['text_path'], new['text_sha256'])
     require(source_parse.page(after,value['source_url']).text.encode() == observed_text, 'Observed extraction mismatch')
     require(source_parse.page(before,value['source_url']).text.encode() == text, 'Archived extraction mismatch')
-    if value['version']==LISTING_VERSION:
-        from . import transcript_listing_transition as listing
+    if value['version'] in (LISTING_VERSION,NASDAQ_VERSION):
+        if value['version']==NASDAQ_VERSION:
+            from . import transcript_nasdaq_transition as listing
+        else:
+            from . import transcript_listing_transition as listing
         auth,_=listing.authority(root,value['listing_authority'],value['issuer_id'],value['source_url'],value['checked_at'])
         require(listing.compare(before,after,value['source_url'],auth)==value['comparison'],'Listing comparison changed')
     else:
@@ -318,7 +322,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     return value
 
 
-def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False, kase=False):
+def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False, kase=False, nasdaq_authority=None):
     from . import library
     before = library.load_bytes(root,doc['raw_path'],doc['raw_sha256'])
     after = library.load_bytes(root,observed['raw_path'],observed['observed_sha256'])
@@ -327,15 +331,20 @@ def create(root, packet, doc, observed, cache_path, *, listing_authority=None, m
     destination = library.resolve(root,observed_text_path)
     if destination.exists(): require(destination.read_bytes() == observed_text, 'Conflicting immutable observed extraction')
     else: destination.write_bytes(observed_text)
+    require(nasdaq_authority is None or listing_authority is None and market_open is False and kase is False, 'Separate explicit combined Nasdaq qualification required')
     require(type(kase) is bool and (not kase or not market_open and listing_authority is None), 'Separate explicit KASE qualification required')
     require(type(market_open) is bool, 'Explicit widget qualification flag required')
     require(not market_open or listing_authority is None, 'Separate explicit market widget and listing transitions required')
-    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open, allow_kase=kase) if listing_authority is None else None
+    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open, allow_kase=kase) if listing_authority is None and nasdaq_authority is None else None
     if listing_authority is not None:
         from . import transcript_listing_transition as listing
         auth,_=listing.authority(root,listing_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
         comparison=listing.compare(before,after,doc['source_url'],auth)
-    value = {'version': (KASE_VERSION if kase else MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
+    if nasdaq_authority is not None:
+        from . import transcript_nasdaq_transition as listing
+        auth,_=listing.authority(root,nasdaq_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
+        comparison=listing.compare(before,after,doc['source_url'],auth)
+    value = {'version': NASDAQ_VERSION if nasdaq_authority is not None else (KASE_VERSION if kase else MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
              'source_url': doc['source_url'], 'qualification_id': doc['qualification_id'],
              'archived': {k:doc[k] for k in ('raw_path','raw_sha256','text_path','text_sha256')},
              'observed': {'raw_path': observed['raw_path'], 'raw_sha256': observed['observed_sha256'],
@@ -344,6 +353,7 @@ def create(root, packet, doc, observed, cache_path, *, listing_authority=None, m
              'http_cache_sha256': sha(library.resolve(root,cache_path).read_bytes()),
              'comparison': comparison}
     if listing_authority is not None:value['listing_authority']=listing_authority
+    if nasdaq_authority is not None:value['listing_authority']=nasdaq_authority
     name = 'reporting/source-currentness/'+digest(value)+'.json'
     library.save(library.resolve(root,name),value,immutable=True)
     reference = {'path':name,'sha256':sha(library.resolve(root,name).read_bytes())}
@@ -386,8 +396,11 @@ def bindings(root, doc):
     value = replay(root,ref,doc)
     names = [ref['path'], value['observed']['raw_path'], value['observed']['text_path'], value['http_cache_path']]
     result={p:sha(library.resolve(root,p).read_bytes()) for p in names}
-    if value['version']==LISTING_VERSION:
-        from . import transcript_listing_transition as listing
+    if value['version'] in (LISTING_VERSION,NASDAQ_VERSION):
+        if value['version']==NASDAQ_VERSION:
+            from . import transcript_nasdaq_transition as listing
+        else:
+            from . import transcript_listing_transition as listing
         _,inputs=listing.authority(root,value['listing_authority'],value['issuer_id'],value['source_url'],value['checked_at']);result.update(inputs)
     return result
 
