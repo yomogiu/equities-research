@@ -335,6 +335,9 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION,fina
                         'Quote repair must delete from the exact original selections')
                     cursor=iter(value)
                     require(all(any(old==q for old in cursor) for q in after),'Quote repair cannot add or reorder selections')
+                    if d['unit_id']=='retrieval':
+                        require(4<=len(after)<=18,
+                            'Retrieval quote deletion must retain four to eighteen selections; propose a source-supported factual revision instead of an impossible deletion')
                     require(isinstance(repair['reason'],str) and repair['reason'].strip(),'Specific quote deletion reason required')
                     continue
                 require(isinstance(value,str) and isinstance(repair['before'],str) and

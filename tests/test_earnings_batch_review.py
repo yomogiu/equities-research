@@ -33,6 +33,22 @@ class BatchTests(PassageFixture, unittest.TestCase):
         edit['before']=[]
         with self.assertRaises(ValueError):b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
 
+    def test_retrieval_quote_deletion_cannot_exhaust_required_selection(self):
+        items=self.items();key='retrieval'
+        quotes=[{'passage_id':'fictional-'+str(i)} for i in range(5)]
+        items[key]['value']['quotes']=copy.deepcopy(quotes)
+        original=copy.deepcopy(items)
+        for remaining in (0,1,3):
+            review=self.editorial_decision(items,key,'mixed',['quotes'],quotes,quotes[:remaining])
+            with self.assertRaisesRegex(ValueError,'retain four to eighteen'):
+                b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+            self.assertEqual(items,original)
+        review=self.editorial_decision(items,key,'mixed',['quotes'],quotes,quotes[:4])
+        accepted,findings=b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+        self.assertNotIn(key,accepted)
+        self.assertIn('EDITORIAL REPAIRS',findings[key])
+        self.assertEqual(items,original)
+
     def test_adjacent_hash_resolution_keeps_values_and_rejects_unbound_batches(self):
         items=self.items();plan=self.plan(items,['analysis:1'])
         plan['changes'][0]['before_sha256']=b.runner.digest(items['analysis:0']['value'])
