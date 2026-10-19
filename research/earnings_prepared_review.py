@@ -98,6 +98,9 @@ def verify(path,case,catalog):
     if value.get('version')=='authenticated-completed-review-inspection-continuation-v1':
         from . import earnings_prepared_review_inspection
         return earnings_prepared_review_inspection.verify(path,case,catalog)
+    if value.get('version')=='authenticated-invalid-correction-cardinality-continuation-v1':
+        from . import earnings_prepared_invalid_cardinality
+        return earnings_prepared_invalid_cardinality.verify(path,case,catalog)
     previous=Path(value['previous_root'])
     context.require(value['version']==VERSION and value['protocol_sha256']==b.sha(previous/'protocol.json'),'Continuation lineage changed')
     actual=replay(previous)
