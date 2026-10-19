@@ -28,14 +28,24 @@ NATIVE_STARTING_LABELS = (
  'Long-term debt', 'PP&E', 'Dividends',
 )
 
-def native_reviewed_rows(data):
+# A separate literal label family; never merge alternatives into more than twelve
+# starting rows or map upper-case native labels to taxonomy concepts.
+UPPERCASE_NATIVE_STARTING_LABELS = (
+ 'REVENUE', 'Net fee revenue', 'Interest revenue', 'Retail revenue',
+ 'NET INCOME', 'Diluted (KZT)', 'Cash and cash equivalents',
+ 'TOTAL ASSETS', 'TOTAL LIABILITIES', 'TOTAL EQUITY',
+ 'Net cash inflow from operating activities',
+ 'Purchase of property, equipment and intangible assets',
+)
+
+def native_reviewed_rows(data, labels=NATIVE_STARTING_LABELS):
     """Bounded draft selection from literal independently reviewed table labels.
 
     No concept/name similarity or numeric inference is used. Ambiguous source
     identities, units or accounting bases fail closed for the affected label.
     """
     rows=[]
-    for label in NATIVE_STARTING_LABELS:
+    for label in labels:
         candidates=[]
         for o in data['observations']:
             ctx=data['contexts'].get(o.get('context_id'),{})
@@ -111,6 +121,8 @@ def artifact(data, *, expanded=False):
     outline=build(data, expanded=expanded)
     if expanded and len(outline['rows'])<4:
         outline['rows']=native_reviewed_rows(data)
+        if len(outline['rows'])<4:
+            outline['rows']=native_reviewed_rows(data,UPPERCASE_NATIVE_STARTING_LABELS)
     if len(outline['rows'])<4:raise ValueError('Fewer than four supported consolidated rows; explicit financial profile required')
     return {'rows':[{'label':r['label'],'fact_ids':r['fact_ids']} for r in outline['rows']], 'context':[],
             'gaps':['Original extraction gap: '+str(g.get('reason') or g.get('kind') or g.get('status') or g) for g in data.get('gaps',[])[:8]]}

@@ -16,3 +16,14 @@ failure and exact same fetch, hashes, URL, issuer and timestamp. Only its verifi
 status/proof reference and rebuilt packet may change. Original receipts and
 qualifications remain immutable. Source qualification does not accept a report
 or waive fresh independent full review.
+
+## Reviewed native financial starting outline
+
+The expanded outline may use a separate fixed family of literal reviewed native
+labels only if its existing standard/native family yields fewer than four rows.
+Families are tried separately and never concatenated; each has at most twelve
+labels. This preserves the existing first family's output. The exact original
+concept, source label, unit, accounting basis, entity, period and fact IDs survive;
+all observations remain in the evidence inventory. Ambiguous identities, units,
+bases, duplicate current periods, segment dimensions and unreviewed observations
+remain ineligible. This is an editable starting draft, not financial acceptance.
