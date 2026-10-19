@@ -226,7 +226,7 @@ def financial_sections(financial, bundle, formatting):
 
 def report(state, bundle, catalog, pack=None):
     from . import earnings_passages as passages, earnings_signals as signals
-    from .earnings_markdown import refs
+    from .earnings_markdown import refs, quote_markdown
     analysis = state['artifacts']['analysis']
     validate(analysis)
     out = passages.hydrate('analysis', analysis, catalog)
@@ -249,7 +249,7 @@ def report(state, bundle, catalog, pack=None):
                               ' · ' + signal['period'] + ' ' + refs(signal['citations']), ''])
             lines.extend([finding['text'] + ' ' + refs(finding['citations']), ''])
             for quote in finding['quotes']:
-                lines.extend(['\n'.join('> ' + line for line in quote['text'].splitlines()) + ' ' + refs([quote['scope_id']]), ''])
+                lines.extend([quote_markdown(quote,bundle), ''])
             if key == 'qa':
                 for identifier, _ in original_bindings(finding, bundle['transcript_index']):
                     # Only an ID enters review context. Full text is copied into

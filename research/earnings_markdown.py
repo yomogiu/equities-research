@@ -19,6 +19,24 @@ def cell(value):
 def refs(ids):return ' '.join('[^'+x+']' for x in ids)
 
 
+def quote_markdown(quote, bundle):
+    """Render exact quotation bytes and an independently indexed turn speaker.
+
+    Passage hydration supplies the original turn ID and offsets. Document
+    selections have no turn speaker; never infer one from adjacent prose.
+    """
+    block='\n'.join('> '+line for line in quote['text'].splitlines())
+    turns=[t for t in bundle['transcript_index']['turns'] if t['id']==quote['scope_id']]
+    if turns:
+        if len(turns)!=1 or not turns[0]['start']<=quote['start']<quote['end']<=turns[0]['end']:
+            raise ValueError('Quotation attribution requires exact original turn bounds')
+        speaker=turns[0]['speaker']
+        if not isinstance(speaker,str) or not speaker.strip() or '\n' in speaker or '\r' in speaker:
+            raise ValueError('Quotation attribution requires one indexed speaker')
+        block+='\n>\n> — '+speaker
+    return block+' '+refs([quote['scope_id']])
+
+
 def financial_markdown(financial,bundle,formatting):
     # Bridge the existing checked financial compiler into Markdown cells; never
     # reinterpret scales, periods, folded ratios or source-derived row labels.
@@ -68,7 +86,7 @@ def report(state,bundle,catalog,pack=None):
     for f in hydrated['findings']:
         out.extend(['## '+f['heading'],'',f['text']+' '+refs(f['citations']),'']);used.update(f['citations'])
         for q in f['quotes']:
-            out.extend(['\n'.join('> '+line for line in q['text'].splitlines())+' '+refs([q['scope_id']]),'']);used.add(q['scope_id'])
+            out.extend([quote_markdown(q,bundle),'']);used.add(q['scope_id'])
     out.extend(['## Next tests',''])
     for x in hydrated['next_tests']:out.append('- '+x['text']+' '+refs(x['citations']));used.update(x['citations'])
     out.extend(['','## Scope','',hydrated['scope'],'','## Source references',''])

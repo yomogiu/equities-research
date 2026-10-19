@@ -63,6 +63,27 @@ class ComparisonTests(unittest.TestCase):
 
 
 class TemplateTests(PassageFixture, unittest.TestCase):
+    def test_quote_speaker_is_compiled_from_exact_turn_for_both_layouts(self):
+        turns={t['id']:t for t in self.bundle['transcript_index']['turns']}
+        q=next(p for p in self.catalog['passages'] if p['scope_id'] in turns and p['text'].strip())
+        state=self.state();state['artifacts']['analysis']['findings'][0]['quotes']=[{'passage_id':q['passage_id']}]
+        before=copy.deepcopy(state)
+        for templated in (True,False):
+            value=copy.deepcopy(state)
+            if not templated:value['artifacts']['analysis'].pop('report_template')
+            text=md.report(value,self.bundle,self.catalog)
+            self.assertIn('> — '+turns[q['scope_id']]['speaker']+' [^'+q['scope_id']+']',text)
+            self.assertIn('\n'.join('> '+line for line in q['text'].splitlines()),text)
+        self.assertEqual(state,before)
+
+    def test_quote_attribution_rejects_cross_turn_bounds_and_never_labels_filings(self):
+        turns={t['id']:t for t in self.bundle['transcript_index']['turns']}
+        q=copy.deepcopy(next(p for p in self.catalog['passages'] if p['scope_id'] in turns and p['text'].strip()))
+        q['end']=turns[q['scope_id']]['end']+1
+        with self.assertRaisesRegex(ValueError,'exact original turn bounds'):md.quote_markdown(q,self.bundle)
+        doc=next(p for p in self.catalog['passages'] if p['scope_id'].startswith('D') and p['text'].strip())
+        self.assertNotIn('> — ',md.quote_markdown(doc,self.bundle))
+
     def state(self):
         analysis=copy.deepcopy(self.report);analysis['report_template']=template.VERSION
         for f,section in zip(analysis['findings'],('demand','earnings','outlook','qa')):f['section']=section
