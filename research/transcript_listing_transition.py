@@ -58,3 +58,20 @@ def compare(before,after,url,v):
  result['whole_page_bytes_equal']=before==after
  result['whole_page_text_equal']=source_parse.page(before,url).text==source_parse.page(after,url).text
  return result
+
+def verify_derivation(root,receipt,*,historical=False):
+ """Replay an additive source receipt without rewriting its failed ancestor."""
+ import copy
+ from . import transcript_currentness as scope
+ d=receipt.get('derivation',{})
+ require(d.get('version')=='authenticated-listing-header-source-qualification-v1','Known listing receipt derivation required')
+ require(set(d)=={'version','original_receipt','original_receipt_sha256','listing_authority','scoped_currentness','scope'},'Exact listing derivation fields required')
+ oldpath=library.resolve(root,d['original_receipt']);require(scope.sha(oldpath.read_bytes())==d['original_receipt_sha256'],'Original failed source receipt changed')
+ original=library.read_json(oldpath);require('derivation' not in original and len(original['companies'])==len(receipt['companies'])==1,'Exact original single-issuer refresh required')
+ proof=scope.replay(root,d['scoped_currentness'],historical=historical);require(proof['version']==scope.LISTING_VERSION and proof['listing_authority']==d['listing_authority'] and proof['issuer_id']==original['companies'][0]['issuer_id'],'Listing proof lineage mismatch')
+ expected=copy.deepcopy(original);rows=[x for x in expected['companies'][0]['documents']if x['source_url']==proof['source_url']]
+ require(len(rows)==1 and rows[0]['status']=='changed_requires_review' and rows[0]['observed_sha256']==proof['observed']['raw_sha256'] and timestamp(rows[0]['checked_at'])==proof['checked_at'],'Exact rejected listing fetch required')
+ rows[0].update(status='scoped_transcript_currentness_verified',scoped_currentness=d['scoped_currentness']);rows[0].pop('scope_reason',None)
+ expected['companies'][0]['new_packet_id']=receipt['companies'][0]['new_packet_id'];expected['derivation']=d
+ require(expected==receipt,'Only qualified listing status and rebuilt packet may change')
+ _,inputs=authority(root,d['listing_authority'],proof['issuer_id'],proof['source_url'],proof['checked_at']);inputs[d['original_receipt']]=d['original_receipt_sha256'];return inputs

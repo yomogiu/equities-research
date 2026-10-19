@@ -45,5 +45,12 @@ class ListingTests(unittest.TestCase):
    doc={'source_url':URL,'raw_path':'old.html','raw_sha256':scope.sha(old),'text_path':'old.txt','text_sha256':scope.sha(text),'qualification_id':qid};obs={'raw_path':'sources/test/objects/new.html','observed_sha256':scope.sha(new),'checked_at':checked}
    ref=scope.create(r,{'issuer_id':v['issuer_id'],'period':'FY2026-Q2'},doc,obs,'sources/test/http-cache.json',listing_authority=auth);actual=scope.replay(r,ref);self.assertEqual(actual['version'],scope.LISTING_VERSION)
    doc.update(scoped_currentness=ref,scoped_checked_at=checked,source_check_status=scope.STATUS);bindings=scope.bindings(r,doc);self.assertTrue({'authority.json','fetch.json','issuer.html','exchange.html'}<=set(bindings))
+   original={'companies':[{'issuer_id':v['issuer_id'],'new_packet_id':'failed','documents':[{'source_url':URL,'status':'changed_requires_review','observed_sha256':scope.sha(new),'checked_at':checked,'scope_reason':'metadata changed'},{'source_url':'other','status':'already_fresh'}]}]};library.save(r/'original.json',original)
+   derived=copy.deepcopy(original);derived['companies'][0]['new_packet_id']='qualified';row=derived['companies'][0]['documents'][0];row.update(status='scoped_transcript_currentness_verified',scoped_currentness=ref);row.pop('scope_reason');derived['derivation']={'version':'authenticated-listing-header-source-qualification-v1','original_receipt':'original.json','original_receipt_sha256':scope.sha((r/'original.json').read_bytes()),'listing_authority':auth,'scoped_currentness':ref,'scope':'listing metadata only'}
+   bound=listing.verify_derivation(r,derived);self.assertIn('original.json',bound)
+   changed=copy.deepcopy(derived);changed['companies'][0]['documents'][1]['status']='waived'
+   with self.assertRaises(ValueError):listing.verify_derivation(r,changed)
+   (r/'original.json').write_text('{}')
+   with self.assertRaises(ValueError):listing.verify_derivation(r,derived)
    (r/'exchange.html').write_text('different primary body')
    with self.assertRaises(ValueError):scope.replay(r,ref)

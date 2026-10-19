@@ -53,6 +53,9 @@ def checked(root,old_id,new_id,receipt_path,*,as_of=None):
  # Historical replay authenticates launch-time qualification; live gates remain fresh NOW.
  receipt=b.read(receipt_path)
  derivation=receipt.get('derivation',{})
+ if derivation.get('version')=='authenticated-listing-header-source-qualification-v1':
+  from . import transcript_listing_transition as listing
+  listing.verify_derivation(root,receipt,historical=as_of is not None)
  if derivation.get('legacy_equivalence'):
   from . import legacy_equivalent_source as legacy
   ref=derivation['legacy_equivalence'];proof_path=library.resolve(root,ref['path']);c.require(set(ref)=={'path','sha256'} and b.sha(proof_path)==ref['sha256'],'Legacy equivalence proof changed');proof=legacy.verify(root,proof_path)
@@ -100,7 +103,10 @@ def input_bindings(root,path):
  for row in b.read(root/v['source_receipt'])['companies']:
   if row['issuer_id']==old['issuer_id']:
    names.update(doc['raw_path'] for doc in row['documents'] if doc.get('raw_path'))
- derivation=b.read(root/v['source_receipt']).get('derivation',{})
+ receipt=b.read(root/v['source_receipt']);derivation=receipt.get('derivation',{})
+ if derivation.get('version')=='authenticated-listing-header-source-qualification-v1':
+  from . import transcript_listing_transition as listing
+  names.update(listing.verify_derivation(root,receipt))
  if derivation.get('legacy_equivalence'):
   from . import legacy_equivalent_source as legacy
   reference=derivation['legacy_equivalence'];proof_path=library.resolve(root,reference['path']);proof=legacy.verify(root,proof_path);names.update(proof['input_sha256']);names.update((reference['path'],derivation['manifest_path'],derivation['original_receipt']))
