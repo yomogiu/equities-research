@@ -184,6 +184,9 @@ class Evidence:
                 if role=='analysis' and base.read(self.root/'metadata.json').get('repair_version')=='authenticated-analysis-address-repair-v1':
                     from . import earnings_analysis_address_repair as addresses
                     addresses.checked_candidate(json.loads(artifacts['unreviewed_prior_analysis_json']),value,bundle['transcript_index'])
+                if role=='analysis' and base.read(self.root/'metadata.json').get('repair_version')=='authenticated-analysis-turn-address-repair-v1':
+                    from . import earnings_analysis_turn_address_repair as addresses
+                    addresses.checked_candidate(json.loads(artifacts['unreviewed_prior_analysis_json']),value,bundle['transcript_index'])
                 pipe.validate(role,value,bundle,self.catalog)
                 if role=='analysis':
                     from . import earnings_report_template as template
