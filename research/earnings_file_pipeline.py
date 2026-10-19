@@ -92,7 +92,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         inherited=prepared.verify(preparation,case,catalog)
         require(max_tokens<=inherited['max_tokens'],'Preparation continuation cannot raise original lifecycle ceiling')
         p.update(preparation_path=str(Path(preparation).resolve()),preparation_sha256=base.sha(preparation),inherited_tokens=inherited['tokens'])
-        if inherited.get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1'):
+        if inherited.get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1'):
             p.update(models=inherited['models'],report_template=inherited['report_template'],retrieval_repair_rounds=inherited['spent_correction_rounds'])
     if analysis_preparation is not None:
         from . import earnings_prepared_analysis as prepared_analysis
@@ -110,7 +110,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
 
 def load(root):
     p=base.read(root/'protocol.json')
-    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1')) and p['max_correction_rounds']==2
+    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1')) and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
@@ -139,7 +139,7 @@ def load(root):
         from . import earnings_prepared_retrieval as prepared
         require(base.sha(p['preparation_path'])==p['preparation_sha256'],'Preparation manifest changed')
         inherited=prepared.verify(p['preparation_path'],p['case_path'],base.read(root/'passages.json'))
-        if inherited.get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1'):
+        if inherited.get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1'):
             require(p['models']==inherited['models'] and p.get('retrieval_repair_rounds')==inherited['spent_correction_rounds'],'Original retrieval repair models and spent round changed')
         require(p['max_tokens']<=inherited['max_tokens'],'Preparation ceiling changed')
         if p.get('analysis_preparation_path'):

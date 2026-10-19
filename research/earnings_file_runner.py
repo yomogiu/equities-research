@@ -19,6 +19,12 @@ USAGE=('input','output','cacheRead','cacheWrite','totalTokens')
 
 def work_plan(role,index):
     """Reserve evidence, metadata and pre-submit validation, bounded at 8."""
+    if role=='retrieval_reference':
+        reader=context.Evidence(index,Path(index).parent/'unused-plan.jsonl',_replay=True);metadata=old.read(Path(index).parent/'metadata.json');ids=metadata['source_scope_ids']
+        if not 1<=len(ids)<=32:raise ValueError('Bounded original target scopes required')
+        plan={'handoff_pages':(len(reader._handoff_body())+58999)//59000,'source_pages':(len(reader._support_body(ids)[0])+58999)//59000,'validation_checks':1}
+        if sum(plan.values())>8:raise ValueError('Reference inspection exceeds bounded work plan')
+        return {**plan,'work_tool_limit':sum(plan.values())}
     if role not in ('financial','retrieval','analysis','signal_author','review','correction'):return None
     reader=context.Evidence(index,Path(index).parent/'unused-plan.jsonl',_replay=True)
     # Handoff packets already include the complete metadata; do not reserve a

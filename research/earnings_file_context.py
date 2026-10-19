@@ -194,6 +194,11 @@ class Evidence:
                     plan,_=batch.resolve_basis_citations(artifacts['units'],plan,bundle)
                     units,_=batch.apply(artifacts['units'],plan,batch.EDITORIAL_VERSION)
                     batch.validate(units,bundle,self.catalog)
+            elif role=='retrieval_reference':
+                from . import earnings_retrieval_reference_repair as reference
+                reference.apply(artifacts['reference_candidate'],artifacts['reference_targets'],value,self.catalog)
+                scope_ids=base.read(self.root/'metadata.json')['source_scope_ids']
+                pipeline.coverage(role,self.root/'index.json',job,{'citations':scope_ids,'passage_ids':[x for r in value['repairs'] for x in r['after_ids']]},self.catalog,{})
             elif role=='review':
                 payload=pipeline.review_payload(value,artifacts['units'],artifacts['state'])
                 batch.adjudicate(artifacts['units'],set(artifacts['units']),{},payload,
