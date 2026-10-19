@@ -20,6 +20,7 @@ PUBLISHER_LINK_VERSION = 'stockanalysis-exact-publisher-link-currentness-v5'
 VERSION = 'stockanalysis-exact-tsx-publisher-currentness-v6'
 LISTING_VERSION = 'stockanalysis-authenticated-listing-header-currentness-v7'
 MARKET_OPEN_VERSION = 'stockanalysis-exact-market-open-widget-currentness-v8'
+KASE_VERSION = 'stockanalysis-exact-kase-publisher-currentness-v9'
 STATUS = 'scoped_transcript_verified'
 
 
@@ -195,9 +196,10 @@ def prepared_downloads(html, url):
     return html,{'event':list(event[0]),'existing_downloads':links,'prepared':prepared}
 
 
-def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False, allow_tsx=False, allow_market_open=False):
+def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False, allow_tsx=False, allow_market_open=False, allow_kase=False):
     require(urlsplit(url).hostname == 'stockanalysis.com' and
             (re.fullmatch(r'/stocks/[a-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path) or
+             allow_kase and re.fullmatch(r'/quote/kase/[A-Za-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path) or
              allow_tsx and re.fullmatch(r'/quote/tsx/[A-Za-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path)),
             'Unsupported transcript publisher URL')
     html = raw.decode('utf-8')
@@ -220,6 +222,9 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
     tsx_widget = (allow_tsx and urlsplit(url).path.startswith('/quote/tsx/') and
                   re.fullmatch(r'[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\n[+-][0-9]+(?:\.[0-9]+)? \([+-]?[0-9]+(?:\.[0-9]+)?%\)\n(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}, [0-9]{4}, [0-9]{1,2}:[0-9]{2} [AP]M (?:EST|EDT)', widget_text))
     market_open = allow_market_open and re.fullmatch(r'[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\n[+-][0-9]+(?:\.[0-9]+)? \([+-]?[0-9]+(?:\.[0-9]+)?%\)\n(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}, [0-9]{4}, (?:[1-9]|1[0-2]):[0-5][0-9] [AP]M (?:EST|EDT) - Market open', widget_text)
+    if allow_kase:
+        require(urlsplit(url).path.startswith('/quote/kase/'), 'Exact KASE URL required')
+        require(re.fullmatch(r'[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?\n[+-][0-9]+(?:\.[0-9]+)? \([+-]?[0-9]+(?:\.[0-9]+)?%\)\nAt close: (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}, [0-9]{4}', widget_text), 'Unrecognized KASE quote widget')
     require(re.search(r'(?:Market closed|At close:|Pre-market:|After-hours:)', widget_text) or tsx_widget or market_open, 'Unrecognized quote widget')
     require('transcript-sentence' not in html[a:b], 'Widget overlaps call evidence')
     outside_html = html[:a] + '<div>QUOTE_WIDGET</div>' + html[b:]
@@ -230,23 +235,33 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
     if allow_mobile_controls:
         outside_html = mobile_controls(outside_html)
     if allow_publisher_links:
-        outside_html = publisher_links(outside_html, url)
+        outside_html = publisher_links(outside_html, url) if not allow_kase else outside_html
     downloads=None
     if allow_market_open:outside_html,downloads=prepared_downloads(outside_html,url)
     outside = source_parse.page(outside_html.encode(), url).text
     facts = financial_evidence.extract_inline_xbrl(html, {'document_id': 'scope', 'raw_sha256': sha(raw), 'text_sha256': sha(page.text.encode())})
     facts = {'observations': [{k:v for k,v in o.items() if k not in ('observation_id','source_raw_sha256','support')} for o in facts['observations']],
              'gaps': [{k:v for k,v in g.items() if k != 'start'} for g in facts['gaps']]}
-    return {'title': page.title, 'fiscal': page.fiscal, 'outside_widget_sha256': sha(outside.encode()),
+    kase_identity = {}
+    if allow_kase:
+        symbol=urlsplit(url).path.split('/')[3].upper()
+        filings=re.findall(r'href="(/filings/[^"]+)"', html)
+        require(filings and all(re.fullmatch(r'/filings/KASE:'+re.escape(symbol)+r'/(?:[0-9]+/)?', x) for x in filings), 'Exact same KASE filing issuer required')
+        event=re.findall(r'quartrEventId:([0-9]+),fiscalYear:([0-9]{4}),quarterLabel:"(Q[1-4] [0-9]{4})",detailSlug:"([^"]+)",eventDate:"([0-9-]+)"', html)
+        require(len(event)==1 and event[0][3]==urlsplit(url).path.split('/')[5] and event[0][3].startswith(event[0][0]+'-') and event[0][2].endswith(event[0][1]), 'Exact KASE earnings event required')
+        headers=re.findall(r'<div class="mt-px text-tiny text-faded">(.*?)</div>',html,re.S)
+        require(len(headers)==1 and source_parse.page(headers[0].encode(),url).text=='Kazakhstan · Delayed Price · Currency is KZT', 'Exact KASE listing metadata required')
+        kase_identity={'kase_identity': {'filing_destinations':filings, 'event':list(event[0]), 'listing':'Kazakhstan · Delayed Price · Currency is KZT'}}
+    return {**kase_identity, 'title': page.title, 'fiscal': page.fiscal, 'outside_widget_sha256': sha(outside.encode()),
             'block_sha256': [sha(b.encode()) for b in blocks.blocks],
             'block_text_sha256': [sha(b.encode()) for b in bodies], 'facts': facts}, {
             'fulltext_sha256': sha(page.text.encode()), 'call_span': [spans[0][0],spans[-1][1]],
             'widget_html_span': [a,b], 'widget_sha256': sha(html[a:b].encode()), **({'downloads':downloads} if allow_market_open else {})}
 
 
-def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True, allow_publisher_links=True, allow_tsx=True, allow_market_open=False):
-    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open)
-    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open)
+def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True, allow_publisher_links=True, allow_tsx=True, allow_market_open=False, allow_kase=False):
+    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open, allow_kase=allow_kase)
+    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open, allow_kase=allow_kase)
     if allow_market_open:
         a,b=old_spans['downloads'],new_spans['downloads']
         require(a['event']==b['event'] and a['existing_downloads']==b['existing_downloads'] and (a['prepared']==b['prepared'] or not a['prepared'] and len(b['prepared'])==2),'Only same-event prepared control addition permitted')
@@ -262,7 +277,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -275,7 +290,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
         auth,_=listing.authority(root,value['listing_authority'],value['issuer_id'],value['source_url'],value['checked_at'])
         require(listing.compare(before,after,value['source_url'],auth)==value['comparison'],'Listing comparison changed')
     else:
-        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version'] in (MARKET_OPEN_VERSION, VERSION), allow_market_open=value['version']==MARKET_OPEN_VERSION) == value['comparison'], 'Scoped comparison changed')
+        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION), allow_market_open=value['version']==MARKET_OPEN_VERSION, allow_kase=value['version']==KASE_VERSION) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
@@ -303,7 +318,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     return value
 
 
-def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False):
+def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False, kase=False):
     from . import library
     before = library.load_bytes(root,doc['raw_path'],doc['raw_sha256'])
     after = library.load_bytes(root,observed['raw_path'],observed['observed_sha256'])
@@ -312,14 +327,15 @@ def create(root, packet, doc, observed, cache_path, *, listing_authority=None, m
     destination = library.resolve(root,observed_text_path)
     if destination.exists(): require(destination.read_bytes() == observed_text, 'Conflicting immutable observed extraction')
     else: destination.write_bytes(observed_text)
+    require(type(kase) is bool and (not kase or not market_open and listing_authority is None), 'Separate explicit KASE qualification required')
     require(type(market_open) is bool, 'Explicit widget qualification flag required')
     require(not market_open or listing_authority is None, 'Separate explicit market widget and listing transitions required')
-    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open) if listing_authority is None else None
+    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open, allow_kase=kase) if listing_authority is None else None
     if listing_authority is not None:
         from . import transcript_listing_transition as listing
         auth,_=listing.authority(root,listing_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
         comparison=listing.compare(before,after,doc['source_url'],auth)
-    value = {'version': (MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
+    value = {'version': (KASE_VERSION if kase else MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
              'source_url': doc['source_url'], 'qualification_id': doc['qualification_id'],
              'archived': {k:doc[k] for k in ('raw_path','raw_sha256','text_path','text_sha256')},
              'observed': {'raw_path': observed['raw_path'], 'raw_sha256': observed['observed_sha256'],

@@ -53,6 +53,9 @@ def checked(root,old_id,new_id,receipt_path,*,as_of=None):
  # Historical replay authenticates launch-time qualification; live gates remain fresh NOW.
  receipt=b.read(receipt_path)
  derivation=receipt.get('derivation',{})
+ if derivation.get('version')=='authenticated-kase-source-qualification-v1':
+  from . import transcript_kase_transition as kase
+  kase.verify_derivation(root,receipt,historical=as_of is not None)
  if derivation.get('version')=='authenticated-market-open-widget-source-qualification-v1':
   from . import transcript_market_widget_transition as widget
   widget.verify_derivation(root,receipt,historical=as_of is not None)
@@ -107,6 +110,9 @@ def input_bindings(root,path):
   if row['issuer_id']==old['issuer_id']:
    names.update(doc['raw_path'] for doc in row['documents'] if doc.get('raw_path'))
  receipt=b.read(root/v['source_receipt']);derivation=receipt.get('derivation',{})
+ if derivation.get('version')=='authenticated-kase-source-qualification-v1':
+  from . import transcript_kase_transition as kase
+  names.update(kase.verify_derivation(root,receipt))
  if derivation.get('version')=='authenticated-market-open-widget-source-qualification-v1':
   from . import transcript_market_widget_transition as widget
   names.update(widget.verify_derivation(root,receipt))
