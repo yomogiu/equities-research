@@ -98,6 +98,9 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         from . import earnings_prepared_analysis as prepared_analysis
         require(preparation is not None and recovery is None and budget_authorization is None,'Analysis continuation requires verified retrieval lineage')
         inherited_analysis=prepared_analysis.verify(analysis_preparation,case,catalog)
+        if inherited_analysis.get('version')==prepared_analysis.DUPLICATE_VERSION:
+            require(inherited_analysis['spent_correction_rounds']==0 and base.sha(writing)==inherited_analysis['writing_sha256'],'Original analysis settings changed')
+            p.update(models=inherited_analysis['models'],report_template=inherited_analysis['report_template'])
         require(max_tokens<=inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis lifecycle or retrieval lineage differs')
         p.update(analysis_preparation_path=str(Path(analysis_preparation).resolve()),analysis_preparation_sha256=base.sha(analysis_preparation),inherited_tokens=inherited_analysis['tokens'])
     if recovery is not None:
@@ -110,7 +113,7 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
 
 def load(root):
     p=base.read(root/'protocol.json')
-    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1')) and p['max_correction_rounds']==2
+    require(p['version']==VERSION and (p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-reference-retrieval-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version')=='authenticated-single-duplicate-analysis-quotation-v1' or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1')) and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
@@ -146,6 +149,8 @@ def load(root):
             from . import earnings_prepared_analysis as prepared_analysis
             require(base.sha(p['analysis_preparation_path'])==p['analysis_preparation_sha256'],'Analysis manifest changed')
             inherited_analysis=prepared_analysis.verify(p['analysis_preparation_path'],p['case_path'],base.read(root/'passages.json'))
+            if inherited_analysis.get('version')==prepared_analysis.DUPLICATE_VERSION:
+                require(p['models']==inherited_analysis['models'] and p.get('report_template')==inherited_analysis['report_template'] and p['writing_sha256']==inherited_analysis['writing_sha256'] and inherited_analysis['spent_correction_rounds']==0,'Original analysis settings changed')
             require(p['inherited_tokens']==inherited_analysis['tokens'] and p['max_tokens']<=inherited_analysis['max_tokens'] and inherited['session_id'] in inherited_analysis['session_ids'],'Analysis usage or lineage changed')
         else:require(p['inherited_tokens']==inherited['tokens'],'Preparation usage changed')
     else:require(p.get('inherited_tokens',0)==0,'Unbound inherited usage')
