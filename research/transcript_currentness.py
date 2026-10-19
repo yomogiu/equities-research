@@ -18,6 +18,7 @@ COUNTRY_VERSION = 'stockanalysis-market-app-counter-and-country-navigation-curre
 MOBILE_VERSION = 'stockanalysis-market-app-counter-country-and-mobile-controls-currentness-v4'
 PUBLISHER_LINK_VERSION = 'stockanalysis-exact-publisher-link-currentness-v5'
 VERSION = 'stockanalysis-exact-tsx-publisher-currentness-v6'
+LISTING_VERSION = 'stockanalysis-authenticated-listing-header-currentness-v7'
 STATUS = 'scoped_transcript_verified'
 
 
@@ -225,7 +226,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -233,7 +234,12 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     observed_text = library.load_bytes(root, new['text_path'], new['text_sha256'])
     require(source_parse.page(after,value['source_url']).text.encode() == observed_text, 'Observed extraction mismatch')
     require(source_parse.page(before,value['source_url']).text.encode() == text, 'Archived extraction mismatch')
-    require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version']==VERSION) == value['comparison'], 'Scoped comparison changed')
+    if value['version']==LISTING_VERSION:
+        from . import transcript_listing_transition as listing
+        auth,_=listing.authority(root,value['listing_authority'],value['issuer_id'],value['source_url'],value['checked_at'])
+        require(listing.compare(before,after,value['source_url'],auth)==value['comparison'],'Listing comparison changed')
+    else:
+        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version']==VERSION) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
@@ -261,7 +267,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     return value
 
 
-def create(root, packet, doc, observed, cache_path):
+def create(root, packet, doc, observed, cache_path, *, listing_authority=None):
     from . import library
     before = library.load_bytes(root,doc['raw_path'],doc['raw_sha256'])
     after = library.load_bytes(root,observed['raw_path'],observed['observed_sha256'])
@@ -270,14 +276,20 @@ def create(root, packet, doc, observed, cache_path):
     destination = library.resolve(root,observed_text_path)
     if destination.exists(): require(destination.read_bytes() == observed_text, 'Conflicting immutable observed extraction')
     else: destination.write_bytes(observed_text)
-    value = {'version': VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
+    comparison=compare(before,after,doc['source_url']) if listing_authority is None else None
+    if listing_authority is not None:
+        from . import transcript_listing_transition as listing
+        auth,_=listing.authority(root,listing_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
+        comparison=listing.compare(before,after,doc['source_url'],auth)
+    value = {'version': VERSION if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
              'source_url': doc['source_url'], 'qualification_id': doc['qualification_id'],
              'archived': {k:doc[k] for k in ('raw_path','raw_sha256','text_path','text_sha256')},
              'observed': {'raw_path': observed['raw_path'], 'raw_sha256': observed['observed_sha256'],
                           'text_path': observed_text_path, 'text_sha256': sha(observed_text)},
              'checked_at': timestamp(observed['checked_at']), 'http_cache_path': cache_path,
              'http_cache_sha256': sha(library.resolve(root,cache_path).read_bytes()),
-             'comparison': compare(before,after,doc['source_url'])}
+             'comparison': comparison}
+    if listing_authority is not None:value['listing_authority']=listing_authority
     name = 'reporting/source-currentness/'+digest(value)+'.json'
     library.save(library.resolve(root,name),value,immutable=True)
     reference = {'path':name,'sha256':sha(library.resolve(root,name).read_bytes())}
@@ -319,7 +331,11 @@ def bindings(root, doc):
     if not ref: return {}
     value = replay(root,ref,doc)
     names = [ref['path'], value['observed']['raw_path'], value['observed']['text_path'], value['http_cache_path']]
-    return {p:sha(library.resolve(root,p).read_bytes()) for p in names}
+    result={p:sha(library.resolve(root,p).read_bytes()) for p in names}
+    if value['version']==LISTING_VERSION:
+        from . import transcript_listing_transition as listing
+        _,inputs=listing.authority(root,value['listing_authority'],value['issuer_id'],value['source_url'],value['checked_at']);result.update(inputs)
+    return result
 
 
 def restore_available(root, issuer_ids):
