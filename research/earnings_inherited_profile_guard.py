@@ -1,0 +1,15 @@
+"""Exact reserved-profile compatibility for authenticated inherited author work."""
+from pathlib import Path
+import json,re,subprocess,sys
+from . import earnings_mixed_runner as b,earnings_file_context as c
+VERSION='authenticated-inherited-host-model-profile-v1'
+HANDLER='authenticated-analysis-host-address-preparation-v1'
+def matches(value,expected):
+ from .earnings_file_pipeline import profile_models
+ c.require(expected=='original-file-review-routes-v1' and value['model_profile'] is None and value['preparation_version']==HANDLER and value['models']==profile_models(expected),'Exact inherited original model routes required');return True
+def validate(root,expected):
+ root=Path(root).resolve();protocol=b.read(root/'protocol.json');code=Path(next(x['path'] for x in protocol['code'] if x['path'].endswith('/earnings_file_pipeline.py'))).parent.parent
+ c.require(code.parent.name=='.report-workflow' and re.fullmatch('[a-f0-9]{40}',code.name),'Managed frozen pipeline required')
+ c.require(subprocess.check_output(['git','rev-parse','HEAD'],cwd=code,text=True).strip()==code.name and not subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=code,text=True).strip() and subprocess.check_output(['git','remote','get-url','origin'],cwd=code,text=True).strip()=='https://github.com/yomogiu/equities-research.git','Official frozen pipeline required')
+ program="import sys,json;from pathlib import Path;sys.path.insert(0,sys.argv[1]);from research import earnings_file_pipeline as p,earnings_mixed_runner as b;v,_,_=p.load(Path(sys.argv[2]));print(json.dumps({'model_profile':v.get('model_profile'),'models':v['models'],'preparation_version':b.read(v['analysis_preparation_path'])['version']}))"
+ value=json.loads(subprocess.check_output([sys.executable,'-I','-B','-c',program,str(code),str(root)],text=True));matches(value,expected);return {'version':VERSION,'protocol_sha256':b.sha(root/'protocol.json'),'reserved_model_profile':expected,**value}

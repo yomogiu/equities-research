@@ -72,3 +72,11 @@ and new repair role, spends correction one, and requires fresh full review one.
 Its frozen official producer replays recovery completion. The earlier address
 handler and frozen attempt remain unchanged. The host manifest is not a report
 acceptance, and a failed/uncertain recovery cannot be replaced by another child.
+
+A coordinator may replay `authenticated-inherited-host-model-profile-v1` when a
+reserved original-file route label meets this explicit host preparation, whose
+frozen protocol deliberately inherits the complete original model map without a
+new profile override. The check invokes that protocol's own clean official
+verifier, authenticates its preparation, and requires every model/effort pair to
+match the reserved profile. It never changes a frozen protocol or model route;
+other preparation types and partial/mismatched model maps fail closed.
