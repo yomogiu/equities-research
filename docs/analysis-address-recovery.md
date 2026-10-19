@@ -55,3 +55,20 @@ original authorization, complete remaining path and actual page/tool inventory.
 Fresh independent full review, canonical import and exact remote report-byte proof
 are still necessary. Prove one sufficiently funded canary through that completion
 path before broader adoption.
+
+An explicit `authenticated-analysis-auth-storage-recovery-v1` manifest permits
+one child `jobs/auth-recovery-1` within the same reservation after a conclusively
+closed `auth_storage` failure. Every failed artifact is retained and hash-bound.
+The original helper hash and stage ordering, empty wire/audit, and absence of
+runtime, session, transport, delivery and output artifacts must prove that no
+model execution occurred. Any uncertainty fails closed. The recovery keeps the
+original evidence, assignment (with only the fixed child job path), model route,
+remaining cap, output reservation and tool limits; no resume or budget reset is
+permitted. It rechecks currentness at its own launch and uses the normal OAuth
+store with approved host access. It never copies credential storage.
+
+The explicit host-address preparation preserves the two original charged roles
+and new repair role, spends correction one, and requires fresh full review one.
+Its frozen official producer replays recovery completion. The earlier address
+handler and frozen attempt remain unchanged. The host manifest is not a report
+acceptance, and a failed/uncertain recovery cannot be replaced by another child.

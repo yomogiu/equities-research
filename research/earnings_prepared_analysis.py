@@ -135,6 +135,9 @@ def prepare(previous,case,output,*,duplicate_quotes=False,quoted_exchange=False)
 
 def verify(path,case,catalog):
     a=base.read(path)
+    if a.get('version')=='authenticated-analysis-host-address-preparation-v1':
+        from . import earnings_analysis_host_recovery
+        return earnings_analysis_host_recovery.preparation(path,case,catalog)
     if a.get('version')=='authenticated-analysis-address-preparation-v1':
         from . import earnings_analysis_address_repair
         return earnings_analysis_address_repair.verify(path,case,catalog)
