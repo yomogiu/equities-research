@@ -72,6 +72,11 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
         facts = financial_html_tables.extract(raw, source, profile, review, selection)
         financial_artifacts = [{'path': str(library.resolve(root, reviewed_financial[key+'_path'])),
                                 'sha256': selection[key+'_sha256']} for key in ('profile', 'review')]
+    if reviewed_financial is not None and selection.get('version')=='exact-reviewed-financial-spans-v1':
+        if selection['source_url']!=filing['source_url']:raise ValueError('Reviewed span source URL differs from qualified filing')
+        old_raw=Path(selection['original_raw_path']).resolve()
+        if not old_raw.is_relative_to(root) or old_raw.is_symlink(): raise ValueError('Original reviewed raw must remain private and bound')
+        financial_artifacts.append({'path':str(old_raw),'sha256':base.sha(old_raw)})
     if not facts['observations']:
         raise ValueError('No structured filing observations; financial preparation needs review')
     text = library.load_bytes(root, call['text_path'], call['text_sha256']).decode('utf-8')
