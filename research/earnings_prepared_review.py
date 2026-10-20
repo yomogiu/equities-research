@@ -86,6 +86,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     value=b.read(path)
+    if value.get('version')=='authenticated-combined-review-final-preparation-v1':
+        from . import earnings_review_binding_final
+        return earnings_review_binding_final.verify(path,case,catalog)
     if value.get('version')=='authenticated-missing-review-source-preparation-v1':
         from . import earnings_review_binding_repair
         return earnings_review_binding_repair.verify(path,case,catalog)
