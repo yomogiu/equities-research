@@ -164,7 +164,7 @@ class Evidence:
         self.verify()
         bundle=evidence.load_bundle(self.index['manifest'])
         try:
-            if role=='correction' and base.read(self.root/'metadata.json').get('repair_version')=='authenticated-combined-review-final-correction-v1':
+            if role=='correction' and base.read(self.root/'metadata.json').get('repair_version') in ('authenticated-combined-review-final-correction-v1','authenticated-six-role-review-final-v1'):
                 from . import earnings_review_binding_final as binding
                 binding.validate_proposal(self.root/'index.json',job,value,artifacts,self.catalog,bundle)
                 return {'valid':True,'acceptance':False,'instruction':'Combined binding and authored correction passed original source/schema checks; NEW independent FULLreview2 required.'}
@@ -438,7 +438,7 @@ class Evidence:
         artifacts={k:v for k,v in self.artifacts.items() if k!='qa_grounding'}
         if 'finding_catalog' in artifacts and 'state' in artifacts:
             artifacts={'finding_catalog':artifacts['finding_catalog']}
-        if base.read(self.root/'metadata.json').get('repair_version') in ('authenticated-missing-review-source-repair-v1','authenticated-combined-review-final-correction-v1'):
+        if base.read(self.root/'metadata.json').get('repair_version') in ('authenticated-missing-review-source-repair-v1','authenticated-combined-review-final-correction-v1','authenticated-six-role-review-final-v1'):
             # The ledger and exact targets are required adjudication inputs,
             # not redundant copies of the candidate units.
             artifacts={k:artifacts[k] for k in ('units','unreviewed_original_review_json','missing_review_targets','original_review_job') if k in artifacts}
