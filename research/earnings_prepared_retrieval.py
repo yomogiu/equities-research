@@ -64,6 +64,9 @@ def verify(path,case,catalog):
     if a.get('version')=='authenticated-reference-retrieval-preparation-v1':
         from . import earnings_retrieval_reference_repair
         return earnings_retrieval_reference_repair.verify(path,case,catalog)
+    if a.get('version')=='authenticated-final-cardinality-resume-preparation-v1':
+        from . import earnings_final_cardinality_resume
+        return earnings_final_cardinality_resume.verify(path,case,catalog)
     if a.get('version')=='authenticated-final-cardinality-retrieval-preparation-v1':
         from . import earnings_final_cardinality_retrieval
         return earnings_final_cardinality_retrieval.verify(path,case,catalog)

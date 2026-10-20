@@ -15,3 +15,11 @@ further correction is available. Source/currentness, request, canonical-slot,
 legacy-usage and lock checks remain mandatory before activation. Worker per-turn
 input bounds and full output reservation remain unchanged. Publication alone
 neither activates a case nor proves report acceptance.
+
+The separate `earnings_final_cardinality_resume` preparation is opt-in for
+proven closed local budget/checkpoint stops only. It uses the normal bounded
+same-role checkpoint selector and restore verifier. Every failed session and
+charge remains included alongside the successful fresh resume. The exact
+original context, bindings, model, remaining allowance and full source/schema
+validation remain mandatory. Unknown executions and missing checkpoints reject.
+The original completed-job validator and preparation remain unchanged.
