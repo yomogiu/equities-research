@@ -28,5 +28,9 @@ class AppRatingTest(unittest.TestCase):
    ref=t.create(r,{'issuer_id':'issuer:fake','period':'FY2026-Q2'},doc,obs,'sources/test/http-cache.json',market_open=True,app_rating=True);self.assertEqual(t.replay(r,ref)['version'],t.APP_RATING_VERSION)
    import copy
    original={'companies':[{'issuer_id':'issuer:fake','new_packet_id':'old','documents':[obs]}]};library.save(r/'receipt.json',original);derived=copy.deepcopy(original);derived['companies'][0]['new_packet_id']='new';derived['companies'][0]['documents'][0].update(status='scoped_transcript_currentness_verified',scoped_currentness=ref);derived['companies'][0]['documents'][0].pop('scope_reason');derived['derivation']={'version':rating.VERSION,'original_receipt':'receipt.json','original_receipt_sha256':t.sha((r/'receipt.json').read_bytes()),'scoped_currentness':ref};rating.verify_derivation(r,derived)
+   original['companies'][0]['documents'][0]['scope_reason']='Unrecognized quote widget';library.save(r/'receipt.json',original);derived['derivation']['original_receipt_sha256']=t.sha((r/'receipt.json').read_bytes());rating.verify_derivation(r,derived)
+   original['companies'][0]['documents'][0]['scope_reason']='Unknown changed business claim';library.save(r/'receipt.json',original);derived['derivation']['original_receipt_sha256']=t.sha((r/'receipt.json').read_bytes())
+   with self.assertRaises(ValueError):rating.verify_derivation(r,derived)
+   original['companies'][0]['documents'][0]['scope_reason']='Unrecognized quote widget';library.save(r/'receipt.json',original);derived['derivation']['original_receipt_sha256']=t.sha((r/'receipt.json').read_bytes())
    derived['companies'][0]['documents'][0]['expected_sha256']='0'*64
    with self.assertRaises(ValueError):rating.verify_derivation(r,derived)
