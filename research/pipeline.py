@@ -129,7 +129,7 @@ def select_batch(queue, limit):
     return picked + [r for r in queue if r['issuer_id'] not in taken][:limit - len(picked)]
 
 
-def run(root, mode='plan', limit=25, symbols=None, now=None, collector_factory=Collector):
+def run(root, mode='plan', limit=25, symbols=None, now=None, collector_factory=Collector, sparse_batch=False):
     root, now = private_root(root), moment(now)
     require(mode in {'plan', 'collect', 'reconcile'}, 'Unknown pipeline mode')
     require(type(limit) is int and 1 <= limit <= 50, 'Batch size must be 1..50')
@@ -155,6 +155,9 @@ def run(root, mode='plan', limit=25, symbols=None, now=None, collector_factory=C
         save(root / 'pipeline/collection-queue.json', {'as_of': now.isoformat(), 'due': queue,
              'selected': selected, 'tracked': len(coverage), 'eligible': len(inputs['universe']),
              'identity_and_source_gaps': len(coverage) - len(inputs['universe'])})
+        if sparse_batch and selected and mode != 'plan':
+            from .sparse_workspace import hydrate_batch
+            hydrate_batch(root, {row['issuer_id'] for row in selected})
         collection = None
         if mode == 'collect' and selected:
             rows = {r['symbol']: r for r in inputs['universe']}
@@ -172,15 +175,21 @@ def run(root, mode='plan', limit=25, symbols=None, now=None, collector_factory=C
             # Enqueue via the existing CLI contract in the private wrapper; do not
             # interpret successful exit as complete source coverage here.
         publication = None
-        if mode != 'plan':
+        if mode != 'plan' and (not sparse_batch or selected):
             cfg = config.get('earnings_pipeline', {})
             build_catalog(root, cfg.get('audit', 'reports/retrieval/2026-09-20/universe/results.json'),
-                          cfg.get('languages', 'reports/retrieval/2026-09-20/universe/language-review.json'))
-            build_search(root)
-            publication = published_run(root, as_of=now.astimezone(ZoneInfo('America/New_York')).date())
+                          cfg.get('languages', 'reports/retrieval/2026-09-20/universe/language-review.json'),
+                          issuer_ids={r['issuer_id'] for r in selected} if sparse_batch else None)
+            if not sparse_batch:
+                build_search(root)
+            publication = published_run(root, as_of=now.astimezone(ZoneInfo('America/New_York')).date(),
+                                        issuer_ids={r['issuer_id'] for r in selected} if sparse_batch else None,
+                                        require_incremental=sparse_batch)
         latest = optional(root, 'published/latest.json', {'issuers': {}})
         if mode != 'plan':
             for iid, row in latest.get('issuers', {}).items():
+                if sparse_batch and iid not in {r['issuer_id'] for r in selected}:
+                    continue
                 if row.get('packet_id') and (row.get('freshness') or {}).get('status') == 'ready':
                     state['issuers'].setdefault(iid, {})['qualified_packet_checked'] = digest(row['qualification_ids'])
             save(root / 'pipeline/state.json', state)
@@ -204,8 +213,9 @@ def main():
     parser.add_argument('--mode', choices=['plan', 'collect', 'reconcile'], default='plan')
     parser.add_argument('--limit', type=int, default=25)
     parser.add_argument('--symbols', help='Comma-separated eligible issuer symbols')
+    parser.add_argument('--sparse-batch', action='store_true', help='Load only selected issuers; require an existing baseline')
     args = parser.parse_args()
-    receipt = run(args.root, args.mode, args.limit, args.symbols.split(',') if args.symbols else None)
+    receipt = run(args.root, args.mode, args.limit, args.symbols.split(',') if args.symbols else None, sparse_batch=args.sparse_batch)
     print(json.dumps({k:v for k,v in receipt.items() if k not in {'collection','publication'}}))
 
 
