@@ -49,6 +49,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     a=base.read(path)
+    if a.get('version')=='authenticated-pending-author-retrieval-preparation-v1':
+        from . import earnings_pending_author
+        return earnings_pending_author.verify(path,case,catalog)
     if a.get('version')=='authenticated-linked-bare-json-preparation-v1':
         from . import earnings_linked_bare_json
         return earnings_linked_bare_json.verify(path,case,catalog)
