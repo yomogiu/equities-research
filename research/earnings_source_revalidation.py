@@ -59,6 +59,9 @@ def checked(root,old_id,new_id,receipt_path,*,as_of=None):
  if derivation.get('version')=='authenticated-kase-source-qualification-v1':
   from . import transcript_kase_transition as kase
   kase.verify_derivation(root,receipt,historical=as_of is not None)
+ if derivation.get('version')=='authenticated-tsx-app-rating-legacy-source-v1':
+  from . import transcript_tsx_legacy_transition as tsx_legacy
+  tsx_legacy.verify_derivation(root,receipt,historical=as_of is not None)
  if derivation.get('version')=='authenticated-footer-app-rating-source-qualification-v1':
   from . import transcript_app_rating_transition as rating
   rating.verify_derivation(root,receipt,historical=as_of is not None)
@@ -131,6 +134,9 @@ def input_bindings(root,path,*,as_of=None):
  if derivation.get('version')=='authenticated-kase-source-qualification-v1':
   from . import transcript_kase_transition as kase
   names.update(kase.verify_derivation(root,receipt,historical=as_of is not None))
+ if derivation.get('version')=='authenticated-tsx-app-rating-legacy-source-v1':
+  from . import transcript_tsx_legacy_transition as tsx_legacy
+  names.update(tsx_legacy.verify_derivation(root,receipt,historical=as_of is not None))
  if derivation.get('version')=='authenticated-footer-app-rating-source-qualification-v1':
   from . import transcript_app_rating_transition as rating
   names.update(rating.verify_derivation(root,receipt,historical=as_of is not None))

@@ -19,6 +19,7 @@ MOBILE_VERSION = 'stockanalysis-market-app-counter-country-and-mobile-controls-c
 PUBLISHER_LINK_VERSION = 'stockanalysis-exact-publisher-link-currentness-v5'
 VERSION = 'stockanalysis-exact-tsx-publisher-currentness-v6'
 LISTING_VERSION = 'stockanalysis-authenticated-listing-header-currentness-v7'
+TSX_APP_RATING_VERSION = 'stockanalysis-explicit-tsx-footer-app-rating-currentness-v12'
 APP_RATING_VERSION = 'stockanalysis-explicit-footer-app-rating-currentness-v11'
 MARKET_OPEN_VERSION = 'stockanalysis-exact-market-open-widget-currentness-v8'
 KASE_VERSION = 'stockanalysis-exact-kase-publisher-currentness-v9'
@@ -301,7 +302,8 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (APP_RATING_VERSION, NASDAQ_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (TSX_APP_RATING_VERSION, APP_RATING_VERSION, NASDAQ_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    if value['version']==TSX_APP_RATING_VERSION:require(urlsplit(value['source_url']).path.startswith('/quote/tsx/'),'Exact TSX app-rating URL required')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -317,7 +319,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
         auth,_=listing.authority(root,value['listing_authority'],value['issuer_id'],value['source_url'],value['checked_at'])
         require(listing.compare(before,after,value['source_url'],auth)==value['comparison'],'Listing comparison changed')
     else:
-        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION), allow_market_open=value['version'] in (APP_RATING_VERSION,MARKET_OPEN_VERSION), allow_kase=value['version']==KASE_VERSION, allow_app_ratings=value['version']==APP_RATING_VERSION) == value['comparison'], 'Scoped comparison changed')
+        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (TSX_APP_RATING_VERSION, APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (TSX_APP_RATING_VERSION, APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (TSX_APP_RATING_VERSION, APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (TSX_APP_RATING_VERSION, APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version'] in (TSX_APP_RATING_VERSION, APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION), allow_market_open=value['version'] in (APP_RATING_VERSION,MARKET_OPEN_VERSION), allow_kase=value['version']==KASE_VERSION, allow_app_ratings=value['version'] in (TSX_APP_RATING_VERSION,APP_RATING_VERSION)) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
@@ -345,7 +347,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     return value
 
 
-def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False, kase=False, nasdaq_authority=None, app_rating=False):
+def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False, kase=False, nasdaq_authority=None, app_rating=False, tsx_app_rating=False):
     from . import library
     before = library.load_bytes(root,doc['raw_path'],doc['raw_sha256'])
     after = library.load_bytes(root,observed['raw_path'],observed['observed_sha256'])
@@ -359,7 +361,8 @@ def create(root, packet, doc, observed, cache_path, *, listing_authority=None, m
     require(type(market_open) is bool, 'Explicit widget qualification flag required')
     require(not market_open or listing_authority is None, 'Separate explicit market widget and listing transitions required')
     require(type(app_rating) is bool and (not app_rating or market_open and listing_authority is None and nasdaq_authority is None and not kase),'Separate explicit app rating qualification required')
-    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open, allow_kase=kase, allow_app_ratings=app_rating) if listing_authority is None and nasdaq_authority is None else None
+    require(type(tsx_app_rating) is bool and (not tsx_app_rating or not any((market_open,app_rating,kase)) and listing_authority is None and nasdaq_authority is None and urlsplit(doc['source_url']).path.startswith('/quote/tsx/')),'Separate explicit TSX app-rating scope required')
+    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open, allow_kase=kase, allow_app_ratings=app_rating or tsx_app_rating) if listing_authority is None and nasdaq_authority is None else None
     if listing_authority is not None:
         from . import transcript_listing_transition as listing
         auth,_=listing.authority(root,listing_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
@@ -368,7 +371,7 @@ def create(root, packet, doc, observed, cache_path, *, listing_authority=None, m
         from . import transcript_nasdaq_transition as listing
         auth,_=listing.authority(root,nasdaq_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
         comparison=listing.compare(before,after,doc['source_url'],auth)
-    value = {'version': APP_RATING_VERSION if app_rating else NASDAQ_VERSION if nasdaq_authority is not None else (KASE_VERSION if kase else MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
+    value = {'version': TSX_APP_RATING_VERSION if tsx_app_rating else APP_RATING_VERSION if app_rating else NASDAQ_VERSION if nasdaq_authority is not None else (KASE_VERSION if kase else MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
              'source_url': doc['source_url'], 'qualification_id': doc['qualification_id'],
              'archived': {k:doc[k] for k in ('raw_path','raw_sha256','text_path','text_sha256')},
              'observed': {'raw_path': observed['raw_path'], 'raw_sha256': observed['observed_sha256'],
