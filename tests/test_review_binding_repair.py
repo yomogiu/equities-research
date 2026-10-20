@@ -52,3 +52,12 @@ class CompletedAccounting(unittest.TestCase):
  def test_changed_role_duplicate_session_and_reset_reject(self):
   for args in [{'model':'other'},{'sid':'review'},{'tokens':900000}]:
    with self.assertRaises(ValueError):self.run_case(**args)
+
+class ReviewHandoffTests(unittest.TestCase):
+ def test_typed_handoff_delivers_entire_ledger_and_targets_default_unchanged(self):
+  from types import SimpleNamespace
+  from research.earnings_file_context import Evidence
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);artifacts={'units':{'analysis:0':{'value':'candidate'}},'signals':{'signals':[]},'unreviewed_original_review_json':json.dumps({'decisions':[{'unit_id':'analysis:0','passage_ids':[],'reason':'x'*60000}]}),'missing_review_targets':['analysis:0'],'original_review_job':'immutable-review-job'};reader=SimpleNamespace(root=root,artifacts=artifacts,index={'files':{}})
+   (root/'metadata.json').write_text(json.dumps({'repair_version':h.VERSION}));body=json.loads(Evidence._handoff_body(reader));self.assertEqual(body['artifacts'],{k:v for k,v in artifacts.items() if k!='signals'});self.assertGreater(len(body['artifacts']['unreviewed_original_review_json']),59000)
+   (root/'metadata.json').write_text(json.dumps({'role':'analysis'}));ordinary=json.loads(Evidence._handoff_body(reader));self.assertEqual(ordinary['artifacts'],{'units':artifacts['units']})

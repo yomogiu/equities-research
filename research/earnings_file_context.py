@@ -434,7 +434,11 @@ class Evidence:
         artifacts={k:v for k,v in self.artifacts.items() if k!='qa_grounding'}
         if 'finding_catalog' in artifacts and 'state' in artifacts:
             artifacts={'finding_catalog':artifacts['finding_catalog']}
-        if 'units' in artifacts:
+        if base.read(self.root/'metadata.json').get('repair_version')=='authenticated-missing-review-source-repair-v1':
+            # The ledger and exact targets are required adjudication inputs,
+            # not redundant copies of the candidate units.
+            artifacts={k:artifacts[k] for k in ('units','unreviewed_original_review_json','missing_review_targets','original_review_job') if k in artifacts}
+        elif 'units' in artifacts:
 
             # Unit values already contain the financial, retrieval, author and
             # signal state; avoid printing those same objects a second time.
