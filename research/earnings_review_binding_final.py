@@ -36,7 +36,10 @@ def stopped(root):
  c.require(len(set(v['session_ids']))==len(v['session_ids'])==5 and v['prior']['spent_correction_rounds']==0,'Exactly original four roles plus empty binding session required')
  return v
 
-def artifacts(v):return prior_repair.contents(v['prior'])
+def artifacts(v):
+ # Keep existing bound review references visible to support selection without
+ # printing the ledger twice in the typed handoff.
+ return {**prior_repair.contents(v['prior']),'original_review_bindings':v['prior']['review']}
 
 def metadata(protocol,units):
  case=b.read(protocol['case_path']);return {'role':'correction','repair_version':VERSION,'round':2,'before_sha256':b.digest(units),'unit_sha256':{k:b.digest(v['value'])for k,v in units.items()},'case':case['scope_notes'],'period':case.get('period')}
