@@ -86,6 +86,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     value=b.read(path)
+    if value.get('version')=='authenticated-empty-signal-source-preparation-v1':
+        from . import earnings_signal_binding_repair as signals
+        return signals.verify(path,case,catalog)
     if value.get('version')=='authenticated-final-heading-proposal-continuation-v1':
         from . import earnings_prepared_heading
         return earnings_prepared_heading.verify(path,case,catalog)

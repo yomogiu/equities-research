@@ -164,6 +164,10 @@ class Evidence:
         self.verify()
         bundle=evidence.load_bundle(self.index['manifest'])
         try:
+            if role=='analysis' and base.read(self.root/'metadata.json').get('repair_version')=='authenticated-empty-signal-source-repair-v1':
+                from . import earnings_signal_binding_repair as binding
+                binding.validate_proposal(self.root/'index.json',job,value,artifacts,self.catalog,bundle)
+                return {'valid':True,'acceptance':False,'instruction':'Binding proposal passed schema and delivered-source checks; independent full report review still required.'}
             # Report all mistyped exchange bindings together; never guess or rewrite IDs.
             exchange_ids=set(self.index['exchange_ids'])
             invalid=[]
