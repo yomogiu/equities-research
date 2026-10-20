@@ -206,7 +206,10 @@ class Evidence:
                     batch.validate(units,bundle,self.catalog)
             elif role=='retrieval_reference':
                 from . import earnings_retrieval_reference_repair as reference
-                if base.read(self.root/'metadata.json').get('repair_version')=='authenticated-single-retrieval-question-addresses-v1':
+                if base.read(self.root/'metadata.json').get('repair_version')=='authenticated-single-retrieval-answer-quote-v1':
+                    from . import earnings_single_retrieval_answer_quote as linked
+                    linked.apply(artifacts['reference_candidate'],artifacts['reference_targets'],value,self.catalog,bundle['transcript_index'])
+                elif base.read(self.root/'metadata.json').get('repair_version')=='authenticated-single-retrieval-question-addresses-v1':
                     from .earnings_single_retrieval_questions import apply as apply_question
                     apply_question(artifacts['reference_candidate'],artifacts['reference_targets'],value,self.catalog)
                 elif base.read(self.root/'metadata.json').get('repair_version')=='authenticated-single-retrieval-quoted-addresses-v1':

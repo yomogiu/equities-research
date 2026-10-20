@@ -1,0 +1,7 @@
+# Linked answer and quotation source repair
+
+This opt-in runtime wraps the existing separately authenticated linked-answer/quotation contract. Exactly one unknown answer-list address and one bare quotation must share the same invalid ID. Complete original inspection and schema outside only those positions remain mandatory. Fresh source adjudication selects exactly one allowed original answer paragraph; the linked bare quotation receives that same selection. No quotation text, prose, other rows, valid references or valid order may change.
+
+The runtime shares the original canonical retrieval-address slot and normalized legacy/cross-version usage guards with question recovery. Exact source proof, request, prompt, context, model, remaining original allowance and complete question-and-answer delivery are authenticated. Failed usage cannot be erased through another folder/version. No sources are refetched by the runtime.
+
+An authenticated completed repair carries the original and fresh distinct sessions, spends correction one, and permits an explicit inherited retrieval preparation. Only final correction two remains. The original author, signals and a fresh independent FULLreview still follow. Original routes, cap, resumes, tool limits and per-turn next-input bound plus full registered output reservation remain unchanged. Publication, proposal validation and derived candidates are not report acceptance or permission for broad adoption. Exact remote report proof and canonical import are required before completion.
