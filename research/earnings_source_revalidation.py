@@ -101,12 +101,21 @@ def prepare(root,old_id,new_id,receipt,output):
  c.require(not Path(output).exists(),'New immutable currentness proof required');c.write(output,record);return record
 
 def verify(root,path,*,as_of=None):
- root=Path(root).resolve();v=b.read(path);packet_ids(v['old_packet_id'],v['new_packet_id']);c.require(v['version']==VERSION,'Known exact-source currentness proof required');receipt=library.resolve(root,v['source_receipt'])
+ root=Path(root).resolve();v=b.read(path)
+ if v.get('version')=='authenticated-two-link-source-currentness-v1':
+  from . import earnings_source_chain
+  return earnings_source_chain.verify(root,path,as_of=as_of)
+ packet_ids(v['old_packet_id'],v['new_packet_id']);c.require(v['version']==VERSION,'Known exact-source currentness proof required');receipt=library.resolve(root,v['source_receipt'])
  c.require(v['old_packet_sha256']==b.sha(root/f"library/packets/{v['old_packet_id']}.json") and v['new_packet_sha256']==b.sha(root/f"library/packets/{v['new_packet_id']}.json") and v['source_receipt_sha256']==b.sha(receipt),'Currentness proof sources changed')
  old,_=checked(root,v['old_packet_id'],v['new_packet_id'],receipt,**({} if as_of is None else {'as_of':as_of}));return old
 
-def input_bindings(root,path):
- root=Path(root).resolve();path=Path(path);path=library.resolve(root,str(path.relative_to(root)) if path.is_absolute() else str(path));v=b.read(path);old=verify(root,path);new=b.read(root/f"library/packets/{v['new_packet_id']}.json")
+def input_bindings(root,path,*,as_of=None):
+ root=Path(root).resolve();path=Path(path);path=library.resolve(root,str(path.relative_to(root)) if path.is_absolute() else str(path));v=b.read(path)
+ if v.get('version')=='authenticated-two-link-source-currentness-v1':
+  c.require(as_of is None,'Nested historical chains unsupported')
+  from . import earnings_source_chain
+  return earnings_source_chain.bindings(root,path)
+ old=verify(root,path,as_of=as_of);new=b.read(root/f"library/packets/{v['new_packet_id']}.json")
  names={str(path.relative_to(root)),v['source_receipt']}
  for packet in (old,new):
   names.add('library/packets/'+packet['packet_id']+'.json');names.add('library/snapshots/'+packet['catalog_id']+'.json')
@@ -118,25 +127,25 @@ def input_bindings(root,path):
  receipt=b.read(root/v['source_receipt']);derivation=receipt.get('derivation',{})
  if derivation.get('version')=='authenticated-nasdaq-market-open-source-qualification-v1':
   from . import transcript_nasdaq_transition as nasdaq
-  names.update(nasdaq.verify_derivation(root,receipt))
+  names.update(nasdaq.verify_derivation(root,receipt,historical=as_of is not None))
  if derivation.get('version')=='authenticated-kase-source-qualification-v1':
   from . import transcript_kase_transition as kase
-  names.update(kase.verify_derivation(root,receipt))
+  names.update(kase.verify_derivation(root,receipt,historical=as_of is not None))
  if derivation.get('version')=='authenticated-footer-app-rating-source-qualification-v1':
   from . import transcript_app_rating_transition as rating
-  names.update(rating.verify_derivation(root,receipt))
+  names.update(rating.verify_derivation(root,receipt,historical=as_of is not None))
  if derivation.get('version')=='authenticated-market-open-widget-source-qualification-v1':
   from . import transcript_market_widget_transition as widget
-  names.update(widget.verify_derivation(root,receipt))
+  names.update(widget.verify_derivation(root,receipt,historical=as_of is not None))
  if derivation.get('version')=='authenticated-listing-header-source-qualification-v1':
   from . import transcript_listing_transition as listing
-  names.update(listing.verify_derivation(root,receipt))
+  names.update(listing.verify_derivation(root,receipt,historical=as_of is not None))
  if derivation.get('legacy_equivalence'):
   from . import legacy_equivalent_source as legacy
   reference=derivation['legacy_equivalence'];proof_path=library.resolve(root,reference['path']);proof=legacy.verify(root,proof_path);names.update(proof['input_sha256']);names.update((reference['path'],derivation['manifest_path'],derivation['original_receipt']))
  result={name:b.sha(library.resolve(root,name)) for name in names}
  from .transcript_currentness import bindings
- for doc in new['documents']:result.update(bindings(root,doc))
+ for doc in new['documents']:result.update(bindings(root,doc,historical=as_of is not None))
  return result
 
 def validate_request(root,request):

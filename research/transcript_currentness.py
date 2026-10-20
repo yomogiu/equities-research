@@ -412,12 +412,12 @@ def apply(root, references):
     return cat
 
 
-def bindings(root, doc):
+def bindings(root, doc, *, historical=False):
     """Immutable request dependencies for replay at every worker/import boundary."""
     from . import library
     ref = doc.get('scoped_currentness')
     if not ref: return {}
-    value = replay(root,ref,doc)
+    value = replay(root,ref,doc,historical=historical)
     names = [ref['path'], value['observed']['raw_path'], value['observed']['text_path'], value['http_cache_path']]
     result={p:sha(library.resolve(root,p).read_bytes()) for p in names}
     if value['version'] in (LISTING_VERSION,NASDAQ_VERSION):
