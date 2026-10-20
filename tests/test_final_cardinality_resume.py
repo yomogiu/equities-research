@@ -29,3 +29,31 @@ class ResumeTests(unittest.TestCase):
    with self.assertRaisesRegex(ValueError,'uncertain'):h.plan('root')
   with patch.object(h.original,'verify_reservation',return_value=v),patch.object(h.checkpoint,'select',return_value=(Path('job'),1000,None)):
    with self.assertRaises(ValueError):h.plan('root')
+
+class CanonicalResumeTests(unittest.TestCase):
+ def fixture(self,private):
+  private=private.resolve()
+  run='b'*24;source=private/'reporting/runs'/run/'pipeline';request=source/'jobs/retrieval/request.json';request.parent.mkdir(parents=True);request.write_text(json.dumps({'code_root':str(private/'.report-workflow'/('a'*40))}))
+  first=private/'reporting/repairs/retrieval-addresses'/run;root=private/'reporting/repairs/retrieval-final'/run;first.mkdir(parents=True);root.mkdir(parents=True)
+  (first/'reservation.json').write_text(json.dumps({'previous_root':str(source)}));v={'previous_repair':str(first),'prior':{'source_root':str(source),'tokens':350000,'max_tokens':1200000,'spent_correction_rounds':1},'spent_correction_rounds':2};(root/'reservation.json').write_text(json.dumps(v));job=root/'jobs/retrieval-repair-2--resume-1';return run,source,first,root,v,job
+ def test_exact_existing_slots_reuse_without_creation_or_usage_reset(self):
+  with tempfile.TemporaryDirectory() as d:
+   run,source,first,root,v,job=self.fixture(Path(d));before={p:p.read_bytes() for p in [first/'reservation.json',root/'reservation.json']}
+   with patch.object(h,'plan',return_value=(v,job,150000,{'number':1})):
+    proof=h.canonical_plan(root)[4];self.assertEqual(proof['canonical_tokens'],500000);self.assertEqual(proof['remaining_original_allowance'],700000);self.assertFalse(job.exists());self.assertFalse(proof['new_reservation'])
+   self.assertTrue(all(p.read_bytes()==raw for p,raw in before.items()))
+ def test_unknown_normalized_legacy_slot_and_duplicate_sibling_reject(self):
+  with tempfile.TemporaryDirectory() as d:
+   run,source,first,root,v,job=self.fixture(Path(d));legacy=root.parent.parent/'alternate/reservation.json';legacy.parent.mkdir();legacy.write_text(json.dumps({'nested':[str(source.parent/'unused/../pipeline')]}))
+   with patch.object(h,'plan',return_value=(v,job,150000,{'number':1})):
+    with self.assertRaisesRegex(ValueError,'Alternate/legacy'):h.canonical_plan(root)
+    legacy.unlink();job.mkdir(parents=True)
+    with self.assertRaisesRegex(ValueError,'duplicate launch'):h.canonical_plan(root)
+ def test_changed_canonical_slot_and_accounting_reject(self):
+  with tempfile.TemporaryDirectory() as d:
+   run,source,first,root,v,job=self.fixture(Path(d))
+   with patch.object(h,'plan',return_value=(v,job,900000,{'number':1})):
+    with self.assertRaisesRegex(ValueError,'original cap'):h.canonical_plan(root)
+   v['previous_repair']=str(first.parent/'other')
+   with patch.object(h,'plan',return_value=(v,job,100000,{'number':1})):
+    with self.assertRaisesRegex(ValueError,'canonical first'):h.canonical_plan(root)

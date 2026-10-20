@@ -52,3 +52,37 @@ def prepare(root,case,destination):
 def verify(path,case,catalog):
  v=b.read(path);root=Path(v['repair_root']);c.require(v['version']==VERSION and v['reservation_sha256']==b.sha(root/'reservation.json'),'Original final reservation required');actual=completed(root)
  c.require(all(v[k]==x for k,x in actual.items()) and v['case_sha256']==b.sha(case) and v['catalog_sha256']==b.digest(catalog) and v['spent_correction_rounds']==2,'Resume evidence/accounting changed');return v
+
+def canonical_plan(root):
+ """Read-only reuse of the two verified slots; never creates a reservation.
+
+ Unlike fresh-slot admission, this requires an existing final reservation and
+ authenticates its entire first/original chain plus all closed failed usage.
+ Any other reservation mentioning that lifecycle remains a hard rejection.
+ """
+ import os
+ root=Path(root).resolve();v,job,spent,resume=plan(root)
+ source=Path(v['prior']['source_root']).resolve();run=source.parent.name
+ request=b.read(source/'jobs/retrieval/request.json');code=Path(request['code_root']).resolve();private=code.parent.parent
+ c.require(code.parent.name=='.report-workflow' and re.fullmatch('[a-f0-9]{40}',code.name),'Managed original private root required')
+ first=Path(v['previous_repair']).resolve()
+ c.require(re.fullmatch('[a-f0-9]{24}',run) and source==private/'reporting/runs'/run/'pipeline','Canonical original source required')
+ c.require(first==private/'reporting/repairs/retrieval-addresses'/run and root==private/'reporting/repairs/retrieval-final'/run,'Exactly original canonical first and final slots required')
+ c.require(job==root/'jobs'/('retrieval-repair-2--resume-'+str(resume['number'])) and not job.exists(),'New bounded same-role sibling only; no duplicate launch')
+ known={first/'reservation.json',root/'reservation.json'}
+ c.require(all(path.is_file() and not path.is_symlink() for path in known),'Both immutable canonical reservations required')
+ def mentions(value):
+  if isinstance(value,dict):return any(mentions(x) for x in value.values())
+  if isinstance(value,list):return any(mentions(x) for x in value)
+  if not isinstance(value,str):return False
+  if value==run:return True
+  parts=Path(os.path.normpath(value)).parts
+  tails=[('reporting','runs',run),('reporting','runs',run,'pipeline'),('reporting','repairs','retrieval-addresses',run),('reporting','repairs','retrieval-final',run)]
+  return any(parts[-len(t):]==t for t in tails)
+ for path in (private/'reporting/repairs').rglob('reservation.json'):
+  if path in known:continue
+  c.require(not mentions(b.read(path)),'Alternate/legacy lifecycle reservation must be reconciled')
+ c.require(b.read(root/'reservation.json')==v,'Final reservation changed during authentication')
+ c.require(v['prior']['spent_correction_rounds']==1 and v['spent_correction_rounds']==2,'Same original final correction only')
+ c.require(v['prior']['tokens']+spent<v['prior']['max_tokens']<=1200000,'All historical and failed usage within original cap required')
+ return v,job,spent,resume,{'first_reservation_sha256':b.sha(first/'reservation.json'),'final_reservation_sha256':b.sha(root/'reservation.json'),'canonical_tokens':v['prior']['tokens']+spent,'remaining_original_allowance':v['prior']['max_tokens']-v['prior']['tokens']-spent,'new_reservation':False,'new_model_call':False}

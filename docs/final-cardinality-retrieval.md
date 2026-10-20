@@ -23,3 +23,10 @@ charge remains included alongside the successful fresh resume. The exact
 original context, bindings, model, remaining allowance and full source/schema
 validation remain mandatory. Unknown executions and missing checkpoints reject.
 The original completed-job validator and preparation remain unchanged.
+
+Resume admission uses the read-only `canonical_plan` guard. It authenticates
+both existing canonical reservations through the original frozen lineage,
+meters all closed failed attempts, requires the next unused bounded sibling,
+and rejects any alternate or normalized legacy reservation for the lifecycle.
+It returns exact reservation hashes and cumulative/remaining usage without
+creating a slot or request. The fresh-slot guard is not repurposed for resumes.
