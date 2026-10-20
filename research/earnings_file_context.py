@@ -164,6 +164,10 @@ class Evidence:
         self.verify()
         bundle=evidence.load_bundle(self.index['manifest'])
         try:
+            if role=='analysis' and base.read(self.root/'metadata.json').get('repair_version')=='authenticated-missing-review-source-repair-v1':
+                from . import earnings_review_binding_repair as binding
+                binding.validate_proposal(self.root/'index.json',job,value,artifacts,self.catalog,bundle)
+                return {'valid':True,'acceptance':False,'instruction':'Binding proposal passed full source and review checks; final correction and NEW independent review remain required.'}
             if role=='analysis' and base.read(self.root/'metadata.json').get('repair_version')=='authenticated-empty-signal-source-repair-v1':
                 from . import earnings_signal_binding_repair as binding
                 binding.validate_proposal(self.root/'index.json',job,value,artifacts,self.catalog,bundle)
