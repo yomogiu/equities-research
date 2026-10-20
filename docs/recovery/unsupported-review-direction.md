@@ -1,0 +1,7 @@
+# Unsupported review direction continuation
+
+This separate opt-in preparation authenticates an original five-role file pipeline whose first correction conclusively returned only the exact unsupported-neutral-direction block. It replays the clean official original verifier, original prompts, inspection, sources, complete candidate, pending review findings, and all five distinct charged sessions.
+
+The derived preparation retains the complete original candidate and every review finding. It appends the original signal schema rules to the affected finding. It selects no replacement direction, changes no enum, and does not turn the review rationale into a new instruction to accept a signal. The final original correction must independently inspect the complete sources and find a faithful existing classification or return blocked. No existing direction is declared equivalent to neutral. A new independent full review is mandatory afterward.
+
+The first correction remains consumed and charged. The continuation starts at original correction two, with original routes, total allowance, writing guide, source catalogue, and output reservation. Old versions and default behavior are unchanged. Private coordinator registration and exact inherited-profile activation must authenticate the published pin and preparation before a descendant can launch. Publication and preparation are not report acceptance.

@@ -92,6 +92,9 @@ def verify(path,case,catalog):
     if value.get('version')=='authenticated-exact-review-proposals-continuation-v1':
         from . import earnings_prepared_review_proposals
         return earnings_prepared_review_proposals.verify(path,case,catalog)
+    if value.get('version')=='authenticated-review-direction-schema-continuation-v1':
+        from . import earnings_prepared_direction_schema
+        return earnings_prepared_direction_schema.verify(path,case,catalog)
     if value.get('version')=='authenticated-resolved-eps-scope-continuation-v1':
         from . import earnings_prepared_eps_scope
         return earnings_prepared_eps_scope.verify(path,case,catalog)
