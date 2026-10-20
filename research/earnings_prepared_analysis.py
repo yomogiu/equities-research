@@ -138,6 +138,9 @@ def verify(path,case,catalog):
     if a.get('version')=='authenticated-analysis-host-address-preparation-v1':
         from . import earnings_analysis_host_recovery
         return earnings_analysis_host_recovery.preparation(path,case,catalog)
+    if a.get('version')=='authenticated-source-adjudicated-turn-dedup-preparation-v1':
+        from . import earnings_prepared_turn_dedup
+        return earnings_prepared_turn_dedup.verify(path,case,catalog)
     if a.get('version')=='authenticated-analysis-turn-address-preparation-v1':
         from . import earnings_analysis_turn_address_repair
         return earnings_analysis_turn_address_repair.verify(path,case,catalog)
