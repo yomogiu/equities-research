@@ -59,6 +59,9 @@ def checked(root,old_id,new_id,receipt_path,*,as_of=None):
  if derivation.get('version')=='authenticated-kase-source-qualification-v1':
   from . import transcript_kase_transition as kase
   kase.verify_derivation(root,receipt,historical=as_of is not None)
+ if derivation.get('version')=='authenticated-footer-app-rating-source-qualification-v1':
+  from . import transcript_app_rating_transition as rating
+  rating.verify_derivation(root,receipt,historical=as_of is not None)
  if derivation.get('version')=='authenticated-market-open-widget-source-qualification-v1':
   from . import transcript_market_widget_transition as widget
   widget.verify_derivation(root,receipt,historical=as_of is not None)
@@ -119,6 +122,9 @@ def input_bindings(root,path):
  if derivation.get('version')=='authenticated-kase-source-qualification-v1':
   from . import transcript_kase_transition as kase
   names.update(kase.verify_derivation(root,receipt))
+ if derivation.get('version')=='authenticated-footer-app-rating-source-qualification-v1':
+  from . import transcript_app_rating_transition as rating
+  names.update(rating.verify_derivation(root,receipt))
  if derivation.get('version')=='authenticated-market-open-widget-source-qualification-v1':
   from . import transcript_market_widget_transition as widget
   names.update(widget.verify_derivation(root,receipt))

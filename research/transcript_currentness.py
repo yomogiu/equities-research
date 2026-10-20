@@ -19,6 +19,7 @@ MOBILE_VERSION = 'stockanalysis-market-app-counter-country-and-mobile-controls-c
 PUBLISHER_LINK_VERSION = 'stockanalysis-exact-publisher-link-currentness-v5'
 VERSION = 'stockanalysis-exact-tsx-publisher-currentness-v6'
 LISTING_VERSION = 'stockanalysis-authenticated-listing-header-currentness-v7'
+APP_RATING_VERSION = 'stockanalysis-explicit-footer-app-rating-currentness-v11'
 MARKET_OPEN_VERSION = 'stockanalysis-exact-market-open-widget-currentness-v8'
 KASE_VERSION = 'stockanalysis-exact-kase-publisher-currentness-v9'
 NASDAQ_VERSION = 'stockanalysis-authenticated-nasdaq-market-open-currentness-v10'
@@ -83,6 +84,27 @@ def app_counters(html):
             changes.append((start, start + len(count.group(2))))
     for start, end in reversed(sorted(changes)):
         html = html[:start] + 'APP_REVIEW_COUNT' + html[end:]
+    return html
+
+
+
+def app_ratings(html):
+    """Explicit opt-in: numeric ratings in exact publisher app footer links only."""
+    footers=list(re.finditer(r'<footer\b[^>]*>.*?</footer>',html,re.S))
+    require(len(footers)==1,'Exactly one app footer required')
+    footer=footers[0];require('transcript-sentence' not in footer.group(),'Footer overlaps evidence')
+    changes=[]
+    for url in ('https://apps.apple.com/us/app/stock-analysis-app/id6751272467','https://play.google.com/store/apps/details?id=com.stockanalysis.app'):
+        links=list(re.finditer(r'<a\b[^>]*href="'+re.escape(url)+r'"[^>]*>.*?</a>',footer.group(),re.S))
+        rated=0
+        for link in links:
+            ratings=list(re.finditer(r'(<span class="font-semibold text-(?:green|amber)-500">)([0-4]\.[0-9]|5\.0)(</span>)',link.group()))
+            if not ratings:continue
+            rated+=1;require(len(ratings)==1 and rated==1,'Ambiguous app rating')
+            require(len(re.findall(r'<span class="text-gray-400">[0-9]+(?:\.[0-9]+)?[KM]?</span>',link.group()))==1,'Rating requires same app review count')
+            match=ratings[0];start=footer.start()+link.start()+match.start(2);changes.append((start,start+len(match.group(2))))
+        require(rated==1,'Exact rated publisher app link required')
+    for start,end in reversed(sorted(changes)):html=html[:start]+'APP_RATING'+html[end:]
     return html
 
 
@@ -197,7 +219,7 @@ def prepared_downloads(html, url):
     return html,{'event':list(event[0]),'existing_downloads':links,'prepared':prepared}
 
 
-def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False, allow_tsx=False, allow_market_open=False, allow_kase=False):
+def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=False, allow_mobile_controls=False, allow_publisher_links=False, allow_tsx=False, allow_market_open=False, allow_kase=False, allow_app_ratings=False):
     require(urlsplit(url).hostname == 'stockanalysis.com' and
             (re.fullmatch(r'/stocks/[a-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path) or
              allow_kase and re.fullmatch(r'/quote/kase/[A-Za-z0-9.-]+/transcripts/[a-z0-9-]+/', urlsplit(url).path) or
@@ -229,6 +251,7 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
     require(re.search(r'(?:Market closed|At close:|Pre-market:|After-hours:)', widget_text) or tsx_widget or market_open, 'Unrecognized quote widget')
     require('transcript-sentence' not in html[a:b], 'Widget overlaps call evidence')
     outside_html = html[:a] + '<div>QUOTE_WIDGET</div>' + html[b:]
+    if allow_app_ratings:outside_html=app_ratings(outside_html)
     if allow_app_counters:
         outside_html = app_counters(outside_html)
     if allow_country_navigation:
@@ -260,9 +283,9 @@ def signature(raw, url, *, allow_app_counters=False, allow_country_navigation=Fa
             'widget_html_span': [a,b], 'widget_sha256': sha(html[a:b].encode()), **({'downloads':downloads} if allow_market_open else {})}
 
 
-def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True, allow_publisher_links=True, allow_tsx=True, allow_market_open=False, allow_kase=False):
-    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open, allow_kase=allow_kase)
-    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open, allow_kase=allow_kase)
+def compare(before, after, url, *, allow_app_counters=True, allow_country_navigation=True, allow_mobile_controls=True, allow_publisher_links=True, allow_tsx=True, allow_market_open=False, allow_kase=False, allow_app_ratings=False):
+    old, old_spans = signature(before, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open, allow_kase=allow_kase, allow_app_ratings=allow_app_ratings)
+    new, new_spans = signature(after, url, allow_app_counters=allow_app_counters, allow_country_navigation=allow_country_navigation, allow_mobile_controls=allow_mobile_controls, allow_publisher_links=allow_publisher_links, allow_tsx=allow_tsx, allow_market_open=allow_market_open, allow_kase=allow_kase, allow_app_ratings=allow_app_ratings)
     if allow_market_open:
         a,b=old_spans['downloads'],new_spans['downloads']
         require(a['event']==b['event'] and a['existing_downloads']==b['existing_downloads'] and (a['prepared']==b['prepared'] or not a['prepared'] and len(b['prepared'])==2),'Only same-event prepared control addition permitted')
@@ -278,7 +301,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     path = library.resolve(root, reference['path'])
     require(sha(path.read_bytes()) == reference['sha256'], 'Currentness receipt hash changed')
     value = library.read_json(path)
-    require(value['version'] in (NASDAQ_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
+    require(value['version'] in (APP_RATING_VERSION, NASDAQ_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, LISTING_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION, LEGACY_VERSION), 'Unsupported currentness proof')
     old, new = value['archived'], value['observed']
     before = library.load_bytes(root, old['raw_path'], old['raw_sha256'])
     text = library.load_bytes(root, old['text_path'], old['text_sha256'])
@@ -294,7 +317,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
         auth,_=listing.authority(root,value['listing_authority'],value['issuer_id'],value['source_url'],value['checked_at'])
         require(listing.compare(before,after,value['source_url'],auth)==value['comparison'],'Listing comparison changed')
     else:
-        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version'] in (KASE_VERSION, MARKET_OPEN_VERSION, VERSION), allow_market_open=value['version']==MARKET_OPEN_VERSION, allow_kase=value['version']==KASE_VERSION) == value['comparison'], 'Scoped comparison changed')
+        require(compare(before,after,value['source_url'], allow_app_counters=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION, APP_COUNTER_VERSION), allow_country_navigation=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION, COUNTRY_VERSION), allow_mobile_controls=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION, MOBILE_VERSION), allow_publisher_links=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION, PUBLISHER_LINK_VERSION), allow_tsx=value['version'] in (APP_RATING_VERSION, KASE_VERSION, MARKET_OPEN_VERSION, VERSION), allow_market_open=value['version'] in (APP_RATING_VERSION,MARKET_OPEN_VERSION), allow_kase=value['version']==KASE_VERSION, allow_app_ratings=value['version']==APP_RATING_VERSION) == value['comparison'], 'Scoped comparison changed')
     cache = library.resolve(root,value['http_cache_path'])
     require(sha(cache.read_bytes()) == value['http_cache_sha256'], 'HTTP observation changed')
     observation = library.read_json(cache)[value['source_url']]
@@ -322,7 +345,7 @@ def replay(root, reference, document=None, *, issuer_id=None, historical=False):
     return value
 
 
-def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False, kase=False, nasdaq_authority=None):
+def create(root, packet, doc, observed, cache_path, *, listing_authority=None, market_open=False, kase=False, nasdaq_authority=None, app_rating=False):
     from . import library
     before = library.load_bytes(root,doc['raw_path'],doc['raw_sha256'])
     after = library.load_bytes(root,observed['raw_path'],observed['observed_sha256'])
@@ -335,7 +358,8 @@ def create(root, packet, doc, observed, cache_path, *, listing_authority=None, m
     require(type(kase) is bool and (not kase or not market_open and listing_authority is None), 'Separate explicit KASE qualification required')
     require(type(market_open) is bool, 'Explicit widget qualification flag required')
     require(not market_open or listing_authority is None, 'Separate explicit market widget and listing transitions required')
-    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open, allow_kase=kase) if listing_authority is None and nasdaq_authority is None else None
+    require(type(app_rating) is bool and (not app_rating or market_open and listing_authority is None and nasdaq_authority is None and not kase),'Separate explicit app rating qualification required')
+    comparison=compare(before,after,doc['source_url'],allow_market_open=market_open, allow_kase=kase, allow_app_ratings=app_rating) if listing_authority is None and nasdaq_authority is None else None
     if listing_authority is not None:
         from . import transcript_listing_transition as listing
         auth,_=listing.authority(root,listing_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
@@ -344,7 +368,7 @@ def create(root, packet, doc, observed, cache_path, *, listing_authority=None, m
         from . import transcript_nasdaq_transition as listing
         auth,_=listing.authority(root,nasdaq_authority,packet['issuer_id'],doc['source_url'],observed['checked_at'])
         comparison=listing.compare(before,after,doc['source_url'],auth)
-    value = {'version': NASDAQ_VERSION if nasdaq_authority is not None else (KASE_VERSION if kase else MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
+    value = {'version': APP_RATING_VERSION if app_rating else NASDAQ_VERSION if nasdaq_authority is not None else (KASE_VERSION if kase else MARKET_OPEN_VERSION if market_open else VERSION) if listing_authority is None else LISTING_VERSION, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
              'source_url': doc['source_url'], 'qualification_id': doc['qualification_id'],
              'archived': {k:doc[k] for k in ('raw_path','raw_sha256','text_path','text_sha256')},
              'observed': {'raw_path': observed['raw_path'], 'raw_sha256': observed['observed_sha256'],
