@@ -36,6 +36,7 @@
     "test_earnings_reviewed_grounding",
     "test_earnings_reviewed_operator",
     "test_earnings_role_import",
+    "test_earnings_scoped_final_proposals",
     "test_earnings_writing_standard",
     "test_editorial_sibling_locators",
     "test_factual_review_handoffs",

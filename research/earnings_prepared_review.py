@@ -86,6 +86,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     value=b.read(path)
+    if value.get('version')=='authenticated-scoped-final-proposals-continuation-v1':
+        from . import earnings_scoped_final_proposals
+        return earnings_scoped_final_proposals.verify(path,case,catalog)
     if value.get("version")=="authenticated-pending-final-correction-preparation-v1":
         from . import earnings_pending_final
         return earnings_pending_final.verify(path,case,catalog)

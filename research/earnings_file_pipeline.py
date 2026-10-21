@@ -77,6 +77,9 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
     if preparation is not None and base.read(preparation).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
         from . import earnings_prepared_retrieval as prepared
         qa=prepared.verify(preparation,case,catalog)['grounding']
+    if review_preparation is not None and base.read(review_preparation).get('version')=='authenticated-scoped-final-proposals-continuation-v1':
+        from . import earnings_prepared_review as prepared_review
+        qa=prepared_review.verify(review_preparation,case,catalog)['grounding']
     context.write(root/'qa-grounding.json',qa)
     code=[*Path(__file__).parent.glob('*.py'),*Path(__file__).parent.glob('earnings_*.mjs'),*PROMPTS.glob('*.md')]
     p={'version':VERSION,'case_path':str(case),'case_sha256':base.sha(case),'evidence_manifest':str(root/'evidence/manifest.json'),
@@ -103,7 +106,9 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         inherited_review=prepared_review.verify(review_preparation,case,catalog)
         require(max_tokens<=inherited_review['max_tokens'] and inherited_review['writing_sha256']==base.sha(writing),'Review continuation cannot raise ceiling or change writing guide')
         p.update(review_preparation_path=str(Path(review_preparation).resolve()),review_preparation_sha256=base.sha(review_preparation),inherited_tokens=inherited_review['tokens'])
-        if inherited_review.get('version') in ('authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1'):
+        if inherited_review.get('version')=='authenticated-scoped-final-proposals-continuation-v1':
+            require(max_tokens==inherited_review['max_tokens'],'Scoped approval cannot change token ceiling')
+        if inherited_review.get('version') in ('authenticated-scoped-final-proposals-continuation-v1','authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1'):
             p['models']=inherited_review['models']
             p['report_template']=inherited_review['report_template']
     if budget_authorization is not None:
@@ -149,7 +154,7 @@ def load(root):
     p=base.read(root/'protocol.json')
     if 'analysis_repair_rounds' in p:
         require(type(p['analysis_repair_rounds']) is int and p['analysis_repair_rounds']==1 and p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1'),'Unbound analysis correction round')
-    require(p['version']==VERSION and (validate_profile(p) or p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-exact-retrieval-identity-transport-v1','authenticated-pending-author-retrieval-preparation-v1','authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-final-cardinality-retrieval-preparation-v1','authenticated-final-cardinality-resume-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1','authenticated-single-retrieval-question-address-preparation-v1','authenticated-single-retrieval-answer-quote-preparation-v1','authenticated-linked-bare-json-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1','authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1')) and p['max_correction_rounds']==2
+    require(p['version']==VERSION and (validate_profile(p) or p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-exact-retrieval-identity-transport-v1','authenticated-pending-author-retrieval-preparation-v1','authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-final-cardinality-retrieval-preparation-v1','authenticated-final-cardinality-resume-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1','authenticated-single-retrieval-question-address-preparation-v1','authenticated-single-retrieval-answer-quote-preparation-v1','authenticated-linked-bare-json-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1','authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-scoped-final-proposals-continuation-v1','authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1')) and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
@@ -166,7 +171,12 @@ def load(root):
         from . import earnings_prepared_review as prepared_review
         require(base.sha(p['review_preparation_path'])==p['review_preparation_sha256'],'Review continuation manifest changed')
         inherited_review=prepared_review.verify(p['review_preparation_path'],p['case_path'],base.read(root/'passages.json'))
-        if inherited_review.get('version') in ('authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1'):
+        if inherited_review.get('version')=='authenticated-scoped-final-proposals-continuation-v1':
+            require(p['max_tokens']==inherited_review['max_tokens'] and p.get('report_template')==inherited_review['report_template']
+                    and base.read(root/'qa-grounding.json')==inherited_review['grounding']
+                    and not any(p.get(k) for k in ('preparation_path','analysis_preparation_path','signal_preparation_path','recovery_path','budget_authorization','retrieval_repair_rounds','analysis_repair_rounds')),
+                    'Scoped final continuation settings/grounding changed')
+        if inherited_review.get('version') in ('authenticated-scoped-final-proposals-continuation-v1','authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1'):
             require(p['models']==inherited_review['models'],'Original continuation model assignments changed')
         require(p['inherited_tokens']==inherited_review['tokens'] and p['max_tokens']<=inherited_review['max_tokens'] and p['writing_sha256']==inherited_review['writing_sha256'],'Review continuation usage, ceiling or guide changed')
     elif p.get('recovery_path'):
@@ -210,6 +220,8 @@ def load(root):
     bundle=evidence.load_bundle(p['evidence_manifest']);catalog=passages.catalog(p['evidence_manifest'])
     require(catalog==base.read(root/'passages.json'),'Source passage catalogue changed')
     if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+        bundle['qa_grounding']=base.read(root/'qa-grounding.json')
+    if p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version')=='authenticated-scoped-final-proposals-continuation-v1':
         bundle['qa_grounding']=base.read(root/'qa-grounding.json')
     return p,bundle,catalog
 
@@ -355,6 +367,17 @@ def _advance(root,execute):
     continued=base.read(p['review_preparation_path']) if p.get('review_preparation_path') else base.read(p['signal_preparation_path']) if p.get('signal_preparation_path') else None
     if continued:
         state=copy.deepcopy(continued['state']);pack=copy.deepcopy(continued['signals']);sessions.update(continued['session_ids'])
+    scoped_final=bool(continued and continued.get('version')=='authenticated-scoped-final-proposals-continuation-v1')
+    if scoped_final:
+        require(continued['start_round']==continued['spent_correction_rounds']==1 and continued['remaining_correction_rounds']==0,'One approved deterministic correction only')
+        require(mechanical.check(state,bundle,catalog)['status']=='ready_for_independent_review','Approved corrected state fails source/schema preflight')
+        deps={'state':state,'finding_catalog':signals.finding_catalog(state),'scoped_correction_provenance':continued['derivation']}
+        metadata={'role':'signal_author','case':base.read(p['case_path'])['scope_notes'],'period':base.read(p['case_path']).get('period'),'report_sha256':signals.report_digest(state)}
+        existed=any((root/'jobs'/('signal_author'+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
+        value,tokens=_job(root,p,bundle,catalog,'signal_author','signal_author',deps,metadata,markdown.report(state,bundle,catalog),execute,sessions,tokens)
+        if 'pending_status' in value or value.get('status') in ('pending','launch_uncertain','budget_exhausted'):return value
+        if not existed:launched=True
+        pack=signals.validate(value['content'],state,bundle,catalog)
     for role in (() if continued else ('financial','retrieval','analysis','signal_author')):
         if role=='financial' and p.get('financial_mode')=='deterministic-original-facts-v1':
             from . import earnings_financial_outline
@@ -409,7 +432,7 @@ def _advance(root,execute):
             if role=='analysis' and p.get('report_template'):
                 require(value['content'].get('report_template')==p['report_template'],'Author must retain frozen report template')
             artifacts[role]=value['content']
-    items=batch.units(state,pack);findings={}
+    items=batch.units(state,pack);findings=continued['findings'] if scoped_final else {}
     start_round=0
     if continued and continued.get('version') in ('authenticated-pending-final-correction-preparation-v1','authenticated-inspection-correction-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-missing-review-source-preparation-v1'):
         require(continued['start_round']==2,'Only the original final correction remains')
@@ -426,8 +449,8 @@ def _advance(root,execute):
     repair_rounds=p.get('analysis_repair_rounds',p.get('retrieval_repair_rounds'))
     if repair_rounds in (1,2):
         start_round=repair_rounds
-    for round_no in range(start_round,3):
-        if round_no and not (continued and continued.get('version') in ('authenticated-final-heading-proposal-continuation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1') and round_no==2) and not (repair_rounds==round_no) and not (continued and continued.get('version') in ('authenticated-completed-review-inspection-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-empty-signal-source-preparation-v1') and round_no==1):
+    for round_no in ((1,) if scoped_final else range(start_round,3)):
+        if round_no and not scoped_final and not (continued and continued.get('version') in ('authenticated-final-heading-proposal-continuation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1') and round_no==2) and not (repair_rounds==round_no) and not (continued and continued.get('version') in ('authenticated-completed-review-inspection-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-empty-signal-source-preparation-v1') and round_no==1):
             name='correction-'+str(round_no);before=copy.deepcopy(items)
             if continued and continued.get('version')=='authenticated-completed-role-coverage-continuation-v1' and round_no==continued['start_round']:
                 state,pack=batch.materialize(items)
@@ -458,6 +481,7 @@ def _advance(root,execute):
             deps['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
         if p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version')=='authenticated-source-label-display-continuation-v1':
             deps['analysis_display_transport_provenance']=base.read(p['analysis_preparation_path'])['derivation']
+        if scoped_final:deps['scoped_correction_provenance']=continued['derivation']
         existed=any((root/'jobs'/(name+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
         if continued and continued.get('review') and round_no==0:
             value={'content':continued['review'],'receipt':{'session':{'id':continued['review_session']}}}
@@ -476,6 +500,7 @@ def _advance(root,execute):
                 'state':state,'signals':pack,'review_session':value['receipt']['session']['id'],'session_ids':sorted(sessions),
                 'review_sha256':base.sha(checkpoint.select(root/'jobs'/name)[0]/'output.json')}
             context.write(root/'result.json',result);return result
+    if scoped_final:return {'status':'blocked','stage':'review-1','findings':findings,'correction_rounds':1,'tokens':tokens,'reason':'The single approved correction cycle is spent; fresh review failed and no further correction is authorized.'}
     return {'status':'blocked','stage':'review-2','findings':findings,'correction_rounds':2,'tokens':tokens}
 
 
