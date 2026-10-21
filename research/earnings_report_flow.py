@@ -57,6 +57,15 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
     if len(filings) != 1 or len(calls) != 1:
         raise ValueError('One unambiguous full current-period filing and transcript required')
     filing, call = filings[0], calls[0]
+    return _prepare_selected(root, packet_id, packet, filing, call, output, writing, authorization,
+                             reviewed_sidecar=reviewed_sidecar, reviewed_financial=reviewed_financial)
+
+
+def _prepare_selected(root, packet_id, packet, filing, call, output, writing, authorization, *,
+                      reviewed_sidecar=None, reviewed_financial=None, extra_sources=(),
+                      extra_artifacts=(), scope_notes=()):
+    """Shared derivation after a caller has authenticated its explicit source route."""
+    docs = packet['documents']
     source = {k: filing[k] for k in ('document_id', 'raw_sha256', 'text_sha256')}
     raw = library.load_bytes(root, filing['raw_path'], filing['raw_sha256'])
     financial_artifacts = []
@@ -72,6 +81,11 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
         facts = financial_html_tables.extract(raw, source, profile, review, selection)
         financial_artifacts = [{'path': str(library.resolve(root, reviewed_financial[key+'_path'])),
                                 'sha256': selection[key+'_sha256']} for key in ('profile', 'review')]
+    if reviewed_financial is not None and selection.get('version')=='exact-reviewed-financial-spans-v1':
+        if selection['source_url']!=filing['source_url']:raise ValueError('Reviewed span source URL differs from qualified filing')
+        old_raw=Path(selection['original_raw_path']).resolve()
+        if not old_raw.is_relative_to(root) or old_raw.is_symlink(): raise ValueError('Original reviewed raw must remain private and bound')
+        financial_artifacts.append({'path':str(old_raw),'sha256':base.sha(old_raw)})
     if not facts['observations']:
         raise ValueError('No structured filing observations; financial preparation needs review')
     text = library.load_bytes(root, call['text_path'], call['text_sha256']).decode('utf-8')
@@ -130,6 +144,8 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
         selection_path = output/'transcript-sidecar-selection.json'
         base.save(selection_path, reviewed_sidecar)
         artifacts += mapping_artifacts + [{'path': str(selection_path), 'sha256': base.sha(selection_path)}]
+    sources.extend(extra_sources)
+    artifacts.extend(extra_artifacts)
     case = {'schema_version': 1, 'scope': 'one_packet_experiment', 'authorization': authorization,
             'case_id': packet_id, 'packet_id': packet_id, 'issuer_id': packet['issuer_id'], 'period': packet['period'],
             'scope_notes': [
@@ -149,6 +165,7 @@ def prepare(root, packet_id, output, writing, authorization, *, reviewed_sidecar
         case['financial_adapter'] = {'authorization_path': str(financial_selection),
                                      **{key+'_path': str(library.resolve(root, reviewed_financial[key+'_path'])) for key in ('profile', 'review')}}
         case['scope_notes'].append('Selected ordinary HTML cells were extracted using an independently reviewed, exact-source profile. Profile review does not establish full financial coverage or report acceptance. Unselected cells remain original evidence.')
+    case['scope_notes'].extend(scope_notes)
     base.validate_case(case); base.save(output/'case.json', case)
     return output/'case.json'
 

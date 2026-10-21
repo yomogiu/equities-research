@@ -18,11 +18,20 @@ USAGE=('input','output','cacheRead','cacheWrite','totalTokens')
 
 
 def work_plan(role,index):
-    """Reserve actual required packet pages plus one metadata call, bounded at 8."""
+    """Reserve evidence, metadata and pre-submit validation, bounded at 8."""
+    if role=='retrieval_reference':
+        reader=context.Evidence(index,Path(index).parent/'unused-plan.jsonl',_replay=True);metadata=old.read(Path(index).parent/'metadata.json');ids=metadata['source_scope_ids']
+        if not 1<=len(ids)<=32:raise ValueError('Bounded original target scopes required')
+        plan={'handoff_pages':(len(reader._handoff_body())+58999)//59000,'source_pages':(len(reader._support_body(ids)[0])+58999)//59000,'validation_checks':1}
+        if sum(plan.values())>8:raise ValueError('Reference inspection exceeds bounded work plan')
+        return {**plan,'work_tool_limit':sum(plan.values())}
     if role not in ('financial','retrieval','analysis','signal_author','review','correction'):return None
     reader=context.Evidence(index,Path(index).parent/'unused-plan.jsonl',_replay=True)
-    plan={'metadata_allowance':1}
-    if role=='financial':return {**plan,'work_tool_limit':3}
+    # Handoff packets already include the complete metadata; do not reserve a
+    # duplicate metadata read at the expense of final result validation.
+    plan={'metadata_allowance':0 if role in ('analysis','signal_author','review','correction') else 1,
+          'validation_checks':1}
+    if role=='financial':return {**plan,'work_tool_limit':4}
     if role in ('retrieval','analysis','review','correction'):
         start=0;pages=0
         while True:
@@ -95,7 +104,10 @@ def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,tim
     if not prompt.strip() or type(max_tokens) is not int or not 1<=max_tokens<=1200000 or type(max_tool_calls) is not int or not 1<=max_tool_calls<=64 or timeout<=0:raise ValueError('Explicit bounded role settings required')
     index=Path(index).resolve();context.Evidence(index,job/'retrieval.jsonl')
     plan=work_plan(bindings.get('role'),index) if max_tool_calls>1 else None
-    policy={**plan,'work_tool_limit':min(plan['work_tool_limit'],max_tool_calls-1),'automatic_checkpoints':True,'finalization_margin_tokens':65536} if plan else None
+    # The worker already reserves the registered full model output maximum
+    # before EVERY turn. A second fixed reserve can close evidence tools while
+    # ample output budget remains, producing an inevitably unreviewable draft.
+    policy={**plan,'work_tool_limit':min(plan['work_tool_limit'],max_tool_calls-1),'automatic_checkpoints':True,'finalization_margin_tokens':0} if plan else None
     if execution_plan is not None:
         if (not isinstance(execution_plan,dict) or set(execution_plan)!={'work_tool_limit','finalization_margin_tokens','preflight_sha256'}
             or type(execution_plan['work_tool_limit']) is not int or not 1<=execution_plan['work_tool_limit']<=min(8,max_tool_calls-1)
@@ -200,18 +212,26 @@ def run_role(job_path,prompt,model,effort,bindings,index,*,max_tokens,max_tool_c
         raise RuntimeError('Incomplete role cannot be launched again')
     if job.exists() and any(job.iterdir()):raise ValueError('Fresh job directory required')
     job.mkdir(parents=True,exist_ok=True);old.save(job/'request.json',q);(job/'prompt.md').write_text(prompt)
+    # Every fresh attempt owns an explicit empty audit, including restore-only calls.
+    (job/'retrieval.jsonl').touch(exist_ok=False)
     if resume is not None:
         old.save(job/'resume.json',resume)
         verify_request(job,q)
     launch={'id':str(uuid.uuid4()),'request_sha256':old.digest(q),'started_at':old.datetime.now(old.timezone.utc).isoformat()};old.save(job/'launch.json',launch)
     node,sdk=old._runtime_paths();started=time.monotonic();process=subprocess.Popen([str(node),str(HELPER),str(sdk),str(job)],cwd=job,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+    timed_out=False
     try:code=process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
+        timed_out=True
         os.killpg(process.pid,signal.SIGTERM)
         try:process.wait(timeout=5)
         except subprocess.TimeoutExpired:os.killpg(process.pid,signal.SIGKILL);process.wait()
         code=process.returncode
     execution={'request_sha256':old.digest(q),'launch_sha256':old.sha(job/'launch.json'),'exit_code':code,'seconds':round(time.monotonic()-started,3),'status':'execution_failed'}
+    if timed_out:
+        execution['failure_kind']='worker_timeout'
+        execution['execution_certainty']='unknown'
+        execution['retry_authorized']=False
     if code!=0:old.save(job/'execution.json',execution);raise RuntimeError('Prime/IPython role failed; immutable launch retained, no retry')
     try:
         execution['session']=receipt(job,q);context.audit(index,job/'retrieval.jsonl');content=parse((job/'response.md').read_text())

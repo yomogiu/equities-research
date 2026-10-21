@@ -91,6 +91,9 @@ def _number(text, scale):
 
 def extract(raw_bytes, source, profile_bytes, review_bytes, authorization):
     """Return source-bound observations; all arguments are caller-owned inputs."""
+    if authorization.get('version')=='exact-reviewed-financial-spans-v1':
+        from . import financial_profile_currentness
+        return financial_profile_currentness.extract(raw_bytes,source,profile_bytes,review_bytes,authorization)
     require(isinstance(raw_bytes, bytes), 'Original UTF-8 bytes required')
     raw = raw_bytes.decode('utf-8')
     identity = {k: source.get(k) for k in SOURCE_KEYS}
@@ -205,4 +208,8 @@ def case_inputs(case, raw_bytes, source):
         require(resolved in bound, 'Adapter input not frozen in case')
         contents[key] = Path(resolved).read_bytes()
         require(financial.digest(contents[key]) == bound[resolved], 'Frozen adapter input changed')
-    return (raw_bytes, source, contents['profile_path'], contents['review_path'], _json(contents['authorization_path']))
+    authorization=_json(contents['authorization_path'])
+    if authorization.get('version')=='exact-reviewed-financial-spans-v1':
+        original=Path(authorization['original_raw_path']).resolve()
+        require(str(original) in bound and financial.digest(original.read_bytes())==bound[str(original)]==authorization['original_authorization']['source']['raw_sha256'],'Original reviewed raw not frozen in case')
+    return (raw_bytes, source, contents['profile_path'], contents['review_path'], authorization)

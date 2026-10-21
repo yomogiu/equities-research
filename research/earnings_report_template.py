@@ -78,41 +78,50 @@ def exchange_ids(finding, index):
     cited.update(q['scope_id'] for q in finding.get('quotes', []) if 'scope_id' in q)
     selected = {x['id'] for x in index['exchanges']
                 if x['id'] in cited or cited.intersection(x['turn_ids'])}
-    # Preserve linked parent questions and follow-ups as one contextual exchange.
-    while True:
-        linked = {x['id'] for x in index['exchanges'] if x.get('followup_of') in selected}
-        linked.update(x['followup_of'] for x in index['exchanges']
-                      if x['id'] in selected and x.get('followup_of'))
-        if linked <= selected:
-            break
-        selected.update(linked)
     return [x['id'] for x in index['exchanges'] if x['id'] in selected]
+
+
+def original_bindings(finding, index):
+    """Bind explicit turns exactly; provisional exchange grouping is not evidence."""
+    import hashlib
+    cited=set(finding['citations']) | {q['scope_id'] for q in finding.get('quotes',[]) if 'scope_id' in q}
+    turns={t['id'] for t in index['turns']}
+    explicit=[e for e in index['exchanges'] if e['id'] in cited]
+    covered={tid for e in explicit for tid in e['turn_ids']}
+    result=[(e['id'],e['turn_ids']) for e in explicit]
+    exact=[t['id'] for t in index['turns'] if t['id'] in cited and t['id'] not in covered]
+    if exact:
+        key='qa-turns-'+hashlib.sha256(('\n'.join(exact)).encode()).hexdigest()[:24]
+        result.append((key,exact))
+    return result
 
 
 def original_exchanges(state, bundle):
     """Copy original turn spans after verifying the frozen transcript hash/index."""
     from . import earnings_compact_evidence as evidence
     index = bundle['transcript_index']
-    selected = set()
-    for finding in state['artifacts']['analysis']['findings']:
-        if finding.get('section') == 'qa':
-            selected.update(exchange_ids(finding, index))
-    if not selected:
-        return {}
+    from . import earnings_passages as passages
+    import copy
+    bound=copy.deepcopy(state)
+    parent={p['passage_id']:p['scope_id'] for p in passages.catalog(bundle['manifest'])['passages']}
+    for f in bound['artifacts']['analysis']['findings']:
+        for q in f.get('quotes',[]):
+            if q.get('passage_id') in parent:q['scope_id']=parent[q['passage_id']]
+    bindings={key:ids for finding in bound['artifacts']['analysis']['findings']
+              if finding.get('section')=='qa' for key,ids in original_bindings(finding,index)}
+    if not bindings:return {}
     view = evidence.transcript_view(bundle['manifest'])
     turns = {t['id']: t for t in index['turns']}
     result = {}
-    for exchange in index['exchanges']:
-        if exchange['id'] not in selected:
-            continue
-        rows = []
-        for tid in exchange['turn_ids']:
-            turn = turns[tid]
-            rows.append({k: turn[k] for k in ('id', 'speaker', 'role', 'start', 'end')} |
-                        {'text': view['text'][turn['start']:turn['end']]})
-        rows.sort(key=lambda t: t['start'])
-        result[exchange['id']] = {'id': exchange['id'], 'turns': rows,
-                                  'transcript_sha256': view['sha256']}
+    for key, ids in bindings.items():
+        rows=[]
+        for tid in ids:
+            turn=turns[tid]
+            rows.append({k:turn[k] for k in ('id','speaker','role','start','end')} |
+                        {'text':view['text'][turn['start']:turn['end']]})
+        rows.sort(key=lambda t:t['start'])
+        result[key]={'id':key,'turns':rows,'transcript_sha256':view['sha256']}
+
     return result
 
 
@@ -217,7 +226,7 @@ def financial_sections(financial, bundle, formatting):
 
 def report(state, bundle, catalog, pack=None):
     from . import earnings_passages as passages, earnings_signals as signals
-    from .earnings_markdown import refs
+    from .earnings_markdown import refs, quote_markdown
     analysis = state['artifacts']['analysis']
     validate(analysis)
     out = passages.hydrate('analysis', analysis, catalog)
@@ -240,9 +249,9 @@ def report(state, bundle, catalog, pack=None):
                               ' · ' + signal['period'] + ' ' + refs(signal['citations']), ''])
             lines.extend([finding['text'] + ' ' + refs(finding['citations']), ''])
             for quote in finding['quotes']:
-                lines.extend(['\n'.join('> ' + line for line in quote['text'].splitlines()) + ' ' + refs([quote['scope_id']]), ''])
+                lines.extend([quote_markdown(quote,bundle), ''])
             if key == 'qa':
-                for identifier in exchange_ids(finding, bundle['transcript_index']):
+                for identifier, _ in original_bindings(finding, bundle['transcript_index']):
                     # Only an ID enters review context. Full text is copied into
                     # HTML from the verified source bundle, not sent to a model again.
                     lines.extend([':::original-qa ' + identifier, ''])

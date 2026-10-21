@@ -25,7 +25,14 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         self.assertEqual(q['execution_policy']['finalization_margin_tokens'],0)
         self.assertIn('maxTokens:128000',r.HELPER.read_text())
         default=r.request(job,'Fictional default review','gpt-6.1-sol','medium',{'role':'review'},index,225973,48,1200)
-        self.assertEqual(default['execution_policy']['finalization_margin_tokens'],65536)
+        self.assertEqual(default['execution_policy']['finalization_margin_tokens'],0)
+        self.assertEqual(default['max_tokens'],225973)
+        self.assertEqual(default['max_tool_calls'],48)
+        # 150k remaining covers the registered 128k maximum output. The former
+        # extra 64k reserve disabled tools here despite that full safety reserve.
+        remaining=150000;registered_output=128000
+        self.assertGreaterEqual(remaining,registered_output)
+        self.assertGreaterEqual(remaining,registered_output+default['execution_policy']['finalization_margin_tokens'])
         for bad in [{**plan,'work_tool_limit':0},{**plan,'work_tool_limit':9},{**plan,'finalization_margin_tokens':-1},{**plan,'preflight_sha256':'unbound'}]:
             with self.assertRaisesRegex(ValueError,'preflighted execution plan'):r.request(job,'Fictional invalid review','gpt-6.1-sol','medium',{'role':'review'},index,225973,3,1200,execution_plan=bad)
 
@@ -59,7 +66,7 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
             return 'header\nlocators\n'+json.dumps({'next_start':100 if start==0 else None})+'\ntext'
         with patch.object(c.Evidence,'_call_batch',side_effect=page):
             plan=r.work_plan('retrieval',index)
-        self.assertEqual(plan,{'metadata_allowance':1,'call_pages':2,'filing_checks':1,'work_tool_limit':4})
+        self.assertEqual(plan,{'metadata_allowance':1,'validation_checks':1,'call_pages':2,'filing_checks':1,'work_tool_limit':5})
         self.assertFalse((Path(index).parent/'unused-plan.jsonl').exists())
 
     def test_work_plan_accounts_for_handoff_and_support_continuations(self):
@@ -429,7 +436,10 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         root,value=self.lifecycle();self.assertEqual(value['status'],'accepted');self.assertEqual(value['tokens'],200)
         self.assertEqual(p.verify(root),value)
         for prompt in root.glob('jobs/*/prompt.md'):
-            self.assertLess(len(prompt.read_text()),12000);self.assertNotIn('<html',prompt.read_text());self.assertNotIn(self.text,prompt.read_text())
+            text=prompt.read_text()
+            normalized=text.replace(str(Path(p.__file__).resolve().parents[1]),'<code>').replace(str(self.root),'<run>')
+            self.assertLess(len(normalized),12000);self.assertLessEqual(len(text.encode()),24000)
+            self.assertNotIn('<html',text);self.assertNotIn(self.text,text)
         self.assertTrue((root/'report.md').exists());self.assertEqual((root/'report.html').read_text(),md.render((root/'report.md').read_text(),status='accepted'))
         with patch.object(r,'run_role') as launch:p.verify(root);launch.assert_not_called()
         (root/'jobs/review-0/retrieval.jsonl').write_text('')

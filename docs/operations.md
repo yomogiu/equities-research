@@ -1,5 +1,25 @@
 # Handoffs and acceptance
 
+### Explicit current-event preparation
+
+`earnings_event_preparation.prepare` is a separate opt-in source route for a
+qualified current earnings release and full transcript when the quarterly
+periodic filing is unavailable. Ordinary `earnings_report_flow.prepare` still
+requires its original full current-period periodic filing. The event route
+requires an independently reviewed, hash-bound SEC 8-K companion that links the
+exact qualified release, with original issuer/form/listing/period evidence and a
+fresh matching HTTP observation. Its release financial cells must have the
+existing distinct-author/reviewer profile authorization. It discovers neither
+profiles nor evidence and never launches a model or creates report eligibility.
+
+The case retains the release as a release and the companion as a current report;
+it never relabels an older periodic filing. Original raw/text evidence, profile
+and source reviews, observations and the explicit selection are frozen inputs.
+Source/profile approval does not establish report acceptance. The coordinator
+must separately authenticate the reservation, complete source qualification,
+account for every preparation/report session under the original allowance and
+retain fresh independent full report review and exact private completion proof.
+
 Use private storage with a stable namespace, for example:
 
 ```text

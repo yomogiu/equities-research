@@ -17,6 +17,63 @@ IFRS_METRICS = {
  'ifrs-full:Assets':'assets',
 }
 
+# Selection preferences, not taxonomy aliases. These are literal reviewed source
+# labels; the resulting rows retain those labels and never acquire GAAP metrics.
+# The complete observation inventory remains available to authors and reviewers.
+NATIVE_STARTING_LABELS = (
+ 'Revenue', 'Gross margin', 'Operating income', 'Net earnings',
+ 'Earnings per share – diluted',
+ 'Cash provided by (used in) operating activities',
+ 'Cash and cash equivalents', 'Total assets', 'Total liabilities',
+ 'Long-term debt', 'PP&E', 'Dividends',
+)
+
+# A separate literal label family; never merge alternatives into more than twelve
+# starting rows or map upper-case native labels to taxonomy concepts.
+UPPERCASE_NATIVE_STARTING_LABELS = (
+ 'REVENUE', 'Net fee revenue', 'Interest revenue', 'Retail revenue',
+ 'NET INCOME', 'Diluted (KZT)', 'Cash and cash equivalents',
+ 'TOTAL ASSETS', 'TOTAL LIABILITIES', 'TOTAL EQUITY',
+ 'Net cash inflow from operating activities',
+ 'Purchase of property, equipment and intangible assets',
+)
+
+def native_reviewed_rows(data, labels=NATIVE_STARTING_LABELS):
+    """Bounded draft selection from literal independently reviewed table labels.
+
+    No concept/name similarity or numeric inference is used. Ambiguous source
+    identities, units or accounting bases fail closed for the affected label.
+    """
+    rows=[]
+    for label in labels:
+        candidates=[]
+        for o in data['observations']:
+            ctx=data['contexts'].get(o.get('context_id'),{})
+            if (o.get('method')!='reviewed_html_table' or not usable(o,data)
+                or o.get('nil') or ctx.get('dimensions')
+                or o.get('support',{}).get('source_label')!=label):continue
+            end=ctx.get('end_date') or ctx.get('instant');start=ctx.get('start_date')
+            if not end or not o.get('accounting_basis'):continue
+            candidates.append((o,ctx,end,start))
+        identities={(x[0].get('concept'),x[0].get('unit_id'),
+                     x[0].get('accounting_basis'),x[0].get('source_document_id'),
+                     x[1].get('entity'),bool(x[3])) for x in candidates}
+        if len(identities)!=1:continue
+        current=max(x[2] for x in candidates)
+        latest=[x for x in candidates if x[2]==current]
+        first=min(latest,key=lambda x:((date.fromisoformat(x[2])-date.fromisoformat(x[3])).days if x[3] else 0,x[0]['id']))
+        # Duplicate observations of the same period are not arbitrarily resolved.
+        if sum(x[3]==first[3] for x in latest)!=1:continue
+        facts=[first]
+        a=['duration',first[3],first[2]] if first[3] else ['instant',first[2]]
+        prior=[x for x in candidates if x[2]<current and year_ago(a,
+            ['duration',x[3],x[2]] if x[3] else ['instant',x[2]])]
+        if prior:
+            end=max(x[2] for x in prior);matches=[x for x in prior if x[2]==end]
+            if len(matches)==1:facts.append(matches[0])
+        rows.append({'label':label,'fact_ids':[x[0]['id'] for x in facts]})
+    return rows
+
 def build(data, *, expanded=False):
     contexts=data['contexts'];rows=[]
     metrics=('revenue','gross_profit','operating_income','net_income','diluted_eps','operating_cash_flow',
@@ -62,6 +119,10 @@ def build(data, *, expanded=False):
 def artifact(data, *, expanded=False):
     """Compile a draft financial handoff; independent semantic review stays mandatory."""
     outline=build(data, expanded=expanded)
+    if expanded and len(outline['rows'])<4:
+        outline['rows']=native_reviewed_rows(data)
+        if len(outline['rows'])<4:
+            outline['rows']=native_reviewed_rows(data,UPPERCASE_NATIVE_STARTING_LABELS)
     if len(outline['rows'])<4:raise ValueError('Fewer than four supported consolidated rows; explicit financial profile required')
     return {'rows':[{'label':r['label'],'fact_ids':r['fact_ids']} for r in outline['rows']], 'context':[],
             'gaps':['Original extraction gap: '+str(g.get('reason') or g.get('kind') or g.get('status') or g) for g in data.get('gaps',[])[:8]]}
