@@ -133,10 +133,19 @@ def source_row_label(obs):
     return label if 2 <= len(label) <= 160 else ''
 
 
+def strip_terminal_dot_leader(label):
+    """Remove only a whitespace-delimited terminal run of five-plus layout dots.
+
+    Preserve semantic ellipses, decimals, all words, amounts and qualifiers.
+    This is display-only; source labels remain the original grouping identity.
+    """
+    return re.sub(r'\s+\.{5,}\s*$', '', label)
+
+
 def metric_identity(obs, dims):
     """Prefer qualified source names where taxonomy loses accounting meaning."""
     if obs.get('method') == 'reviewed_html_table':
-        return obs['support']['source_label'], dimensions_label(dims)
+        return strip_terminal_dot_leader(obs['support']['source_label']), dimensions_label(dims)
     label = LABELS.get(obs['concept'], humanize(obs['concept']))
     original = source_row_label(obs)
     lower = original.lower()
@@ -237,7 +246,8 @@ def build(financial, bundle):
             else:
                 label, detail = metric_identity(obs, dims)
                 basis = accounting_basis(obs, dims, selection)
-            key = json.dumps([obs['concept'],ctx['entity'],ctx.get('entity_scheme'),dims,unit['numerator'],unit['denominator'],family,label,detail,basis],sort_keys=True)
+            identity_label = obs['support']['source_label'] if not strict and obs.get('method') == 'reviewed_html_table' else label
+            key = json.dumps([obs['concept'],ctx['entity'],ctx.get('entity_scheme'),dims,unit['numerator'],unit['denominator'],family,identity_label,detail,basis],sort_keys=True)
             if key not in rows:
                 rows[key] = {'metric':label + (' (' + basis + ')' if basis and (not strict or obs.get('method') == 'reviewed_html_table') else ''), 'dimensions':detail, 'unit':unit_label, 'cells':OrderedDict(), 'concept':obs['concept']}
                 if strict:

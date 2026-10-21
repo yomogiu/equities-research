@@ -127,7 +127,9 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         from . import earnings_prepared_analysis as prepared_analysis
         require(preparation is not None and recovery is None and budget_authorization is None,'Analysis continuation requires verified retrieval lineage')
         inherited_analysis=prepared_analysis.verify(analysis_preparation,case,catalog)
-        if inherited_analysis.get('version') in (prepared_analysis.DUPLICATE_VERSION,prepared_analysis.EXCHANGE_VERSION):
+        if inherited_analysis.get('version')=='authenticated-source-label-display-continuation-v1':
+            require(str(Path(preparation).resolve())==inherited_analysis['retrieval_preparation_path'] and base.sha(preparation)==inherited_analysis['retrieval_preparation_sha256'],'Exact original retrieval preparation required')
+        if inherited_analysis.get('version') in (prepared_analysis.DUPLICATE_VERSION,prepared_analysis.EXCHANGE_VERSION,'authenticated-source-label-display-continuation-v1'):
             require(inherited_analysis['spent_correction_rounds']==0 and base.sha(writing)==inherited_analysis['writing_sha256'],'Original analysis settings changed')
             p.update(models=inherited_analysis['models'],report_template=inherited_analysis['report_template'])
         if inherited_analysis.get('version') in ('authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1'):
@@ -178,8 +180,9 @@ def load(root):
         inherited=prepared.verify(p['preparation_path'],p['case_path'],base.read(root/'passages.json'))
         if inherited.get('version')=='authenticated-exact-retrieval-identity-transport-v1':
             require(p['models']==inherited['models'] and p.get('report_template')==inherited['report_template']
-                    and p['writing_sha256']==inherited['writing_sha256'] and p['inherited_tokens']==inherited['tokens']
-                    and not p.get('retrieval_repair_rounds') and not p.get('analysis_preparation_path')
+                    and p['writing_sha256']==inherited['writing_sha256']
+                    and (p['inherited_tokens']==inherited['tokens'] if not p.get('analysis_preparation_path') else base.read(p['analysis_preparation_path']).get('version')=='authenticated-source-label-display-continuation-v1')
+                    and not p.get('retrieval_repair_rounds')
                     and base.read(root/'qa-grounding.json')==inherited['grounding'],
                     'Original identity transport settings/accounting/grounding changed')
         if inherited.get('version') in ('authenticated-pending-author-retrieval-preparation-v1','authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-final-cardinality-retrieval-preparation-v1','authenticated-final-cardinality-resume-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1','authenticated-single-retrieval-question-address-preparation-v1','authenticated-single-retrieval-answer-quote-preparation-v1','authenticated-linked-bare-json-preparation-v1'):
@@ -189,7 +192,9 @@ def load(root):
             from . import earnings_prepared_analysis as prepared_analysis
             require(base.sha(p['analysis_preparation_path'])==p['analysis_preparation_sha256'],'Analysis manifest changed')
             inherited_analysis=prepared_analysis.verify(p['analysis_preparation_path'],p['case_path'],base.read(root/'passages.json'))
-            if inherited_analysis.get('version') in (prepared_analysis.DUPLICATE_VERSION,prepared_analysis.EXCHANGE_VERSION):
+            if inherited_analysis.get('version')=='authenticated-source-label-display-continuation-v1':
+                require(p['preparation_path']==inherited_analysis['retrieval_preparation_path'] and p['preparation_sha256']==inherited_analysis['retrieval_preparation_sha256'] and not p.get('analysis_repair_rounds'),'Exact unchanged retrieval preparation and correction allowance required')
+            if inherited_analysis.get('version') in (prepared_analysis.DUPLICATE_VERSION,prepared_analysis.EXCHANGE_VERSION,'authenticated-source-label-display-continuation-v1'):
                 require(p['models']==inherited_analysis['models'] and p.get('report_template')==inherited_analysis['report_template'] and p['writing_sha256']==inherited_analysis['writing_sha256'] and inherited_analysis['spent_correction_rounds']==0,'Original analysis settings changed')
             if inherited_analysis.get('version') in ('authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1'):
                 require(p['models']==inherited_analysis['models'] and p.get('report_template')==inherited_analysis['report_template'] and p['writing_sha256']==inherited_analysis['writing_sha256'] and p.get('analysis_repair_rounds')==inherited_analysis['spent_correction_rounds']==1 and not p.get('retrieval_repair_rounds'),'Analysis repair cannot reset rounds/models/guide')
@@ -355,6 +360,7 @@ def _advance(root,execute):
             from . import earnings_financial_outline
             artifacts[role]=earnings_financial_outline.artifact(bundle['financial'],expanded=p.get('report_template')==template.VERSION)
             pipe.validate(role,artifacts[role],bundle,catalog)
+            mechanical.formatting(artifacts[role],bundle)
             context.write(root/'financial-compiled.json',{'status':'source_bound_draft_pending_independent_review','content':artifacts[role],
                 'financial_source_sha256':base.sha(root/'evidence/financial.json')})
             continue
@@ -388,6 +394,8 @@ def _advance(root,execute):
             metadata['report_sha256']=signals.report_digest(state);report=markdown.report(state,bundle,catalog)
         if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
             dependencies['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
+        if p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version')=='authenticated-source-label-display-continuation-v1':
+            dependencies['analysis_display_transport_provenance']=base.read(p['analysis_preparation_path'])['derivation']
         existed=any((root/'jobs'/(role+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
         value,tokens=_job(root,p,bundle,catalog,role,role,dependencies,metadata,report,execute and not launched,sessions,tokens)
         if 'pending_status' in value:return value
@@ -397,6 +405,7 @@ def _advance(root,execute):
             pack=signals.validate(value['content'],state,bundle,catalog)
         else:
             pipe.validate(role,value['content'],bundle,catalog)
+            if role=='financial':mechanical.formatting(value['content'],bundle)
             if role=='analysis' and p.get('report_template'):
                 require(value['content'].get('report_template')==p['report_template'],'Author must retain frozen report template')
             artifacts[role]=value['content']
@@ -447,6 +456,8 @@ def _advance(root,execute):
         deps={'units':items,'state':state,'signals':pack,'qa_grounding':base.read(root/'qa-grounding.json')}
         if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
             deps['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
+        if p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version')=='authenticated-source-label-display-continuation-v1':
+            deps['analysis_display_transport_provenance']=base.read(p['analysis_preparation_path'])['derivation']
         existed=any((root/'jobs'/(name+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
         if continued and continued.get('review') and round_no==0:
             value={'content':continued['review'],'receipt':{'session':{'id':continued['review_session']}}}

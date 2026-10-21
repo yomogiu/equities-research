@@ -1,5 +1,6 @@
 {
   "active_pipeline": [
+    "test_earnings_analysis_display_transport",
     "test_earnings_attribution_overlay",
     "test_earnings_batch_context",
     "test_earnings_batch_response_binding",
