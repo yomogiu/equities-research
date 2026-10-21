@@ -227,3 +227,7 @@ reserve, rather than another full maximum output. The hard conservative reserve
 and cumulative token accounting remain in force. A continuation may lower its
 ceiling to deduct a verified failed sibling's usage; it cannot raise the inherited
 ceiling. This preserves lost-attempt charges without rerunning a validated author.
+
+### Explicit second retrieval repair checkpoints
+
+`earnings_second_retrieval_resume` continues only an authenticated closed checkpoint in an existing `earnings_second_retrieval_repair` reservation. It retains the original context, routes, all failed/completed session usage, both spent correction rounds and the two-resume bound. Its preparation requires exact source coverage and schema validation before ordinary author/signals and fresh independent report review. It does not accept a report or change default dispatch.

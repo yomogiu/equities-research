@@ -42,6 +42,7 @@
     "test_prompt_token_counter",
     "test_question_id_transport",
     "test_reviewed_transcript_index",
+    "test_second_retrieval_resume",
     "test_split_review_tracks",
     "test_transcript_evidence",
     "test_transcript_paragraphs",
