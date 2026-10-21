@@ -56,6 +56,9 @@ def checked(root,old_id,new_id,receipt_path,*,as_of=None):
  if derivation.get('version')=='authenticated-nasdaq-market-open-source-qualification-v1':
   from . import transcript_nasdaq_transition as nasdaq
   nasdaq.verify_derivation(root,receipt,historical=as_of is not None)
+ if derivation.get('version')=='authenticated-etr-source-qualification-v1':
+  from . import transcript_etr_transition as etr
+  etr.verify_derivation(root,receipt,historical=as_of is not None)
  if derivation.get('version')=='authenticated-kase-source-qualification-v1':
   from . import transcript_kase_transition as kase
   kase.verify_derivation(root,receipt,historical=as_of is not None)
@@ -131,6 +134,9 @@ def input_bindings(root,path,*,as_of=None):
  if derivation.get('version')=='authenticated-nasdaq-market-open-source-qualification-v1':
   from . import transcript_nasdaq_transition as nasdaq
   names.update(nasdaq.verify_derivation(root,receipt,historical=as_of is not None))
+ if derivation.get('version')=='authenticated-etr-source-qualification-v1':
+  from . import transcript_etr_transition as etr
+  names.update(etr.verify_derivation(root,receipt,historical=as_of is not None))
  if derivation.get('version')=='authenticated-kase-source-qualification-v1':
   from . import transcript_kase_transition as kase
   names.update(kase.verify_derivation(root,receipt,historical=as_of is not None))

@@ -231,3 +231,7 @@ ceiling. This preserves lost-attempt charges without rerunning a validated autho
 ### Explicit second retrieval repair checkpoints
 
 `earnings_second_retrieval_resume` continues only an authenticated closed checkpoint in an existing `earnings_second_retrieval_repair` reservation. It retains the original context, routes, all failed/completed session usage, both spent correction rounds and the two-resume bound. Its preparation requires exact source coverage and schema validation before ordinary author/signals and fresh independent report review. It does not accept a report or change default dispatch.
+
+### Explicit ETR transcript currentness
+
+The opt-in `etr=True` currentness route accepts only the publisher's exact ETR transcript URLs with matching ETR filing destinations, event slug/year/quarter/date, Germany/EUR listing metadata and a bounded CET/CEST quote widget. It permits the existing explicit footer-rating, counter and navigation normalization while retaining complete speaker blocks and all other page evidence. `transcript_etr_transition` binds the original rejected receipt and real same-URL observation; default URL admission and historical source artifacts remain unchanged.
