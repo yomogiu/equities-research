@@ -235,3 +235,11 @@ ceiling. This preserves lost-attempt charges without rerunning a validated autho
 ### Explicit ETR transcript currentness
 
 The opt-in `etr=True` currentness route accepts only the publisher's exact ETR transcript URLs with matching ETR filing destinations, event slug/year/quarter/date, Germany/EUR listing metadata and a bounded CET/CEST quote widget. It permits the existing explicit footer-rating, counter and navigation normalization while retaining complete speaker blocks and all other page evidence. `transcript_etr_transition` binds the original rejected receipt and real same-URL observation; default URL admission and historical source artifacts remain unchanged.
+
+Canonical empty-signal binding repair can authenticate a bare JSON binding object
+from a zero-exit closed process rejected solely by the Markdown envelope parser.
+The original request, execution and response remain immutable. Replay checks the
+original session, runtime identities, wire/delivery logs and full evidence audit;
+the ordinary binding schema and source-coverage validator still applies. This
+recovery creates no report acceptance and retains the four sessions, all usage,
+one spent correction and exact original model routes before independent review.

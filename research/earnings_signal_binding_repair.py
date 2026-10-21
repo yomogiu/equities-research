@@ -57,11 +57,39 @@ def validate_proposal(index,job,proposal,artifacts,catalog,bundle):
  pack=contract.apply(json.loads(artifacts['unreviewed_prior_signals_json']),catalog,proposal);p.signals.validate(pack,artifacts['state'],bundle,catalog);p.coverage('analysis',index,job,pack,catalog,artifacts);return pack
 
 
+def bare_json_job(job):
+ """Recover only a closed canonical binding response rejected by its envelope.
+
+ Never writes original execution/output files; source adjudication remains in
+ validate_proposal and the successor still requires fresh independent review.
+ """
+ from . import earnings_file_runner as runner
+ job=Path(job).resolve();q=b.read(job/'request.json');runner.verify_request(job,q)
+ c.require(job.name=='binding-repair' and q['bindings'].get('repair_version')==VERSION,'Canonical binding job required')
+ c.require(not(job/'output.json').exists() and not(job/'runtime-failure.json').exists(),'Envelope-only closed failure required')
+ launch=b.read(job/'launch.json');execution=b.read(job/'execution.json')
+ c.require(execution['status']=='execution_failed' and execution['exit_code']==0 and execution['request_sha256']==b.digest(q) and launch['request_sha256']==b.digest(q) and execution['launch_sha256']==b.sha(job/'launch.json'),'Exact successful process/failed envelope required')
+ text=(job/'response.md').read_text()
+ try:runner.parse(text)
+ except ValueError as error:c.require(str(error)=='Exactly one JSON metadata block required in Markdown result','Exact envelope rejection required')
+ else:raise ValueError('Valid envelope is not a bare-response recovery')
+ value=json.loads(text);c.require(isinstance(value,dict) and set(value)=={'bindings'},'Bare bindings object only')
+ receipt=runner.receipt(job,q);c.require(execution['session']==receipt,'Original measured session changed')
+ start=b.read(job/'runtime-start.json');finish=b.read(job/'runtime-finish.json')
+ c.require(start.get('launch_id')==launch['id'],'Original launch identity changed')
+ for item in (start,finish):c.require(item.get('session_id')==receipt['id'] and item.get('model')==q['model'] and item.get('effort')==q['effort'] and item.get('oauth') is True,'Runtime identity changed')
+ events=[json.loads(line) for line in (job/receipt['path']).read_text().splitlines() if line.strip()];messages=[x['message'] for x in events if x.get('type')=='message']
+ runner.verify_wire(q,b.read(job/'wire.json'),messages);runner.verify_delivery(job,messages);c.audit(q['context_index'],job/'retrieval.jsonl')
+ return {'content':value,'receipt':execution,'bare_response_sha256':b.sha(job/'response.md')}
+
+
 def completed(root):
- old=frozen(root,'completed')
+ job=Path(root).resolve()/'jobs/binding-repair'
+ bare=job.exists() and (job/'response.md').exists() and not(job/'output.json').exists()
+ old=None if bare else frozen(root,'completed')
  if old is not None:return old
  from . import earnings_file_runner as runner,earnings_compact_evidence as evidence
- root=Path(root).resolve();v=verify_reservation(root);job=Path(v['job']);q=b.read(job/'request.json');done=runner.verify_job(job);c.require(q['bindings']==v['bindings']and q['max_tokens']==v['max_tokens']and q['max_tool_calls']==48 and [q['model'],q['effort']]==v['models']['signal_author']and(job/'prompt.md').read_text()==v['prompt'],'Exact original signal model/request/allowance required');previous=Path(v['previous_root']);protocol=b.read(previous/'protocol.json');catalog=b.read(previous/'passages.json');bundle=evidence.load_bundle(protocol['evidence_manifest']);pack=validate_proposal(Path(v['index']),job,done['content'],contents(v['prior']),catalog,bundle);sid=done['receipt']['session']['id'];tokens=v['prior']['tokens']+done['receipt']['session']['usage']['totalTokens'];c.require(sid not in v['prior']['session_ids']and tokens<v['prior']['max_tokens'],'Distinct charged session and original allowance required');return {'state':v['prior']['state'],'signals':pack,'session_ids':[*v['prior']['session_ids'],sid],'tokens':tokens,'models':v['models'],'max_tokens':v['prior']['max_tokens'],'case_sha256':v['prior']['case_sha256'],'catalog_sha256':v['prior']['catalog_sha256'],'writing_sha256':protocol['writing_sha256'],'report_template':protocol['report_template'],'spent_correction_rounds':1,'start_round':1,'findings':{}}
+ root=Path(root).resolve();v=verify_reservation(root);job=Path(v['job']);q=b.read(job/'request.json');done=bare_json_job(job) if bare else runner.verify_job(job);c.require(q['bindings']==v['bindings']and q['max_tokens']==v['max_tokens']and q['max_tool_calls']==48 and [q['model'],q['effort']]==v['models']['signal_author']and(job/'prompt.md').read_text()==v['prompt'],'Exact original signal model/request/allowance required');previous=Path(v['previous_root']);protocol=b.read(previous/'protocol.json');catalog=b.read(previous/'passages.json');bundle=evidence.load_bundle(protocol['evidence_manifest']);pack=validate_proposal(Path(v['index']),job,done['content'],contents(v['prior']),catalog,bundle);sid=done['receipt']['session']['id'];tokens=v['prior']['tokens']+done['receipt']['session']['usage']['totalTokens'];c.require(sid not in v['prior']['session_ids']and tokens<v['prior']['max_tokens'],'Distinct charged session and original allowance required');return {'state':v['prior']['state'],'signals':pack,'session_ids':[*v['prior']['session_ids'],sid],'tokens':tokens,'models':v['models'],'max_tokens':v['prior']['max_tokens'],'case_sha256':v['prior']['case_sha256'],'catalog_sha256':v['prior']['catalog_sha256'],'writing_sha256':protocol['writing_sha256'],'report_template':protocol['report_template'],'spent_correction_rounds':1,'start_round':1,'findings':{}}
 
 
 def prepare(root,case,output):
