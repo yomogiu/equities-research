@@ -1,0 +1,82 @@
+# Closed-author citation-address recovery
+
+`authenticated-analysis-address-repair-v1` is an explicit, bounded successor
+preparation. It is not a default report route or an acceptance mechanism.
+
+Eligibility replays the original managed, clean, official frozen verifier in an
+isolated interpreter. Exactly one retrieval and one analysis must have completed
+with distinct sessions, original prompts/dependencies/models, complete retrieval
+inspection, and the exact unknown-address coverage failure. Inspection of every
+other original author reference and the full remaining schema must pass. The
+original source-led case, deterministic financial mode, cap and two correction
+rounds remain bound.
+
+The supported defect is one unknown exchange ID appearing in one to four typed
+opening/finding citation fields, each retaining other original support. No ID is
+chosen by code. A fresh original-route author inspects the complete call and
+supporting evidence, then returns the complete unchanged analysis with one to
+three exact original exchange selections replacing each invalid position. The
+host and local pre-submit checker both reject prose, scope, heading, quote,
+structure, valid-reference, order or unrelated field edits. A prefix or similar
+spelling never authorizes a mapping. Broader failures remain ineligible.
+
+The old unreviewed analysis is explicitly serialized handoff data, so its invalid
+address cannot masquerade as an evidence locator. It remains immutable. Supporting
+sources come from the authenticated original dependencies, not a substituted
+candidate. Every valid original author reference is also retained in an explicit
+source inventory for complete supporting-page planning. Fresh source coverage and schema validation are mandatory. A launched
+repair replays its own frozen producer when checked by later code.
+
+A completed repair produces `authenticated-analysis-address-preparation-v1`,
+carrying retrieval, original author and fresh repair sessions and their total
+usage. It spends original correction one. The pipeline preserves all three
+sessions, original models, writing, source-led template and cap, starts a fresh
+full review at round one after signals, and retains only original final correction
+two. That final round requires a separately reassessed complete author/review path.
+No budget, tool or resume limit is reset, and the full registered per-turn output
+reservation remains in force. Source currentness is checked at launch/replay. The exact frozen report/case may
+match either authenticated endpoint of an existing qualification transition; this
+supports reports first reserved from the newly qualified packet. Both endpoint
+packet hashes and the full qualification lineage are verified first. Unrelated
+packets, issuer/period changes and a mismatched case are refused. Existing
+currentness proof versions and ordinary packet validation remain unchanged.
+
+The one executable repair reservation is fixed at
+`reporting/repairs/analysis-addresses/<original-run-id>` in the private controller.
+A different folder or copied original is refused, and initialization never
+overwrites an existing slot. A stopped/uncertain repair therefore cannot be
+replaced by a fresh reservation to erase usage.
+
+Publish/test code first; use only new compatible authenticated preparations.
+Never edit frozen worker checkouts, requests or outputs. An offline eligibility
+or context preflight is not a model reservation, activated report repair, reviewer
+acceptance or completion. Before model execution, verify current source proof,
+original authorization, complete remaining path and actual page/tool inventory.
+Fresh independent full review, canonical import and exact remote report-byte proof
+are still necessary. Prove one sufficiently funded canary through that completion
+path before broader adoption.
+
+An explicit `authenticated-analysis-auth-storage-recovery-v1` manifest permits
+one child `jobs/auth-recovery-1` within the same reservation after a conclusively
+closed `auth_storage` failure. Every failed artifact is retained and hash-bound.
+The original helper hash and stage ordering, empty wire/audit, and absence of
+runtime, session, transport, delivery and output artifacts must prove that no
+model execution occurred. Any uncertainty fails closed. The recovery keeps the
+original evidence, assignment (with only the fixed child job path), model route,
+remaining cap, output reservation and tool limits; no resume or budget reset is
+permitted. It rechecks currentness at its own launch and uses the normal OAuth
+store with approved host access. It never copies credential storage.
+
+The explicit host-address preparation preserves the two original charged roles
+and new repair role, spends correction one, and requires fresh full review one.
+Its frozen official producer replays recovery completion. The earlier address
+handler and frozen attempt remain unchanged. The host manifest is not a report
+acceptance, and a failed/uncertain recovery cannot be replaced by another child.
+
+A coordinator may replay `authenticated-inherited-host-model-profile-v1` when a
+reserved original-file route label meets this explicit host preparation, whose
+frozen protocol deliberately inherits the complete original model map without a
+new profile override. The check invokes that protocol's own clean official
+verifier, authenticates its preparation, and requires every model/effort pair to
+match the reserved profile. It never changes a frozen protocol or model route;
+other preparation types and partial/mismatched model maps fail closed.

@@ -1,5 +1,25 @@
 # Handoffs and acceptance
 
+### Explicit current-event preparation
+
+`earnings_event_preparation.prepare` is a separate opt-in source route for a
+qualified current earnings release and full transcript when the quarterly
+periodic filing is unavailable. Ordinary `earnings_report_flow.prepare` still
+requires its original full current-period periodic filing. The event route
+requires an independently reviewed, hash-bound SEC 8-K companion that links the
+exact qualified release, with original issuer/form/listing/period evidence and a
+fresh matching HTTP observation. Its release financial cells must have the
+existing distinct-author/reviewer profile authorization. It discovers neither
+profiles nor evidence and never launches a model or creates report eligibility.
+
+The case retains the release as a release and the companion as a current report;
+it never relabels an older periodic filing. Original raw/text evidence, profile
+and source reviews, observations and the explicit selection are frozen inputs.
+Source/profile approval does not establish report acceptance. The coordinator
+must separately authenticate the reservation, complete source qualification,
+account for every preparation/report session under the original allowance and
+retain fresh independent full report review and exact private completion proof.
+
 Use private storage with a stable namespace, for example:
 
 ```text
@@ -207,3 +227,19 @@ reserve, rather than another full maximum output. The hard conservative reserve
 and cumulative token accounting remain in force. A continuation may lower its
 ceiling to deduct a verified failed sibling's usage; it cannot raise the inherited
 ceiling. This preserves lost-attempt charges without rerunning a validated author.
+
+### Explicit second retrieval repair checkpoints
+
+`earnings_second_retrieval_resume` continues only an authenticated closed checkpoint in an existing `earnings_second_retrieval_repair` reservation. It retains the original context, routes, all failed/completed session usage, both spent correction rounds and the two-resume bound. Its preparation requires exact source coverage and schema validation before ordinary author/signals and fresh independent report review. It does not accept a report or change default dispatch.
+
+### Explicit ETR transcript currentness
+
+The opt-in `etr=True` currentness route accepts only the publisher's exact ETR transcript URLs with matching ETR filing destinations, event slug/year/quarter/date, Germany/EUR listing metadata and a bounded CET/CEST quote widget. It permits the existing explicit footer-rating, counter and navigation normalization while retaining complete speaker blocks and all other page evidence. `transcript_etr_transition` binds the original rejected receipt and real same-URL observation; default URL admission and historical source artifacts remain unchanged.
+
+Canonical empty-signal binding repair can authenticate a bare JSON binding object
+from a zero-exit closed process rejected solely by the Markdown envelope parser.
+The original request, execution and response remain immutable. Replay checks the
+original session, runtime identities, wire/delivery logs and full evidence audit;
+the ordinary binding schema and source-coverage validator still applies. This
+recovery creates no report acceptance and retains the four sessions, all usage,
+one spent correction and exact original model routes before independent review.

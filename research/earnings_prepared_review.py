@@ -85,7 +85,53 @@ def prepare(previous,case,output):
 
 
 def verify(path,case,catalog):
-    value=b.read(path);previous=Path(value['previous_root'])
+    value=b.read(path)
+    if value.get("version")=="authenticated-pending-final-correction-preparation-v1":
+        from . import earnings_pending_final
+        return earnings_pending_final.verify(path,case,catalog)
+    if value.get('version')=='authenticated-six-role-review-final-preparation-v1':
+        from . import earnings_six_role_review_final
+        return earnings_six_role_review_final.verify(path,case,catalog)
+    if value.get('version')=='authenticated-combined-review-final-preparation-v1':
+        from . import earnings_review_binding_final
+        return earnings_review_binding_final.verify(path,case,catalog)
+    if value.get('version')=='authenticated-missing-review-source-preparation-v1':
+        from . import earnings_review_binding_repair
+        return earnings_review_binding_repair.verify(path,case,catalog)
+    if value.get('version')=='authenticated-empty-signal-source-preparation-v1':
+        from . import earnings_signal_binding_repair as signals
+        return signals.verify(path,case,catalog)
+    if value.get('version')=='authenticated-final-heading-proposal-continuation-v1':
+        from . import earnings_prepared_heading
+        return earnings_prepared_heading.verify(path,case,catalog)
+    if value.get('version')=='authenticated-exact-review-proposals-continuation-v1':
+        from . import earnings_prepared_review_proposals
+        return earnings_prepared_review_proposals.verify(path,case,catalog)
+    if value.get('version')=='authenticated-review-direction-schema-continuation-v1':
+        from . import earnings_prepared_direction_schema
+        return earnings_prepared_direction_schema.verify(path,case,catalog)
+    if value.get('version')=='authenticated-resolved-eps-scope-continuation-v1':
+        from . import earnings_prepared_eps_scope
+        return earnings_prepared_eps_scope.verify(path,case,catalog)
+    if value.get('version')=='authenticated-completed-role-coverage-continuation-v1':
+        from . import earnings_prepared_coverage
+        return earnings_prepared_coverage.verify(path,case,catalog)
+    if value.get('version')=='authenticated-inspection-correction-continuation-v1':
+        from . import earnings_prepared_inspection
+        return earnings_prepared_inspection.verify(path,case,catalog)
+    if value.get('version')=='authenticated-header-basis-continuation-v1':
+        from . import earnings_prepared_basis
+        return earnings_prepared_basis.verify(path,case,catalog)
+    if value.get('version')=='authenticated-completed-review-inspection-continuation-v1':
+        from . import earnings_prepared_review_inspection
+        return earnings_prepared_review_inspection.verify(path,case,catalog)
+    if value.get('version')=='authenticated-invalid-correction-cardinality-continuation-v1':
+        from . import earnings_prepared_invalid_cardinality
+        return earnings_prepared_invalid_cardinality.verify(path,case,catalog)
+    if value.get('version')=='authenticated-invalid-correction-reference-continuation-v1':
+        from . import earnings_prepared_invalid_reference
+        return earnings_prepared_invalid_reference.verify(path,case,catalog)
+    previous=Path(value['previous_root'])
     context.require(value['version']==VERSION and value['protocol_sha256']==b.sha(previous/'protocol.json'),'Continuation lineage changed')
     actual=replay(previous)
     context.require(all(value[k]==v for k,v in actual.items()),'Authenticated baseline handoff changed')

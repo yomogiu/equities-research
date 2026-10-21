@@ -1,5 +1,6 @@
 {
   "active_pipeline": [
+    "test_charged_retrieval_profile_guard",
     "test_earnings_attribution_overlay",
     "test_earnings_batch_context",
     "test_earnings_batch_response_binding",
@@ -9,6 +10,7 @@
     "test_earnings_compact_layout",
     "test_earnings_complete_courtesy",
     "test_earnings_editorial_review",
+    "test_earnings_event_preparation",
     "test_earnings_evidence_handoff",
     "test_earnings_execution_state",
     "test_earnings_financial_context",
@@ -41,6 +43,7 @@
     "test_prompt_token_counter",
     "test_question_id_transport",
     "test_reviewed_transcript_index",
+    "test_second_retrieval_resume",
     "test_split_review_tracks",
     "test_transcript_evidence",
     "test_transcript_paragraphs",
