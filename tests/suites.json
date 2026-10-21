@@ -1,5 +1,6 @@
 {
   "active_pipeline": [
+    "test_charged_retrieval_profile_guard",
     "test_earnings_attribution_overlay",
     "test_earnings_batch_context",
     "test_earnings_batch_response_binding",
