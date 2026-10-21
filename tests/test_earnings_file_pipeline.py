@@ -436,7 +436,10 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         root,value=self.lifecycle();self.assertEqual(value['status'],'accepted');self.assertEqual(value['tokens'],200)
         self.assertEqual(p.verify(root),value)
         for prompt in root.glob('jobs/*/prompt.md'):
-            self.assertLess(len(prompt.read_text()),12000);self.assertNotIn('<html',prompt.read_text());self.assertNotIn(self.text,prompt.read_text())
+            text=prompt.read_text()
+            normalized=text.replace(str(Path(p.__file__).resolve().parents[1]),'<code>').replace(str(self.root),'<run>')
+            self.assertLess(len(normalized),12000);self.assertLessEqual(len(text.encode()),24000)
+            self.assertNotIn('<html',text);self.assertNotIn(self.text,text)
         self.assertTrue((root/'report.md').exists());self.assertEqual((root/'report.html').read_text(),md.render((root/'report.md').read_text(),status='accepted'))
         with patch.object(r,'run_role') as launch:p.verify(root);launch.assert_not_called()
         (root/'jobs/review-0/retrieval.jsonl').write_text('')

@@ -28,6 +28,8 @@
     "test_earnings_repair_context",
     "test_earnings_report_flow",
     "test_earnings_report_repair",
+    "test_earnings_retrieval_identity_grounding",
+    "test_earnings_retrieval_identity_transport",
     "test_earnings_review_source_loader",
     "test_earnings_reviewed_attribution_batch",
     "test_earnings_reviewed_grounding",

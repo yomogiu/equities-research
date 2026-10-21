@@ -49,6 +49,9 @@ def prepare(previous,case,output):
 
 def verify(path,case,catalog):
     a=base.read(path)
+    if a.get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+        from . import earnings_retrieval_identity_transport
+        return earnings_retrieval_identity_transport.verify(path,case,catalog)
     if a.get('version')=='authenticated-pending-author-retrieval-preparation-v1':
         from . import earnings_pending_author
         return earnings_pending_author.verify(path,case,catalog)

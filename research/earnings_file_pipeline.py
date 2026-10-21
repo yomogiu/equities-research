@@ -74,6 +74,9 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
     manifest=evidence.prepare(case,root/'evidence');catalog=passages.catalog(manifest)
     context.write(root/'passages.json',catalog);bundle=evidence.load_bundle(manifest)
     qa=grounding.build(bundle,catalog,version=grounding.NAMED_GREETING_VERSION)
+    if preparation is not None and base.read(preparation).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+        from . import earnings_prepared_retrieval as prepared
+        qa=prepared.verify(preparation,case,catalog)['grounding']
     context.write(root/'qa-grounding.json',qa)
     code=[*Path(__file__).parent.glob('*.py'),*Path(__file__).parent.glob('earnings_*.mjs'),*PROMPTS.glob('*.md')]
     p={'version':VERSION,'case_path':str(case),'case_sha256':base.sha(case),'evidence_manifest':str(root/'evidence/manifest.json'),
@@ -114,6 +117,10 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         require(max_tokens<=inherited['max_tokens'],'Preparation continuation cannot raise original lifecycle ceiling')
         if inherited.get('version')=='authenticated-pending-author-retrieval-preparation-v1':require(inherited['writing_sha256']==base.sha(writing),'Original writing guide changed')
         p.update(preparation_path=str(Path(preparation).resolve()),preparation_sha256=base.sha(preparation),inherited_tokens=inherited['tokens'])
+        if inherited.get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+            require(inherited['writing_sha256']==base.sha(writing),'Original identity transport writing guide changed')
+            p.update(models=inherited['models'],report_template=inherited['report_template'])
+            require(base.read(root/'qa-grounding.json')==inherited['grounding'],'Identity transport grounding changed during initialization')
         if inherited.get('version') in ('authenticated-pending-author-retrieval-preparation-v1','authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-final-cardinality-retrieval-preparation-v1','authenticated-final-cardinality-resume-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1','authenticated-single-retrieval-question-address-preparation-v1','authenticated-single-retrieval-answer-quote-preparation-v1','authenticated-linked-bare-json-preparation-v1'):
             p.update(models=inherited['models'],report_template=inherited['report_template'],retrieval_repair_rounds=inherited['spent_correction_rounds'])
     if analysis_preparation is not None:
@@ -140,7 +147,7 @@ def load(root):
     p=base.read(root/'protocol.json')
     if 'analysis_repair_rounds' in p:
         require(type(p['analysis_repair_rounds']) is int and p['analysis_repair_rounds']==1 and p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1'),'Unbound analysis correction round')
-    require(p['version']==VERSION and (validate_profile(p) or p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-pending-author-retrieval-preparation-v1','authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-final-cardinality-retrieval-preparation-v1','authenticated-final-cardinality-resume-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1','authenticated-single-retrieval-question-address-preparation-v1','authenticated-single-retrieval-answer-quote-preparation-v1','authenticated-linked-bare-json-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1','authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1')) and p['max_correction_rounds']==2
+    require(p['version']==VERSION and (validate_profile(p) or p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-exact-retrieval-identity-transport-v1','authenticated-pending-author-retrieval-preparation-v1','authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-final-cardinality-retrieval-preparation-v1','authenticated-final-cardinality-resume-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1','authenticated-single-retrieval-question-address-preparation-v1','authenticated-single-retrieval-answer-quote-preparation-v1','authenticated-linked-bare-json-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1','authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1')) and p['max_correction_rounds']==2
         and (p['max_tokens'] is None and p.get('budget_authorization') or type(p['max_tokens']) is int and 1<=p['max_tokens']<=1200000) and p['max_tool_calls_per_job']==48
         and p['transport']=='file-evidence-ipython-markdown-v1','Exact file pipeline settings required')
     require(p.get('financial_mode','model-original-selector-v1') in ('deterministic-original-facts-v1','model-original-selector-v1'),'Unknown financial preparation mode')
@@ -169,6 +176,12 @@ def load(root):
         from . import earnings_prepared_retrieval as prepared
         require(base.sha(p['preparation_path'])==p['preparation_sha256'],'Preparation manifest changed')
         inherited=prepared.verify(p['preparation_path'],p['case_path'],base.read(root/'passages.json'))
+        if inherited.get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+            require(p['models']==inherited['models'] and p.get('report_template')==inherited['report_template']
+                    and p['writing_sha256']==inherited['writing_sha256'] and p['inherited_tokens']==inherited['tokens']
+                    and not p.get('retrieval_repair_rounds') and not p.get('analysis_preparation_path')
+                    and base.read(root/'qa-grounding.json')==inherited['grounding'],
+                    'Original identity transport settings/accounting/grounding changed')
         if inherited.get('version') in ('authenticated-pending-author-retrieval-preparation-v1','authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-final-cardinality-retrieval-preparation-v1','authenticated-final-cardinality-resume-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1','authenticated-single-retrieval-question-address-preparation-v1','authenticated-single-retrieval-answer-quote-preparation-v1','authenticated-linked-bare-json-preparation-v1'):
             require(p['models']==inherited['models'] and p.get('retrieval_repair_rounds')==inherited['spent_correction_rounds'],'Original retrieval repair models and spent round changed')
         require(p['max_tokens']<=inherited['max_tokens'],'Preparation ceiling changed')
@@ -191,6 +204,8 @@ def load(root):
     require(p.get('report_template') in (None, template.VERSION),'Unknown frozen report template')
     bundle=evidence.load_bundle(p['evidence_manifest']);catalog=passages.catalog(p['evidence_manifest'])
     require(catalog==base.read(root/'passages.json'),'Source passage catalogue changed')
+    if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+        bundle['qa_grounding']=base.read(root/'qa-grounding.json')
     return p,bundle,catalog
 
 
@@ -371,6 +386,8 @@ def _advance(root,execute):
             mechanical.check(state,bundle,catalog)
             dependencies={'state':state,'finding_catalog':signals.finding_catalog(state)}
             metadata['report_sha256']=signals.report_digest(state);report=markdown.report(state,bundle,catalog)
+        if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+            dependencies['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
         existed=any((root/'jobs'/(role+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
         value,tokens=_job(root,p,bundle,catalog,role,role,dependencies,metadata,report,execute and not launched,sessions,tokens)
         if 'pending_status' in value:return value
@@ -428,6 +445,8 @@ def _advance(root,execute):
         report=markdown.report(state,bundle,catalog,pack);name='review-'+str(round_no)
         metadata={'round':round_no,'batch_sha256':base.digest(items),'report_sha256':signals.report_digest(state),'signals_sha256':base.digest(pack),'pending_findings':findings}
         deps={'units':items,'state':state,'signals':pack,'qa_grounding':base.read(root/'qa-grounding.json')}
+        if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+            deps['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
         existed=any((root/'jobs'/(name+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
         if continued and continued.get('review') and round_no==0:
             value={'content':continued['review'],'receipt':{'session':{'id':continued['review_session']}}}
