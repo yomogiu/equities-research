@@ -9,6 +9,7 @@
     "test_earnings_compact_layout",
     "test_earnings_complete_courtesy",
     "test_earnings_editorial_review",
+    "test_earnings_event_preparation",
     "test_earnings_evidence_handoff",
     "test_earnings_execution_state",
     "test_earnings_financial_context",
