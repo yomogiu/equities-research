@@ -125,3 +125,36 @@ class InheritedProtocolTests(PassageFixture, unittest.TestCase):
                 self.assertEqual(set(p.name for p in (self.output/'jobs').iterdir()),{'analysis','signal_author','review-0'})
                 review_artifacts=b.read(self.output/'contexts/review-0/artifacts.json')
                 self.assertEqual(review_artifacts['retrieval_transport_provenance'],self.value['derivation'])
+
+
+class FrozenProgramTests(PassageFixture, unittest.TestCase):
+    def test_original_authenticated_context_and_all_bindings_replayed(self):
+        import json
+        import subprocess
+        import sys
+        import test_earnings_file_pipeline as fixtures
+        self.drain=fixtures.FilePipelineTests.drain.__get__(self)
+        fake_run=fixtures.FilePipelineTests.fake_run.__get__(self)
+        writing=self.root/'writing.md';writing.write_text('Fictional guide.')
+        correct=copy.deepcopy(self.retrieval)
+        self.retrieval['exchange_coverage'][0]['exchange_id']='fictional-unknown-id'
+        for changed in (None,'artifact_sha256','metadata_sha256','context_sha256'):
+            root=(self.root/('original-'+str(changed))).resolve();pipeline.initialize(self.casepath,root,writing)
+            with patch.object(outline,'artifact',return_value=self.financial):
+                pending=pipeline.advance(root,False)
+            index=Path(pending['context_index'])
+            deps=b.read(index.parent/'artifacts.json');metadata=b.read(index.parent/'metadata.json')
+            bindings={'protocol_sha256':b.sha(root/'protocol.json'),'role':'retrieval','context_sha256':b.sha(index),
+                      'artifact_sha256':b.digest(deps),'metadata_sha256':b.digest(metadata)}
+            if changed:bindings[changed]='f'*64
+            protocol=b.read(root/'protocol.json');job=root/'jobs/retrieval'
+            prompt=pipeline.instruction('retrieval',index,job,protocol)
+            fake_run(job,prompt,*protocol['models']['retrieval'],bindings,index,max_tokens=protocol['max_tokens'],max_tool_calls=48)
+            wrapper="import sys,json;sys.path.insert(0,sys.argv[1]);from unittest.mock import patch;from research import earnings_financial_outline as outline\nwith patch.object(outline,'artifact',return_value=json.loads(sys.argv[3])):exec(sys.argv[4])"
+            result=subprocess.run([sys.executable,'-I','-B','-c',wrapper,str(Path(pipeline.__file__).resolve().parents[1]),str(root),json.dumps(self.financial),t.PROGRAM],
+                                  input=json.dumps(correct),text=True,capture_output=True)
+            with self.subTest(binding=changed):
+                if changed:self.assertNotEqual(result.returncode,0)
+                else:
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    self.assertEqual(json.loads(result.stdout)['tokens'],40)

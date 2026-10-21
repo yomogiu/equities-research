@@ -61,6 +61,18 @@ job=root/'jobs/retrieval';q=b.read(job/'request.json');done=r.verify_job(job)
 assert q['bindings']['role']=='retrieval' and q['bindings']['protocol_sha256']==b.sha(root/'protocol.json')
 assert [q['model'],q['effort']]==protocol['models']['retrieval']
 assert b.read(q['context_index'])['manifest']==protocol['evidence_manifest']
+assert protocol.get('financial_mode')=='deterministic-original-facts-v1'
+from research import earnings_file_context as context,earnings_financial_outline as outline
+import tempfile
+case=b.read(protocol['case_path'])
+deps={'financial':outline.artifact(bundle['financial'],expanded=protocol.get('report_template')==p.template.VERSION),'qa_grounding':b.read(root/'qa-grounding.json')}
+metadata={'role':'retrieval','case':case['scope_notes'],'period':case.get('period'),'case_scope_notes':case.get('scope_notes',[])}
+assert Path(q['context_index']).resolve()==root/'contexts/retrieval/index.json'
+# Rebuild only ephemeral context copies. Never write to the original pipeline.
+with tempfile.TemporaryDirectory(prefix='verified-identity-context-') as temporary:
+ expected_index=context.assemble(protocol['evidence_manifest'],catalog,Path(temporary)/'context',artifacts=deps,metadata=metadata)
+ assert b.read(expected_index)==b.read(q['context_index'])
+assert q['bindings']=={'protocol_sha256':b.sha(root/'protocol.json'),'role':'retrieval','context_sha256':b.sha(q['context_index']),'artifact_sha256':b.digest(deps),'metadata_sha256':b.digest(metadata)}
 assert (job/'prompt.md').read_text()==p.instruction('retrieval',Path(q['context_index']),job,protocol)
 assert protocol['max_correction_rounds']==2 and protocol['max_tokens']<=1200000
 try:p.pipe.validate('retrieval',done['content'],bundle,catalog)
