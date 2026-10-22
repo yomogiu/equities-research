@@ -100,6 +100,8 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         compiled=financial_report.compile(bundle,financial_analysis)
         context.write(root/'financial-analysis.json',compiled)
         p.update(financial_analysis=copy.deepcopy(financial_analysis),financial_analysis_sha256=base.sha(root/'financial-analysis.json'))
+        from . import earnings_report_questions as questions
+        p['report_questions']=questions.contract()
     require(report_template in (None, template.VERSION),'Known report template required')
     # Prepared continuations retain their authenticated author schema and writing.
     if report_template and not any(x is not None for x in (recovery, preparation, analysis_preparation, review_preparation, signal_preparation)):
@@ -243,10 +245,15 @@ def load(root):
         bundle['financial_analysis']=base.read(root/'financial-analysis.json')
         financial_report.verified(bundle)
     else:require('financial_analysis_sha256' not in p,'Unbound financial analysis artifact')
+    if 'report_questions' in p:
+        from . import earnings_report_questions as questions
+        require(p.get('financial_analysis') is not None,'Expected questions require financial analysis')
+        questions.verify(p['report_questions'])
     return p,bundle,catalog
 
 
 def instruction(role,index,job,p):
+    from . import earnings_report_questions as questions
     value=base.read(index);inventory={'source_count':len(value['source_ids']),'passage_count':value['passage_count'],
         'qa_exchange_count':len(value['exchange_ids']),'context_files':sorted(value['files'])}
     bootstrap=('```python\nimport sys\nsys.path.insert(0, '+repr(str(Path(__file__).resolve().parent.parent))+')\n'
@@ -255,6 +262,7 @@ def instruction(role,index,job,p):
     return ((PROMPTS/'common.md').read_text()+'\n'+(PROMPTS/(role+'.md')).read_text()+\
         '\n## Writing standard\n\n'+Path(p['writing_standard']).read_text()+\
         ('\n'+template.instructions(financial_analysis=p.get('financial_analysis') is not None) if p.get('report_template')==template.VERSION and role in ('analysis','signal_author','review','correction') else '')+\
+        (questions.instructions(role) if p.get('report_questions') and role in ('analysis','review','correction') else '')+\
         '\n## Context access\n\n'+bootstrap+'\n\nInventory counts: '+json.dumps(inventory,sort_keys=True)+\
         '\n\nUse `ctx.scope(id, start=0, limit=6000)`, `ctx.passage(id, neighbors=1)`, `ctx.search(literal)`, '
         '`ctx.financial_row(fact_id, start=0)`, `ctx.artifact(name, start=0)`, or `ctx.file(name, start=0)`. Print the relevant results. '
@@ -364,20 +372,27 @@ def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessi
     return value,tokens
 
 
-def review_payload(value,items,state):
+def review_payload(value,items,state,question_contract=None):
     required={'batch_sha256','report_sha256','report_criteria','signal_criteria','decisions','reopen'}
+    if question_contract is not None:required.add('question_assessments')
     require(set(value)==required and value['batch_sha256']==base.digest(items) and value['report_sha256']==signals.report_digest(state),'Reviewer assessed another candidate')
     for name,criteria in [('report_criteria',legacy.CRITERIA),('signal_criteria',signals.CRITERIA)]:
         require(set(value[name])==set(criteria),'Every global criterion required')
         for x in value[name].values():
             require(set(x)=={'status','evidence'} and x['status'] in ('pass','fail','unavailable') and isinstance(x['evidence'],str) and x['evidence'].strip(),'Specific complete rubric assessment required')
+    if question_contract is not None:
+        from . import earnings_report_questions as questions
+        questions.verify(question_contract)
+        questions.validate(value['question_assessments'],items,value)
     return {k:value[k] for k in ('batch_sha256','decisions','reopen')}
 
 
-def review_result(value,items,state,pack,catalog,job):
-    payload=review_payload(value,items,state)
+def review_result(value,items,state,pack,catalog,job,question_contract=None):
+    payload=review_payload(value,items,state,question_contract)
     accepted,findings=batch.adjudicate(items,set(items),{},payload,catalog,base.sha(job/'output.json'),batch.EDITORIAL_VERSION)
     global_pass=all(x['status']=='pass' for name in ('report_criteria','signal_criteria') for x in value[name].values())
+    if question_contract is not None:
+        global_pass=global_pass and all(x['status']!='fail' for x in value['question_assessments'].values())
     require(global_pass or findings,'Failed global criterion must identify affected units')
     return accepted,findings,global_pass and not findings and set(accepted)==set(items)
 
@@ -482,6 +497,7 @@ def _advance(root,execute):
             else:
                 state,pack=batch.validate(items,bundle,catalog);report=markdown.report(state,bundle,catalog,pack)
             deps={'units':items,'findings':findings};metadata={'round':round_no,'before_sha256':base.digest(items),'unit_sha256':{k:base.digest(v['value']) for k,v in items.items()}}
+            if p.get('report_questions'):deps['report_questions']=p['report_questions']
             existed=any((root/'jobs'/(name+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
             inherited_correction=continued.get('prepared_correction') if continued and round_no==1 else None
             if inherited_correction:
@@ -501,6 +517,10 @@ def _advance(root,execute):
         report=markdown.report(state,bundle,catalog,pack);name='review-'+str(round_no)
         metadata={'round':round_no,'batch_sha256':base.digest(items),'report_sha256':signals.report_digest(state),'signals_sha256':base.digest(pack),'pending_findings':findings}
         deps={'units':items,'state':state,'signals':pack,'qa_grounding':base.read(root/'qa-grounding.json')}
+        if p.get('report_questions'):
+            deps['report_questions']=p['report_questions']
+            from . import earnings_financial_analysis_report as financial_report
+            deps['financial_analysis']=financial_report.handoff(bundle['financial_analysis'])
         if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
             deps['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
         if p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version')=='authenticated-source-label-display-continuation-v1':
@@ -515,8 +535,10 @@ def _advance(root,execute):
             if value.get('status') in ('pending','launch_uncertain','budget_exhausted'):return value
             if not existed:launched=True
             review_job=checkpoint.select(root/'jobs'/name)[0]
-        accepted,findings,passed=review_result(value['content'],items,state,pack,catalog,review_job)
-        context.write(root/'decisions'/f'{name}.json',{'accepted':accepted,'findings':findings,'passed':passed,'candidate_sha256':base.digest(items)})
+        accepted,findings,passed=review_result(value['content'],items,state,pack,catalog,review_job,p.get('report_questions'))
+        decision={'accepted':accepted,'findings':findings,'passed':passed,'candidate_sha256':base.digest(items)}
+        if p.get('report_questions'):decision['question_assessments']=value['content']['question_assessments']
+        context.write(root/'decisions'/f'{name}.json',decision)
         if passed:
             markdown.write(root/'report.md',state,bundle,catalog,pack,status='accepted')
             result={'version':VERSION,'status':'accepted','report':str(root/'report.html'),'report_sha256':base.sha(root/'report.html'),

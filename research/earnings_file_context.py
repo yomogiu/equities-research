@@ -227,7 +227,7 @@ class Evidence:
                 scope_ids=base.read(self.root/'metadata.json')['source_scope_ids']
                 pipeline.coverage(role,self.root/'index.json',job,{'citations':scope_ids,'passage_ids':[x for r in value['repairs'] for x in r['after_ids']]},self.catalog,{})
             elif role=='review':
-                payload=pipeline.review_payload(value,artifacts['units'],artifacts['state'])
+                payload=pipeline.review_payload(value,artifacts['units'],artifacts['state'],artifacts.get('report_questions'))
                 batch.adjudicate(artifacts['units'],set(artifacts['units']),{},payload,
                                  self.catalog,base.digest(value),batch.EDITORIAL_VERSION)
             else:
@@ -446,7 +446,7 @@ class Evidence:
 
             # Unit values already contain the financial, retrieval, author and
             # signal state; avoid printing those same objects a second time.
-            artifacts={k:artifacts[k] for k in ('units','findings') if k in artifacts}
+            artifacts={k:artifacts[k] for k in ('units','findings','report_questions','financial_analysis') if k in artifacts}
         return json.dumps({'metadata':base.read(self.root/'metadata.json'),
             'report_markdown':(self.root/'report.md').read_text() if 'report.md' in self.index['files'] else None,
             'artifacts':artifacts},ensure_ascii=False,separators=(',',':'))

@@ -40,6 +40,7 @@ def metric_label(row):
     concept=row.get('concepts',[''])[0]
     friendly=METRIC_LABELS.get(row['metric_id'],display.humanize(concept))
     members={display.humanize(d.get('member') or d.get('value') or d.get('text') or '') for d in row.get('dimensions',[])}
+    if source=='Diluted eps' and row['metric_id']=='diluted_eps':return 'Diluted EPS'
     if source in members:return friendly
     if source in ('Total','TOTAL','Diluted','DILUTED'):return friendly+' · '+source
     if source in (concept,concept.partition(':')[2],display.humanize(concept)):return friendly
@@ -91,15 +92,21 @@ def verified(bundle):
 def handoff(value):
     """Small read-only table view; original observations already live in evidence."""
     tables=[]
+    selected=front_rows(value)
+    chosen={id(row) for rows in selected.values() for _,row in rows}
     for table in value['tables']:
         rows=[]
         for row in table['rows']:
+            if id(row) not in chosen:continue
             cells={key:{k:v for k,v in item.items() if k in ('status','value','period','fact_ids','reason')}
                    for key,item in row['cells'].items()}
-            rows.append({k:v for k,v in row.items() if k in ('metric_id','label','unit','basis','basis_origin','derived','dimensions','changes')}|{'cells':cells})
-        tables.append({'period_family':table['period_family'],'rows':rows})
+            rows.append({k:v for k,v in row.items() if k in ('metric_id','label','entity','entity_scheme','unit','basis','basis_origin','derived','dimensions','changes')}|{'cells':cells})
+        if rows:tables.append({'period_family':table['period_family'],'rows':rows})
     return {'version':value['version'],'source_computation_sha256':base.digest(value),'as_of':value['as_of'],
-            'current_period':value['current_period'],'tables':tables,'gaps':value.get('gaps',[]),'read_only':True}
+            'current_period':value['current_period'],'tables':tables,
+            'gaps':[gap for key in FRONT_METRICS if (gap:=front_gaps(selected,key))],
+            'inventory_scope':'Core consolidated selection; complete inventory and lineage are in financial-analysis.json.',
+            'read_only':True}
 
 
 def section(row):
@@ -171,103 +178,289 @@ def change_cell(value,divisor,unit):
     return ' / '.join(parts)+' '+citations
 
 
-def sections(value):
-    result={key:[] for key in ('demand','earnings','cash','outlook','qa','other')}
+# Display policy only: exact roles do not qualify observations or authorize new arithmetic.
+FRONT_METRICS={
+    'demand':('revenue',),
+    'earnings':('diluted_eps','gross_margin','research_and_development','diluted_shares',
+                'operating_income','operating_margin','net_income'),
+    'cash':('free_cash_flow','operating_cash_flow','total_debt','current_debt','noncurrent_debt',
+            'cash_and_equivalents'),
+}
+DISPLAY_CONCEPTS={
+    'us-gaap:ResearchAndDevelopmentExpense':'research_and_development',
+    'ifrs-full:ResearchAndDevelopmentExpense':'research_and_development',
+}
+COMMENTARY_CONCEPTS={
+    'us-gaap:InterestExpense','us-gaap:InterestExpenseNonOperating','ifrs-full:FinanceCosts',
+    'us-gaap:OtherNonoperatingIncomeExpense','us-gaap:InvestmentIncomeInterest',
+}
+FRONT_HEADINGS={'demand':'Growth & Demand','earnings':'Profits & Margins','cash':'Cash & Financial Capacity'}
+FRONT_NAMES={**METRIC_LABELS,'research_and_development':'Research and development',
+             'total_debt':'Total debt','free_cash_flow':'Free cash flow'}
+
+
+def front_role(row):
+    return DISPLAY_CONCEPTS.get(row['metric_id'],row['metric_id'])
+
+
+DISPLAY_SELECTION_VERSION='source-bound-financial-display-selection-v1'
+
+
+def display_selection(value,fact_ids):
+    if (not isinstance(fact_ids,(list,tuple)) or not fact_ids or
+            any(not isinstance(fid,str) or not fid for fid in fact_ids) or len(set(fact_ids))!=len(fact_ids)):
+        raise ValueError('Distinct explicit debt disclosure fact IDs required')
+    selected={'version':DISPLAY_SELECTION_VERSION,'source_computation_sha256':base.digest(value),
+              'debt_disclosure_fact_ids':list(fact_ids)}
+    disclosure_rows(value,selected)
+    return selected
+
+
+def disclosure_rows(value,selection):
+    if selection is None:return []
+    if (not isinstance(selection,dict) or set(selection)!={'version','source_computation_sha256','debt_disclosure_fact_ids'}
+            or selection['version']!=DISPLAY_SELECTION_VERSION or selection['source_computation_sha256']!=base.digest(value)):
+        raise ValueError('Display selection differs from frozen financial computation')
+    ids=selection['debt_disclosure_fact_ids']
+    if not isinstance(ids,list) or not ids or any(not isinstance(fid,str) or not fid for fid in ids) or len(set(ids))!=len(ids):
+        raise ValueError('Distinct explicit debt disclosure fact IDs required')
+    result=[]
+    for fid in ids:
+        matches=[row for table in value['tables'] if table['period_family']=='instant' for row in table['rows']
+                 if not row.get('dimensions') and not row.get('derived')
+                 and row['cells']['current']['status']=='available'
+                 and row['cells']['current'].get('period')==['instant',value['as_of']]
+                 and fid in row['cells']['current'].get('fact_ids',[])]
+        if len(matches)!=1:raise ValueError('Debt disclosure fact must identify one available current consolidated reported balance: '+fid)
+        if not any(matches[0] is row for row in result):result.append(matches[0])
+    return result
+
+
+def front_identity(row):
+    return base.digest([row.get('entity'),row.get('entity_scheme'),row.get('basis'),
+                        row.get('basis_origin'),row.get('unit')])
+
+
+def front_rows(value,selection=None):
+    """Prefer durations only within the same entity, currency and accounting basis."""
+    inventory=[(table['period_family'],row) for table in value['tables'] for row in table['rows']
+               if not row.get('dimensions')]
+    result={key:[] for key in FRONT_METRICS}
+    for target,roles in FRONT_METRICS.items():
+        for role in roles:
+            candidates=[(family,row) for family,row in inventory if front_role(row)==role]
+            families=('quarter',) if target!='cash' else (
+                ('instant',) if role in ('total_debt','current_debt','noncurrent_debt','cash_and_equivalents')
+                else ('quarter','nine-month','half','annual'))
+            identities=sorted({front_identity(row) for _,row in candidates})
+            for identity in identities:
+                for family in families:
+                    chosen=[(f,row) for f,row in candidates if f==family and front_identity(row)==identity]
+                    if any(row['cells']['current']['status']=='ambiguous' for _,row in chosen):break
+                    available=[(f,row) for f,row in chosen if row['cells']['current']['status']=='available']
+                    if available:
+                        result[target].extend(available);break
+    # Suppress only components covered by the same entity/unit/basis total.
+    totals={front_identity(row) for _,row in result['cash'] if front_role(row)=='total_debt'}
+    result['cash']=[(f,row) for f,row in result['cash'] if front_role(row) not in ('current_debt','noncurrent_debt')
+                   or front_identity(row) not in totals]
+    for row in disclosure_rows(value,selection):
+        if not any(row is present for _,present in result['cash']):result['cash'].append(('instant',row))
+    return result
+
+
+def front_gaps(selected,target):
+    present={front_role(row) for _,row in selected[target]}
+    required={'demand':('revenue',),
+              'earnings':('diluted_eps','gross_margin','research_and_development','diluted_shares'),
+              'cash':('free_cash_flow','operating_cash_flow','total_debt')}[target]
+    missing=[FRONT_NAMES[role] for role in required if role not in present]
+    return ('Current consolidated metrics unavailable: '+', '.join(missing)+
+            '. No substitute period or zero is assumed.') if missing else ''
+
+
+def earnings_commentary(value):
+    sentences=[]
     for table in value['tables']:
-        for target in ('demand','earnings','cash','other'):
-            rows=[row for row in table['rows'] if section(row)==target and
-                  (not row.get('derived') or any(cell['status']=='available' for cell in row['cells'].values()))]
+        if table['period_family']!='quarter':continue
+        for row in table['rows']:
+            if row.get('dimensions') or not set(row.get('concepts',[]))&COMMENTARY_CONCEPTS:continue
+            current=row['cells']['current'];prior=row['cells']['prior_year']
+            if current['status']!='available':continue
+            unit,divisor=unit_display(row['unit'])
+            text=metric_label(row)+': '+value_cell(current,divisor)+' '+unit
+            if prior['status']=='available':text+=' versus '+value_cell(prior,divisor)+' in the prior-year quarter'
+            sentences.append(text+' ('+basis_label(row)+').')
+    return sentences
+
+
+def sections(value,selection=None):
+    result={key:[] for key in ('demand','earnings','cash','outlook','qa','other')}
+    selected=front_rows(value,selection)
+    disclosure_ids={id(row) for row in disclosure_rows(value,selection)}
+    entities={row.get('entity') for rows in selected.values() for _,row in rows}
+    for target in ('demand','earnings','cash'):
+        lines=result[target]
+        for family in ('quarter','half','nine-month','annual','instant'):
+            rows=[row for f,row in selected[target] if f==family]
             if not rows:continue
-            lines=result[target]
             dates=[]
             for key,label in (('current','Current'),('prior_quarter','Prior quarter'),('prior_year','Prior year')):
                 found=sorted({tuple(row['cells'][key]['period']) for row in rows if row['cells'][key].get('period')})
                 if found:dates.append(label+': '+', '.join(display.period_label(p) for p in found))
-            lines.extend(['### '+FAMILIES.get(table['period_family'],table['period_family']), '', ' · '.join(dates),'',
-                          '| '+' | '.join(HEADERS)+' |','| '+' | '.join('---' for _ in HEADERS)+' |'])
+            family_name={'half':'Six-month cash flow','nine-month':'Nine-month cash flow'}.get(family,FAMILIES[family])
+            headers=HEADERS if family in ('quarter','instant') else [*HEADERS[:3],'Prior year',HEADERS[-1]]
+            slots=('current','prior_quarter','prior_year') if family in ('quarter','instant') else ('current','prior_year')
+            changes=('qoq','yoy') if family in ('quarter','instant') else ('yoy',)
+            if family not in ('quarter','instant'):dates=[d for d in dates if not d.startswith('Prior quarter:')]
+            if family=='instant':
+                comparators=[(slot,change,title,delta) for slot,change,title,delta in
+                    (('prior_quarter','qoq','Prior quarter',HEADERS[-2]),('prior_year','yoy','Prior year',HEADERS[-1]))
+                    if any(row['cells'][slot]['status']=='available' for row in rows)]
+                slots=('current',*(item[0] for item in comparators));changes=tuple(item[1] for item in comparators)
+                headers=[*HEADERS[:3],*(item[2] for item in comparators),*(item[3] for item in comparators)]
+                dates=[d for d in dates if d.startswith('Current:') or any(d.startswith(item[2]+':') for item in comparators)]
+            lines.extend(['### '+family_name,'',' · '.join(dates),'',
+                          '| '+' | '.join(headers)+' |','| '+' | '.join('---' for _ in headers)+' |'])
             for row in rows:
-                unit,divisor=unit_display(row['unit'])
-                dimensions=display.dimensions_label(row.get('dimensions',[]))
-                label=metric_label(row)+(' · '+dimensions if dimensions else '')
+                unit,divisor=unit_display(row['unit']);label=metric_label(row)
+                if row.get('derived') and front_role(row)=='free_cash_flow':label='Free cash flow'
+                if id(row) in disclosure_ids:label+=' · selected disclosure'
+                if len(entities)>1:label+=' · '+str(row.get('entity'))
                 values=[label,unit+' · '+basis_label(row),
-                        *(value_cell(row['cells'][key],divisor,percentage=unit=='%') for key in ('current','prior_quarter','prior_year')),
-                        *(change_cell(row['changes'][key],divisor,unit) for key in ('qoq','yoy'))]
+                        *(value_cell(row['cells'][key],divisor) for key in slots),
+                        *(change_cell(row['changes'][key],divisor,unit) for key in changes)]
                 lines.append('| '+' | '.join(markdown.cell(v) for v in values)+' |')
-            lines.extend(['','Δ / change: absolute change in the row’s unit / relative %. Margin changes use percentage points (pp). — unavailable; N/M nonpositive comparison base.',''])
-            other=[]
-            for row in rows:
-                shown={tuple(c['period']) for c in row['cells'].values() if c.get('period') and c['status']=='available'}
-                for observed in row.get('period_observations',[]):
-                    if tuple(observed.get('period') or []) in shown:continue
-                    other.append((row,observed))
-            if other:
-                lines.extend(['Other reported periods — these are not promoted to quarter or year comparators.','',
-                    '| Metric | Unit / basis | Period | Value and source |','| --- | --- | --- | --- |'])
-                for row,observed in other:
-                    unit,divisor=unit_display(row['unit']);dimensions=display.dimensions_label(row.get('dimensions',[]))
-                    label=metric_label(row)+(' · '+dimensions if dimensions else '')
-                    values=[label,unit+' · '+basis_label(row),
-                            display.period_label(observed['period']) if observed.get('period') else 'Unspecified',
-                            value_cell(observed,divisor,percentage=unit=='%')]
-                    lines.append('| '+' | '.join(markdown.cell(v) for v in values)+' |')
-                lines.append('')
+            lines.extend(['',('Δ / change: absolute change / relative %. Margins: percentage points (pp). — unavailable; N/M nonpositive base.' if changes else 'Comparable quarter-end and prior-year balances unavailable.'),''])
+        conflicts=[]
+        for table in value['tables']:
+            if target!='cash' and table['period_family']!='quarter':continue
+            for row in table['rows']:
+                if (not row.get('dimensions') and front_role(row) in FRONT_METRICS[target]
+                        and row['cells']['current']['status']=='ambiguous'):
+                    conflicts.append(metric_label(row)+' ('+unit_display(row['unit'])[0]+' · '+basis_label(row)+')')
+        if conflicts:lines.extend(['Conflicting current observations: '+'; '.join(dict.fromkeys(conflicts))+'. See supporting evidence.',''])
+        gap=front_gaps(selected,target)
+        if gap:lines.extend([gap,''])
+        if target=='cash' and not any(front_role(row)=='total_debt' for _,row in selected['cash']):
+            lines.extend(['Debt total unavailable; see supporting evidence for any separately reported debt and lease obligations.',''])
+        if target=='earnings' and earnings_commentary(value):
+            lines.extend(['Quarter expense detail: '+' '.join(earnings_commentary(value)),''])
     return result
 
 
-def notes(value):
-    result=[];seen=set()
-    for table in value['tables']:
-        for row in table['rows']:
-            label=metric_label(row)+' ('+FAMILIES.get(table['period_family'],table['period_family'])+')'
-            source_labels=sorted({s for cell in row.get('period_observations',[]) for s in cell.get('source_labels',[])})
-            if source_labels and source_labels!=[metric_label(row)]:
-                text=label+' · source row labels: '+'; '.join(display.strip_terminal_dot_leader(s) for s in source_labels)
-                if text not in seen:seen.add(text);result.append('- '+text)
-            for slot,cell in row['cells'].items():
-                calculation=cell.get('calculation')
-                reason=cell.get('reason') if cell['status']!='available' else None
-                formula=calculation_text(calculation) if calculation and calculation.get('operator')!='reported' else None
-                if formula or reason:
-                    text=label+' · '+slot.replace('_',' ')+': '+('derived as '+formula if formula else str(reason))
-                    if text not in seen:seen.add(text);result.append('- '+text+' '+markdown.refs(cell.get('fact_ids',[])))
-            for slot,change in row['changes'].items():
-                if change.get('reason'):
-                    text=label+' · '+slot.upper()+': '+str(change['reason'])
-                    if text not in seen:seen.add(text);result.append('- '+text)
-    for gap in value.get('gaps',[]):
-        text=str(gap.get('reason',gap)) if isinstance(gap,dict) else str(gap)
-        if text not in seen:
-            seen.add(text);result.append('- '+text+' '+markdown.refs(gap.get('fact_ids',[]) if isinstance(gap,dict) else []))
+def notes(value,selection=None):
+    """Readable overview; complete source observations and traces stay in JSON."""
+    selected=front_rows(value,selection)
+    derived={front_role(row) for rows in selected.values() for _,row in rows if row.get('derived')}
+    result=['- The main tables select consolidated core metrics. Other reported dates, segments and line items remain in financial-analysis.json; they are not silently substituted for quarter comparisons.',
+            '- Source references identify the observations used. Exact values, source labels, accounting bases, missing-comparison reasons and calculation lineage remain in financial-analysis.json.']
+    if selection is not None:
+        result.append('- Debt/lease disclosures are explicitly selected source balances. Selection does not classify them as pure debt or authorize a combined total.')
+    if derived&{'gross_margin','operating_margin'}:
+        result.append('- Calculated margins divide the corresponding profit by revenue. Margin changes are percentage-point differences.')
+    if 'free_cash_flow' in derived:
+        result.append('- Free cash flow equals operating cash flow less capital expenditure, using the same period and the declared source sign convention.')
+    if 'total_debt' in derived:
+        result.append('- Calculated total debt adds compatible current and noncurrent debt observations; it does not estimate unreported obligations.')
+    if any(row.get('basis_origin')=='caller_declared' for rows in selected.values() for _,row in rows):
+        result.append('- A basis marked assumed is caller-declared where the source does not state it; it is not a company assertion.')
     return result
 
 
-def preview_markdown(value):
-    from . import earnings_report_template as template
-    rendered=sections(value)
-    lines=['# Deterministic financial analysis','',
+def multiples_references(value):
+    references={}
+    for slot in ('price','current_eps','forward_eps'):
+        record=value.get('inputs',{}).get(slot)
+        if not isinstance(record,dict) or not isinstance(record.get('id'),str):continue
+        source=record.get('source') if isinstance(record.get('source'),dict) else {}
+        identifier='PE-'+base.digest(record['id'])[:12]
+        references[record['id']]=(identifier,'Supplied '+slot.replace('_',' ')+' input; '+
+            str(source.get('document_id','source unspecified'))+'; '+str(source.get('url','URL unspecified'))+
+            '; input date '+str(record.get('as_of','unspecified'))+'.')
+    return references
+
+
+def multiples_lines(value):
+    references=multiples_references(value)
+    security=value.get('security') if isinstance(value.get('security'),dict) else {}
+    price_unit=str(security.get('currency') or 'currency unavailable')+' per '+str(security.get('earnings_unit') or 'security basis unavailable').replace('_',' ')
+    result=['## Earnings multiples','',
+            'Security: '+str(security.get('id') or 'unavailable')+' · '+price_unit+' · '+str(security.get('ordinary_shares_per_security') or 'unavailable')+' ordinary shares per security · split basis '+str(security.get('split_basis_id') or 'unavailable')+'.','',
+            'Valuation date: '+value['as_of']+'. Supplied price and annual diluted EPS; source metadata is caller-provided, not independently verified.','',
+            'Price and diluted EPS: '+price_unit+'.','',
+            '| Metric | Price / diluted EPS | P/E | EPS period / basis |',
+            '| --- | --- | --- | --- |']
+    for row in value['rows']:
+        multiple=number(row['value'],places=2)+'×' if row['status']=='available' else ('N/M' if row['status']=='not_meaningful' else '—')
+        operands=row.get('operands') or {};period=row.get('earnings_period') if isinstance(row.get('earnings_period'),dict) else {}
+        inputs=(number(operands['price'],places=2)+' / '+number(operands['annual_diluted_eps'],places=2)) if operands else '—'
+        period_text=' – '.join(str(period.get(k,'unspecified')) for k in ('start','end'))
+        period_text+=' · '+str(row.get('accounting_basis') or 'basis unavailable')
+        if row.get('forecast_as_of'):period_text+=' · forecast dated '+str(row['forecast_as_of'])
+        refs=markdown.refs([references[i][0] for i in row['input_ids'] if i in references])
+        result.append('| '+' | '.join(markdown.cell(x) for x in [row['label']+' '+refs,inputs,multiple,period_text])+' |')
+    result.append('')
+    for row in value['rows']:
+        if row.get('reason'):result.extend([row['label']+': '+row['reason']+'.',''])
+    return result
+
+
+def preview_markdown(value,earnings_multiples=None,selection=None):
+    rendered=sections(value,selection)
+    lines=['# Financial analysis','',
            'Quarter: '+display.period_label(value['current_period'])+'. As of: '+value['as_of']+'.','',
-           'Source-derived calculations; no financial model prose or report acceptance is implied.','']
+           'Core consolidated metrics. Cash-flow durations and balance-sheet dates are labeled separately.','']
     for key in ('demand','earnings','cash'):
-        lines.extend(['## '+template.SECTIONS[key],'',*rendered[key]])
-        if not rendered[key]:lines.extend(['No supported metric observations for this section.',''])
-    if rendered['other']:lines.extend(['## Other financial statement items','',*rendered['other']])
-    lines.extend(['## Calculation and data notes','','Values are displayed to two decimal places. Exact values, source labels, observations, sign conventions and full calculation traces are retained in financial-analysis.json.','',*notes(value),''])
+        lines.extend(['## '+FRONT_HEADINGS[key],'',*rendered[key]])
+    if earnings_multiples is not None:lines.extend(multiples_lines(earnings_multiples))
+    else:lines.extend(['Earnings multiples unavailable: no dated price and matching annual/TTM or forward annual diluted EPS snapshot supplied.',''])
+    lines.extend(['## Source and calculation notes','','Values are displayed to two decimal places; nonzero small values retain precision.','',*notes(value,selection),''])
     lines.extend(['## Source references',''])
     import re
     identifiers=sorted(set(re.findall(r'\[\^([A-Za-z0-9_-]+)\]', '\n'.join(lines))))
-    lines.extend('[^'+identifier+']: Original evidence '+identifier for identifier in identifiers)
+    extra={identifier:description for identifier,description in multiples_references(earnings_multiples).values()} if earnings_multiples is not None else {}
+    lines.extend('[^'+identifier+']: '+extra.get(identifier,'Original evidence '+identifier) for identifier in identifiers)
     return '\n'.join(lines).rstrip()+'\n'
 
 
-def preview(manifest,output,*,quarter_start,quarter_end,config=None):
+def preview_html(text):
+    page=markdown.render(text)
+    # Fixed application markup only; all financial/source text was escaped by render.
+    marker='<h2>Source and calculation notes</h2>'
+    return page.replace(marker,'<details class="original-qa"><summary>Sources and calculation notes</summary>',1).replace('</main>','</details></main>',1)
+
+
+def validate_multiple_issuer(value,multiples):
+    security=multiples.get('security')
+    issuer=security.get('issuer') if isinstance(security,dict) else None
+    if (not isinstance(issuer,dict) or set(issuer)!={'entity','entity_scheme'} or
+            any(not isinstance(issuer.get(k),str) or not issuer[k] for k in ('entity','entity_scheme'))):
+        raise ValueError('Earnings snapshot requires explicit security.issuer entity and entity_scheme binding')
+    entities={(row.get('entity'),row.get('entity_scheme')) for table in value['tables'] for row in table['rows']
+              if not row.get('dimensions') and row['cells']['current']['status']=='available'}
+    if entities!={(issuer['entity'],issuer['entity_scheme'])}:
+        raise ValueError('Earnings snapshot issuer must match the sole current consolidated financial entity')
+
+
+def preview(manifest,output,*,quarter_start,quarter_end,config=None,earnings_snapshot=None,valuation_as_of=None,debt_disclosure_facts=None):
     from . import earnings_compact_evidence as evidence
     config=configuration(quarter_start,quarter_end) if config is None else validate_configuration(config)
     if config['current_period']!=['duration',quarter_start,quarter_end]:raise ValueError('CLI quarter differs from frozen analysis configuration')
+    if bool(earnings_snapshot)!=bool(valuation_as_of):raise ValueError('Earnings snapshot and explicit valuation date are required together')
+    multiples=None
+    if earnings_snapshot:
+        from . import earnings_earnings_multiples
+        multiples=earnings_earnings_multiples.load(earnings_snapshot,as_of=valuation_as_of)
     bundle=evidence.load_bundle(Path(manifest));value=compile(bundle,config)
-    text=preview_markdown(value);page=markdown.render(text)
+    if multiples is not None:validate_multiple_issuer(value,multiples)
+    selection=display_selection(value,debt_disclosure_facts) if debt_disclosure_facts is not None else None
+    text=preview_markdown(value,multiples,selection);page=preview_html(text)
     root=Path(output);contents={'financial-analysis-config.json':json.dumps(config,ensure_ascii=False,sort_keys=True,indent=2)+'\n',
                                 'financial-analysis.json':json.dumps(value,ensure_ascii=False,sort_keys=True,indent=2)+'\n',
                                 'financial-analysis.md':text,'financial-analysis.html':page}
+    if selection is not None:contents['display-selection.json']=json.dumps(selection,ensure_ascii=False,sort_keys=True,indent=2)+'\n'
+    if multiples is not None:contents['earnings-multiples.json']=json.dumps(multiples,ensure_ascii=False,sort_keys=True,indent=2)+'\n'
     for name,content in contents.items():
         path=root/name
         if path.exists() and path.read_text()!=content:raise ValueError('Existing financial preview differs; choose a new output directory')
@@ -283,8 +476,12 @@ def main():
     parser.add_argument('--manifest',type=Path,required=True);parser.add_argument('--quarter-start',required=True)
     parser.add_argument('--quarter-end',required=True);parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--config',type=Path,help='Optional exact version, quarter, as-of, per-fact capex convention and accounting basis configuration JSON')
+    parser.add_argument('--earnings-snapshot',type=Path,help='Optional dated price/EPS snapshot with exact security.issuer entity and entity_scheme matching this financial evidence')
+    parser.add_argument('--valuation-as-of',help='Explicit quote date, required with --earnings-snapshot')
+    parser.add_argument('--debt-disclosure-fact',action='append',help='Explicit qualified current consolidated debt/lease disclosure fact ID; repeat to show separate balances without summing')
     args=parser.parse_args()
     print(json.dumps(preview(args.manifest,args.output,quarter_start=args.quarter_start,quarter_end=args.quarter_end,
-                            config=base.read(args.config) if args.config else None),indent=2))
+                            config=base.read(args.config) if args.config else None,earnings_snapshot=args.earnings_snapshot,
+                            valuation_as_of=args.valuation_as_of,debt_disclosure_facts=args.debt_disclosure_fact),indent=2))
 
 if __name__=='__main__':main()

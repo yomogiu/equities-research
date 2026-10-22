@@ -336,6 +336,12 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
                 failed=fail and key=='analysis:0'
                 content['decisions'].append({'unit_id':key,'verdict':'revise' if failed else 'pass','reason':'Fictional source check',
                     'passage_ids':[self.ids[0]],'review_kind':'factual' if failed else 'none','editorial_repairs':[]})
+            if art.get('report_questions'):
+                from research import earnings_report_questions as questions
+                content['question_assessments']={name:{'status':'disclosed_gap',
+                    'evidence':'Fictional report explicitly discloses unavailable source inputs.',
+                    'unit_ids':[],'report_locations':['outlook' if name=='valuation' else name],'gap':'Fictional source packet is intentionally incomplete'}
+                    for name in questions.QUESTIONS}
         response='# Role result\n\n```json\n'+json.dumps(content)+'\n```\n';(job/'response.md').write_text(response)
         sid='fictional-'+job.name;launch={'id':'fictional-launch','request_sha256':base.digest(q)};base.save(job/'launch.json',launch)
         for name in ('runtime-start.json','runtime-finish.json'):base.save(job/name,{'launch_id':launch['id'],'session_id':sid,'model':model,'effort':effort,'oauth':True})

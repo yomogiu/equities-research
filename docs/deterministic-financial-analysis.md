@@ -25,13 +25,40 @@ as-of date, per-fact capital-expenditure sign conventions and any caller-declare
 accounting bases. The CLI dates must agree with the configuration. It does not
 derive fiscal dates from a ticker or `FY...` label.
 
-## Table behavior
+## Core table selection
+
+The complete computed inventory remains in JSON. The main report selects a small
+consolidated set rather than displaying every extracted disclosure:
+
+| Section | Main metrics |
+| --- | --- |
+| Growth & Demand | Revenue, QoQ and YoY growth |
+| Profits & Margins | Diluted EPS, gross margin, R&D, diluted shares, operating income/margin and net income |
+| Cash & Financial Capacity | FCF, operating cash flow, cash and supported debt totals/components |
+
+Cash flow prefers the current quarter, then a clearly dated longer duration when
+the quarter is unavailable. Duration length alone does not prove fiscal YTD.
+Balances stay in a separate point-in-time table. Unknown concepts, segments and
+other historical dates remain in supporting JSON. Interest and other nonoperating
+income/expense use short cited numerical commentary. Missing core metrics are
+named in a compact gap note; they do not become empty inventory tables.
+
+For a standalone preview, repeat `--debt-disclosure-fact FACT_ID` to display exact
+source-qualified debt/lease balances that have no supported arithmetic role.
+Each ID must resolve to one available, reported, current consolidated instant
+row. `display-selection.json` binds the IDs and complete computation digest.
+This is an explicit caller display selection: source labels and lease/related-party
+qualifiers remain, and selection does not classify the balances as pure debt or
+authorize a combined total. Native report protocol integration of these optional
+display selections remains deferred.
+
+## Calculation behavior
 
 Each row retains entity, accounting basis, currency/unit and segment dimensions.
 The table shows the current value, prior-quarter value, prior-year value and
 absolute/relative changes. Quarterly, six-month, nine-month, annual and instant
-observations stay separate. Other filed dates remain available as separately
-dated reference observations; a year-end balance is never relabeled QoQ.
+observations stay separate. Other filed dates remain in the supporting inventory;
+a year-end balance is never relabeled QoQ.
 
 | Measure | Calculation or treatment |
 | --- | --- |
@@ -110,8 +137,51 @@ python3 -m research.earnings_file_pipeline initialize \
 This initializes the new pipeline without executing a model role.
 
 The option is absent by default. Existing frozen protocols and accepted reports
-retain their previous behavior. This change does not enable recurring jobs,
-change review criteria or rebuild the publication layer.
+retain their previous behavior. This change does not enable recurring jobs or
+rebuild the publication layer.
+
+## Optional earnings multiples
+
+The standalone preview accepts `--earnings-snapshot /private/example/earnings.json`
+with `--valuation-as-of YYYY-MM-DD`. It adds `earnings-multiples.json` and a small
+P/E table. This optional snapshot is not automatically incorporated into a native
+report case or treated as independently authenticated source evidence.
+
+`source-declared-earnings-multiples-v1` requires a security identity, currency,
+ordinary-share/ADR ratio and split basis. Price and each EPS input must explicitly
+match those fields and retain document ID, URL and SHA256 metadata. Price must be
+dated at the valuation date. EPS must be diluted, with a complete annual/TTM or
+explicit forward annual period, accounting basis and source date. Forward inputs
+also identify consensus or company guidance and the forecast date. The exact
+forward fiscal-year horizon is displayed; it is not relabeled next-twelve-months.
+An issuer preview additionally requires `security.issuer` with exact `entity` and
+`entity_scheme` matching its sole current consolidated financial entity. Missing,
+mismatched or ambiguous identity is rejected before writing the preview. Security
+ID, currency, share/ADR ratio and split basis remain visible with the multiple.
+
+Only price divided by supplied EPS is calculated. No quarterly EPS annualization,
+FX/share conversion, forecast construction, DCF, target price or other valuation
+is performed. Nonpositive EPS is N/M; absent or incompatible inputs are
+unavailable. Source metadata is caller-provided; the calculation does not establish
+source authenticity or that a reported annual EPS is the latest available. The
+snapshot file digest records the supplied bytes. A caller can supply an external
+expected digest through the module's `load` API.
+
+## Expected-question review
+
+New financial-analysis pipeline requests additionally bind
+`core-financial-report-questions-v1`. The independent reviewer must assess demand,
+earnings/dilution, cash/funding, guidance/counterevidence and earnings valuation.
+Assessments name actual report locations and any affected candidate units.
+Available numbers must be assessed even when other inputs are missing.
+
+An answer or an explicitly disclosed source gap can satisfy a question. A missing
+input alone does not force the global rubric to fail. A failed question must
+identify an existing unit with a concrete revise/reopen finding and blocks
+acceptance. The original source inspection, unit decisions, correction limits and
+fresh review requirements still apply. Structured completeness cannot prove that
+an authored answer is correct; that remains the independent reviewer's job.
+Older protocols without the question contract keep their exact review schema.
 
 ## Verification
 
