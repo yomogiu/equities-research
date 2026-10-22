@@ -72,6 +72,12 @@ def validate(analysis):
         raise ValueError('Every finding requires a supported report section')
 
 
+def instructions(*,financial_analysis=False):
+    if not financial_analysis:return INSTRUCTIONS
+    return INSTRUCTIONS.replace('Preserve a substantive textual summary and material narrative. Tables\nsupport the prose; they do not replace it. Explain drivers, mechanisms, management\ncommentary, qualifications and unresolved details in multiple paragraphs as needed.\nDo not reduce analysis to captions. Source material determines depth; no word or\nparagraph quota. Existing reviewers must flag material narrative omissions.',
+        'The source-computed financial analysis tables are primary. Current values,\nprior-quarter and prior-year values, QoQ/YoY, margins and cash/debt arithmetic\nare immutable compiled data. Do not re-author their numbers, labels, sign conventions\nor formulas. No financial model prose is required to make those tables usable.\nAdd narrative only for source-backed drivers, mechanisms, qualifications or gaps\nthat the tables cannot convey. There is no paragraph or word quota.')
+
+
 def exchange_ids(finding, index):
     """Resolve explicit exchange or member-turn citations, never topic matching."""
     cited = set(finding['citations'])
@@ -183,6 +189,9 @@ def comparisons(group, row):
 
 
 def financial_sections(financial, bundle, formatting):
+    if 'financial_analysis' in bundle:
+        from . import earnings_financial_analysis_report as computed
+        return computed.sections(computed.verified(bundle))
     from . import earnings_financial_display as display
     from . import earnings_mixed_runner as base
     from . import earnings_report_repair as repair
@@ -258,6 +267,7 @@ def report(state, bundle, catalog, pack=None):
         if not findings and not tables[key]:
             lines.extend(['No additional source-backed commentary supplied for this section.' if key != 'qa' else
                           'No substantive Q&A selection supplied; call coverage remains a review requirement.', ''])
+    if tables.get('other'):lines.extend(['## Other financial statement items','',*tables['other']])
     lines.extend(['## Scope', '', out['scope'], '', '## Source references', ''])
     import re
     used = set(re.findall(r'\[\^([A-Za-z0-9_-]+)\]', '\n'.join(lines)))

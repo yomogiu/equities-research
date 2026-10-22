@@ -13,6 +13,8 @@
     "test_earnings_event_preparation",
     "test_earnings_evidence_handoff",
     "test_earnings_execution_state",
+    "test_earnings_financial_analysis",
+    "test_earnings_financial_analysis_report",
     "test_earnings_financial_context",
     "test_earnings_financial_display",
     "test_earnings_financial_source_context",

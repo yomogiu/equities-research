@@ -63,11 +63,17 @@ def verify_budget_authorization(path,case):
     return a
 
 
-def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None, signal_preparation=None, report_template=template.VERSION, model_profile=None):
+def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None, signal_preparation=None, report_template=template.VERSION, model_profile=None, financial_analysis=None):
     selected_models=profile_models(model_profile)
     require(model_profile is None or not any(x is not None for x in (recovery,preparation,analysis_preparation,review_preparation,signal_preparation)),'Profile is for new requests only')
     root=Path(output).resolve();case=Path(case).resolve();writing=Path(writing).resolve()
     require(financial_mode in ('deterministic-original-facts-v1','model-original-selector-v1'),'Known financial preparation mode required')
+    if financial_analysis is not None:
+        from . import earnings_financial_analysis_report as financial_report
+        financial_report.validate_configuration(financial_analysis)
+        require(financial_mode=='deterministic-original-facts-v1' and report_template==template.VERSION and
+                all(x is None for x in (recovery,preparation,analysis_preparation,review_preparation,signal_preparation)),
+                'Financial analysis is an opt-in for new deterministic six-section requests only')
     require(max_tokens is None and budget_authorization is not None or type(max_tokens) is int and 1<=max_tokens<=1200000,'Explicit lifecycle budget or approved cap removal required')
     require(not root.exists() or not any(root.iterdir()),'New pipeline directory required')
     root.mkdir(parents=True,exist_ok=True)
@@ -90,6 +96,10 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         'qa_grounding_sha256':base.sha(root/'qa-grounding.json'),'report_signals':True,'deterministic_corrections':True,
         'transport':'file-evidence-ipython-markdown-v1','financial_mode':financial_mode}
     if model_profile is not None:p['model_profile']=model_profile
+    if financial_analysis is not None:
+        compiled=financial_report.compile(bundle,financial_analysis)
+        context.write(root/'financial-analysis.json',compiled)
+        p.update(financial_analysis=copy.deepcopy(financial_analysis),financial_analysis_sha256=base.sha(root/'financial-analysis.json'))
     require(report_template in (None, template.VERSION),'Known report template required')
     # Prepared continuations retain their authenticated author schema and writing.
     if report_template and not any(x is not None for x in (recovery, preparation, analysis_preparation, review_preparation, signal_preparation)):
@@ -223,6 +233,16 @@ def load(root):
         bundle['qa_grounding']=base.read(root/'qa-grounding.json')
     if p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version')=='authenticated-scoped-final-proposals-continuation-v1':
         bundle['qa_grounding']=base.read(root/'qa-grounding.json')
+    if p.get('financial_analysis') is not None:
+        from . import earnings_financial_analysis_report as financial_report
+        require(p.get('financial_mode')=='deterministic-original-facts-v1' and p.get('report_template')==template.VERSION and
+                not any(p.get(k) for k in ('recovery_path','preparation_path','analysis_preparation_path','review_preparation_path','signal_preparation_path')),
+                'Frozen financial analysis requires its original new-request configuration')
+        require(base.sha(root/'financial-analysis.json')==p.get('financial_analysis_sha256'),'Frozen computed financial analysis changed')
+        bundle['financial_analysis_config']=p['financial_analysis']
+        bundle['financial_analysis']=base.read(root/'financial-analysis.json')
+        financial_report.verified(bundle)
+    else:require('financial_analysis_sha256' not in p,'Unbound financial analysis artifact')
     return p,bundle,catalog
 
 
@@ -234,7 +254,7 @@ def instruction(role,index,job,p):
         ('print(ctx.handoff_batch())\n```' if role in ('analysis','signal_author','review','correction') else 'print(ctx.call_batch())\n```'))
     return ((PROMPTS/'common.md').read_text()+'\n'+(PROMPTS/(role+'.md')).read_text()+\
         '\n## Writing standard\n\n'+Path(p['writing_standard']).read_text()+\
-        ('\n'+template.INSTRUCTIONS if p.get('report_template')==template.VERSION and role in ('analysis','signal_author','review','correction') else '')+\
+        ('\n'+template.instructions(financial_analysis=p.get('financial_analysis') is not None) if p.get('report_template')==template.VERSION and role in ('analysis','signal_author','review','correction') else '')+\
         '\n## Context access\n\n'+bootstrap+'\n\nInventory counts: '+json.dumps(inventory,sort_keys=True)+\
         '\n\nUse `ctx.scope(id, start=0, limit=6000)`, `ctx.passage(id, neighbors=1)`, `ctx.search(literal)`, '
         '`ctx.financial_row(fact_id, start=0)`, `ctx.artifact(name, start=0)`, or `ctx.file(name, start=0)`. Print the relevant results. '
@@ -402,6 +422,9 @@ def _advance(root,execute):
             require(inherited_analysis['session_ids'][0] in sessions and inherited_analysis['session_ids'][1] not in sessions,'Analysis session lineage differs')
             sessions.add(inherited_analysis['session_ids'][1]);continue
         state=None;report=None;dependencies={**artifacts,'qa_grounding':base.read(root/'qa-grounding.json')}
+        if p.get('financial_analysis') is not None:
+            from . import earnings_financial_analysis_report as financial_report
+            dependencies['financial_analysis']=financial_report.handoff(bundle['financial_analysis'])
         if role=='retrieval' and p.get('budget_authorization'):
             approved=base.read(p['budget_authorization'])
             if approved.get('preparation_handoff'):
@@ -414,6 +437,7 @@ def _advance(root,execute):
             state={'artifacts':copy.deepcopy(artifacts),'format':mechanical.formatting(artifacts['financial'],bundle)}
             mechanical.check(state,bundle,catalog)
             dependencies={'state':state,'finding_catalog':signals.finding_catalog(state)}
+            if p.get('financial_analysis') is not None:dependencies['financial_analysis']=financial_report.handoff(bundle['financial_analysis'])
             metadata['report_sha256']=signals.report_digest(state);report=markdown.report(state,bundle,catalog)
         if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
             dependencies['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
@@ -519,11 +543,26 @@ def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='command',required=True)
     init=sub.add_parser('initialize');init.add_argument('--case',type=Path,required=True);init.add_argument('--output',type=Path,required=True);init.add_argument('--writing',type=Path,required=True);init.add_argument('--max-tokens',type=int,default=1200000)
+    init.add_argument('--financial-analysis',choices=('deterministic-financial-analysis-v1',),help='Opt in only for a new deterministic financial analysis request')
+    init.add_argument('--quarter-start');init.add_argument('--quarter-end')
+    init.add_argument('--financial-analysis-config',type=Path,help='Exact version, quarter, as-of, capex convention and accounting basis JSON; requires --financial-analysis')
     for name in ('advance','verify'):
         item=sub.add_parser(name);item.add_argument('output',type=Path)
         if name=='advance':item.add_argument('--execute',action='store_true',help='Explicitly launch at most one new role; default constructs the handoff only')
     args=parser.parse_args()
-    if args.command=='initialize':initialize(args.case,args.output,args.writing,max_tokens=args.max_tokens);value={'status':'initialized','output':str(args.output.resolve())}
+    if args.command=='initialize':
+        config=None
+        if args.financial_analysis:
+            from . import earnings_financial_analysis_report as financial_report
+            if args.financial_analysis_config:
+                config=financial_report.validate_configuration(base.read(args.financial_analysis_config))
+                if args.quarter_start or args.quarter_end:
+                    require(config['current_period']==['duration',args.quarter_start,args.quarter_end],'Explicit CLI quarter differs from configuration')
+            else:
+                require(args.quarter_start and args.quarter_end,'Financial analysis requires explicit quarter dates')
+                config=financial_report.configuration(args.quarter_start,args.quarter_end)
+        else:require(not any((args.quarter_start,args.quarter_end,args.financial_analysis_config)),'Quarter/config options require explicit financial analysis opt-in')
+        initialize(args.case,args.output,args.writing,max_tokens=args.max_tokens,financial_analysis=config);value={'status':'initialized','output':str(args.output.resolve())}
     else:
         result=advance(args.output,args.execute if args.command=='advance' else False)
         value={k:v for k,v in result.items() if k in ('status','stage','tokens','correction_rounds','report','report_sha256','markdown','markdown_sha256','prompt_characters','context_index','reason')}
