@@ -39,8 +39,8 @@ class HostRecoveryTests(unittest.TestCase):
     with patch.object(a,'verify_reservation',return_value=v),patch.object(a,'currentness'),patch.object(h,'expected',return_value=base):
      with self.assertRaises(ValueError):h.verify(root)
 
-from test_analysis_address_repair import AnalysisRepairPipelineTests
-class HostPipelineTests(AnalysisRepairPipelineTests):
+import test_analysis_address_repair as address_tests
+class HostPipelineTests(address_tests.AnalysisRepairPipelineTests):
  def test_three_sessions_one_spent_round_and_original_budget_survive_pipeline(self):
   from research import earnings_analysis_address_repair as a
   with patch.object(a,'PREPARATION_VERSION',h.PREPARATION_VERSION):

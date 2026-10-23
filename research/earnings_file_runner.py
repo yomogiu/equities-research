@@ -27,6 +27,12 @@ def work_plan(role,index):
         return {**plan,'work_tool_limit':sum(plan.values())}
     if role not in ('financial','retrieval','analysis','signal_author','review','correction'):return None
     reader=context.Evidence(index,Path(index).parent/'unused-plan.jsonl',_replay=True)
+    if (old.read(Path(index).parent/'metadata.json').get('context_projection')=='compact-role-handoff-v1'
+            and role in ('analysis','review','correction')):
+        plan={'role_pages':len(reader.role_batch_plan()),'validation_checks':1}
+        if role=='review':plan['filing_checks']=1
+        if sum(plan.values())>8:raise ValueError('Required evidence pages exceed eight-call bounded work plan')
+        return {**plan,'work_tool_limit':sum(plan.values())}
     # Handoff packets already include the complete metadata; do not reserve a
     # duplicate metadata read at the expense of final result validation.
     plan={'metadata_allowance':0 if role in ('analysis','signal_author','review','correction') else 1,
@@ -49,6 +55,47 @@ def work_plan(role,index):
     total=sum(plan.values())
     if total>8:raise ValueError('Required evidence pages exceed eight-call bounded work plan')
     return {**plan,'work_tool_limit':total}
+
+
+def budget_preflight(role,index,prompt,available_tokens):
+    """Forecast repeated context before launch; never replace the wire guard.
+
+    UTF-8 bytes / 3 is a disclosed planning estimate, not a tokenizer or bound.
+    Reserve the registered full final output plus a planning allowance for each
+    intermediate turn. Both cached and uncached input count on every turn.
+    Unknown/adaptive tool output is budgeted at the documented packet limit.
+    """
+    reader=context.Evidence(index,Path(index).parent/'unused-budget.jsonl',_replay=True)
+    plan=work_plan(role,index)
+    sizes=[]
+    if 'role_pages' in plan:
+        sizes=[page['utf8_bytes'] for page in reader.role_batch_plan()]
+        if plan.get('filing_checks'):
+            sizes.append(max(60000,len(reader._challenge_batch('guidance EBITDA cash debt capital expenditure',4)[0].encode())))
+        sizes.append(4096)  # validation result, usually much smaller
+    else:
+        # Adaptive signals and fallback retrieval still get a pre-launch forecast.
+        sizes=[60000]*(plan['work_tool_limit']-1)+[4096]
+        if plan.get('handoff_pages'):
+            handoff_bytes=len(reader._handoff_body().encode())
+            count=plan['handoff_pages']
+            sizes[:count]=[(handoff_bytes+count-1)//count]*count
+    registered_output_tokens=128000
+    intermediate_output_tokens=4096
+    envelope_tokens=4096
+    prefix=(len(prompt.encode())+2)//3+envelope_tokens
+    estimated_inputs=prefix
+    for size in sizes:
+        prefix+=(size+2)//3+intermediate_output_tokens
+        estimated_inputs+=prefix
+    required=estimated_inputs+len(sizes)*intermediate_output_tokens+registered_output_tokens
+    return {'version':'role-token-planning-v1','status':'ready' if available_tokens>=required else 'insufficient_planned_budget',
+            'available_tokens':available_tokens,'planned_tokens':required,'estimated_repeated_input_tokens':estimated_inputs,
+            'registered_final_output_reserve':registered_output_tokens,'intermediate_output_allowance':intermediate_output_tokens,
+            'wire_envelope_allowance':envelope_tokens,'utf8_bytes_per_estimated_token':3,
+            'tool_packet_utf8_bytes':sizes,'planned_model_turns':len(sizes)+1,'work_plan':plan,
+            'context_sha256':old.sha(index),'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest(),
+            'notice':'Planning estimate, not a cost quote or guaranteed upper bound. Actual receipts and the full per-turn output reservation remain authoritative.'}
 
 
 def parse(text):

@@ -1,11 +1,11 @@
 """Fictitious immutable attribution acceptance and authentication regressions."""
 import copy
 from unittest.mock import patch
-from test_earnings_attribution_overlay import OverlayTests
+import test_earnings_attribution_overlay as overlay_tests
 from research import earnings_attribution_preparer_recovery as recovery, earnings_mixed_runner as r
 
 
-class PreparedAttributionTests(OverlayTests):
+class PreparedAttributionTests(overlay_tests.OverlayTests):
     def setUp(self):
         super().setUp()
         proposal=r.read(self.proposal);proposal['source']=self.value['source'];self.proposal.write_text(__import__('json').dumps(proposal));self.value['proposal']['sha256']=r.sha(self.proposal)
