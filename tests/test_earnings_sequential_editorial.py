@@ -167,3 +167,43 @@ class EditorialTests(unittest.TestCase):
         self.assertEqual(outcome['input_sha256'],job['artifacts']['report-editorial-1.md'])
         self.assertIn('review-r2-editorial1.json',outcome['outputs'])
         self.assertEqual((self.root/'review-r2.json').read_bytes(),old)
+
+class AuthStopTests(unittest.TestCase):
+    def setUp(self):
+        from research import earnings_sequential_stages as stages
+        self.stages=stages
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve();self.role=self.root/'roles/review-r0';self.role.mkdir(parents=True)
+        self.helper=self.root/'code/research/earnings_file_prime.mjs';self.helper.parent.mkdir(parents=True)
+        self.helper.write_text("stage = 'auth_storage'; auth.drainErrors(); stage = 'registry';")
+        self.request={'job_path':str(self.role),'bindings':{'workflow':stages.VERSION,'role':'sequential_review'},
+                      'code_root':str(self.root/'code'),'helper_sha256':stages.storage.sha(self.helper)}
+        self.save('request.json',self.request)
+        self.save('launch.json',{'request_sha256':stages.storage.digest(self.request)})
+        self.save('execution.json',{'status':'execution_failed','exit_code':1,
+            'request_sha256':stages.storage.digest(self.request),'launch_sha256':stages.storage.sha(self.role/'launch.json')})
+        self.save('runtime-failure.json',{'stage':'auth_storage'});self.save('wire.json',[])
+        (self.role/'retrieval.jsonl').write_text('');(self.role/'prompt.md').write_text('Fictional review')
+        self.verify=patch.object(stages.runner,'verify_request').start();self.addCleanup(patch.stopall)
+
+    def save(self,name,value): (self.role/name).write_text(json.dumps(value))
+    def verify_stop(self): return self.stages._closed_auth_failure(self.root,self.role)
+
+    def test_exact_closed_stop_has_zero_usage_and_bound_receipts(self):
+        result=self.verify_stop();self.assertEqual(result['tokens'],0)
+        self.assertEqual(result['execution_certainty'],'closed');self.assertEqual(len(result['outputs']),7)
+        self.verify.assert_called_once_with(self.role,self.request)
+
+    def test_any_session_or_provider_evidence_blocks(self):
+        for name in ('runtime-start.json','sessions','delivery.jsonl','transport-lifecycle.jsonl'):
+            (self.role/name).write_text('')
+            with self.assertRaises(ValueError):self.verify_stop()
+            (self.role/name).unlink()
+        self.save('wire.json',[{'provider':'fictional'}])
+        with self.assertRaises(ValueError):self.verify_stop()
+
+    def test_changed_helper_or_receipt_blocks(self):
+        self.helper.write_text('Changed helper')
+        with self.assertRaises(ValueError):self.verify_stop()
+        self.save('execution.json',{'status':'execution_failed','exit_code':1})
+        with self.assertRaises(ValueError):self.verify_stop()

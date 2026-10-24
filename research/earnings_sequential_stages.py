@@ -551,6 +551,33 @@ def _closed_local_failure(root, role_dir):
             'outputs':outputs(root, [*(role_dir/name for name in proof_names), journals[0]])}
 
 
+def _closed_auth_failure(root, role_dir):
+    """Authenticate a closed pre-model auth-store failure without reading secrets."""
+    root, role_dir = Path(root).resolve(), Path(role_dir).resolve()
+    require(role_dir.is_relative_to(root/'roles') and not role_dir.is_symlink(), 'Failed role must belong to this job')
+    request, execution = read(role_dir/'request.json'), read(role_dir/'execution.json')
+    launch = read(role_dir/'launch.json')
+    require(read(role_dir/'runtime-failure.json') == {'stage':'auth_storage'} and read(role_dir/'wire.json') == [],
+            'Exact pre-model auth stop required')
+    require(execution.get('status') == 'execution_failed' and execution.get('exit_code') == 1
+            and execution.get('request_sha256') == storage.digest(request) == launch.get('request_sha256')
+            and execution.get('launch_sha256') == storage.sha(role_dir/'launch.json'), 'Closed bound execution required')
+    require(request.get('job_path') == str(role_dir) and request.get('bindings', {}).get('workflow') == VERSION
+            and request['bindings'].get('role') in ('sequential_analysis','sequential_review'), 'Exact sequential role binding required')
+    require((role_dir/'retrieval.jsonl').stat().st_size == 0 and not any((role_dir/name).exists() for name in
+            ('runtime-start.json','runtime-finish.json','sessions','output.json','response.md','delivery.jsonl','transport-lifecycle.jsonl')),
+            'Prior model execution cannot be excluded')
+    runner.verify_request(role_dir, request)
+    helper = Path(request['code_root'])/'research/earnings_file_prime.mjs'
+    require(storage.sha(helper) == request['helper_sha256'], 'Original helper changed')
+    text = helper.read_text()
+    require(text.index("stage = 'auth_storage'") < text.index('auth.drainErrors()') < text.index("stage = 'registry'"),
+            'Auth stage ordering changed')
+    return {'execution_certainty':'closed', 'tokens':0,
+            'outputs':outputs(root, [role_dir/name for name in
+                ('request.json','execution.json','launch.json','runtime-failure.json','wire.json','retrieval.jsonl','prompt.md')])}
+
+
 def failed_execution(root, job):
     """Read-only reconciliation for an existing blocked attempt; never edit it."""
     attempt = job['attempts'][-1]
@@ -558,7 +585,8 @@ def failed_execution(root, job):
     outcome = attempt.get('outcome', {})
     role_dir = Path(outcome['execution_directory']).resolve()
     require(role_dir == Path(root).resolve()/'roles'/_role_label(job, attempt['stage']), 'Failed execution directory differs from the attempted role')
-    verified = _closed_local_failure(root, role_dir)
+    verified = (_closed_auth_failure(root, role_dir) if read(role_dir/'runtime-failure.json').get('stage') == 'auth_storage'
+                else _closed_local_failure(root, role_dir))
     require(verified['tokens'] == outcome.get('tokens'), 'Reconciliation cannot discard previously charged tokens')
     return verified
 
