@@ -122,7 +122,7 @@ def _calculated(operator, left, right, period):
     # repeating ratios have a declared 50-digit precision and are never floats.
     with localcontext() as ctx:
         ctx.prec = 512 if operator != 'ratio_percent' else 50
-        value = a - b if operator in ('subtract', 'ytd_difference') else a + b if operator == 'add' else a / b * 100
+        value = a - b if operator in ('subtract', 'ytd_difference', 'half_less_trailing_quarter') else a + b if operator == 'add' else a / b * 100
     return {'status': 'available', 'value': _text(value), 'period': list(period),
             'fact_ids': _ids(operands), 'source_labels': sorted({s for c in operands for s in c['source_labels']}),
             'calculation': {'operator': operator, 'operands': deepcopy(operands),
@@ -180,6 +180,8 @@ def _dimensions(context):
 
 
 def _inventory(bundle, capex_conventions, accounting_bases):
+    from . import earnings_financial_statement_context as statements
+    statement_policy = statements.enabled(bundle)
     facts = bundle['financial']
     observations = facts['observations']
     if len({o['id'] for o in observations}) != len(observations):
@@ -214,8 +216,9 @@ def _inventory(bundle, capex_conventions, accounting_bases):
             # Undeclared basis remains undeclared, including inline GAAP tags.
             role = CONCEPTS.get(obs['concept'])
             convention = capex_conventions.get(obs['id'], 'positive_payment') if role == 'capital_expenditure' else None
-            grouping_label = None if obs.get('method') == 'reviewed_html_table' and role else label
-            row_label = display.LABELS.get(obs['concept'], role.replace('_', ' ').capitalize()) if grouping_label is None else label
+            exact_inline_identity = statement_policy and obs.get('method') == 'inline_xbrl' and role and basis
+            grouping_label = None if role and (obs.get('method') == 'reviewed_html_table' or exact_inline_identity) else label
+            row_label = (label or display.LABELS.get(obs['concept'], role.replace('_', ' ').capitalize())) if exact_inline_identity else (display.LABELS.get(obs['concept'], role.replace('_', ' ').capitalize()) if grouping_label is None else label)
             key = _key([obs['concept'], grouping_label, context['entity'], context['entity_scheme'], dims, unit, basis, convention])
             if key not in groups:
                 groups[key] = {'metric_id': role or obs['concept'], 'label': row_label, 'concepts': [obs['concept']],
@@ -230,6 +233,8 @@ def _inventory(bundle, capex_conventions, accounting_bases):
                                 'context_id': obs['context_id'], 'unit_id': obs['unit_id'],
                                 'basis_origin': 'caller_declared' if override and not identity.get('basis') else 'source',
                                 'accounting_basis': basis}})
+            if identity.get('basis_source'):
+                groups[key]['_periods'][period][-1]['calculation']['basis_source'] = deepcopy(identity['basis_source'])
             if not basis:
                 gaps.append(_gap('Source accounting basis unstated; arithmetic withheld', [obs['id']]))
             if not role:
@@ -242,7 +247,7 @@ def _inventory(bundle, capex_conventions, accounting_bases):
     return list(groups.values()), gaps
 
 
-def _derive_quarters(groups, gaps):
+def _derive_quarters(groups, gaps, *, inverse_half=False):
     for row in groups:
         if row['metric_id'] not in ADDITIVE or not _money(row['unit']) or not row['basis']:
             continue
@@ -252,6 +257,12 @@ def _derive_quarters(groups, gaps):
             if longer[0] != 'duration' or _family(longer) not in ('half', 'nine-month', 'annual'):
                 continue
             for shorter, b in original:
+                if (inverse_half and _family(longer) == 'half' and shorter[0] == 'duration'
+                        and _family(shorter) == 'quarter' and shorter[2] == longer[2]
+                        and shorter[1] > longer[1]):
+                    opening_quarter = ('duration', longer[1], (date.fromisoformat(shorter[1])-timedelta(days=1)).isoformat())
+                    if _family(opening_quarter) == 'quarter':
+                        candidates[opening_quarter].append(_calculated('half_less_trailing_quarter', a, b, opening_quarter))
                 if (shorter[0] != 'duration' or shorter[1] != longer[1] or shorter[2] >= longer[2]
                         or _family(shorter) not in ('quarter', 'half', 'nine-month')
                         or FAMILIES.index(_family(longer)) != FAMILIES.index(_family(shorter)) + 1):
@@ -370,7 +381,8 @@ def build(bundle, *, current_period=None, as_of=None, capex_conventions=None, ac
             or any(not isinstance(v, str) or not v.strip() or len(v) > 160 or '\n' in v for v in accounting_bases.values())):
         raise ValueError('Accounting bases require exact fact IDs and bounded explicit basis strings')
     groups, gaps = _inventory(bundle, capex_conventions, accounting_bases)
-    _derive_quarters(groups, gaps)
+    from . import earnings_financial_statement_context as statements
+    _derive_quarters(groups, gaps, inverse_half=statements.enabled(bundle))
     quarter_candidates = {p for r in groups for p in r['_periods'] if p[-1] == as_of and _family(p) == 'quarter'}
     if current_period is None and len(quarter_candidates) == 1:
         current_period = next(iter(quarter_candidates))
@@ -406,10 +418,20 @@ def build(bundle, *, current_period=None, as_of=None, capex_conventions=None, ac
             row['period_observations'] = [deepcopy(c) for p, c in sorted(available.items())]
             rows.append(row)
         if rows: tables.append({'period_family': family, 'rows': sorted(rows, key=lambda r: _key([r['metric_id'],r['label'],r['entity'],r['dimensions'],r['basis'],r['unit']]))})
-    return {'version': VERSION, 'as_of': as_of, 'current_period': list(current_period) if current_period else None,
+    result = {'version': VERSION, 'as_of': as_of, 'current_period': list(current_period) if current_period else None,
             'capex_conventions': deepcopy(capex_conventions), 'accounting_bases': deepcopy(accounting_bases), 'tables': tables, 'observations': deepcopy(bundle['financial']['observations']),
             'contexts': deepcopy(bundle['financial']['contexts']), 'units': deepcopy(bundle['financial']['units']),
             'gaps': gaps, 'arithmetic': {'numeric_type': 'Decimal', 'ratio_precision': 50,
             'net_debt_definition': 'current debt + noncurrent debt - cash and cash equivalents',
             'quarter_derivation': 'Only whitelisted additive monetary flows: same-fiscal-start cumulative difference',
             'comparison_policy': 'Filed boundaries; quarter adjacency; bounded 52/53-week year-ago matching; no annualization'}}
+
+    from . import earnings_financial_statement_context as statements
+    if statements.enabled(bundle):
+        result['source_policy'] = statements.VERSION
+        result['arithmetic']['quarter_derivation'] += '; same-end half-year less trailing quarter gives the opening quarter for additive monetary flows only'
+        for table in result['tables']:
+            for row in table['rows']:
+                if row['metric_id'] == 'total_debt' and row.get('derived'):
+                    row['label'] = 'Current plus noncurrent debt (carrying amount)'
+    return result

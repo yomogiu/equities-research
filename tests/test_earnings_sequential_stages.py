@@ -117,6 +117,18 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertIn(cutoff, receipt['scope_notes'])
         self.assertEqual(receipt['source_manifest_sha256'], storage.sha(self.job/'sources/manifest.json'))
 
+    def test_reader_scope_keeps_dates_and_material_gap_without_preparer_instructions(self):
+        notes = ['Historical event_update for the exact qualified packet and fiscal period recorded in this case.',
+                 'Financial observations are deterministic extractions, not independent approval; preserve their original units.',
+                 'Transcript speaker roles and Q&A boundaries are provisional. Verify attribution.',
+                 'Original source observation dates: 2040-04-15T12:00:00Z, 2040-04-17T12:00:00Z.',
+                 'The prior-quarter filing is unavailable.']
+        result = '\n'.join(stages._reader_scope(notes))
+        self.assertIn('2040-04-15 to 2040-04-17', result)
+        self.assertIn('prior-quarter filing is unavailable', result)
+        self.assertNotIn('preserve their original units', result)
+        self.assertNotIn('Verify attribution', result)
+
     def test_transport_tools_are_bounded_with_investigation_allowance(self):
         self.assertEqual(self.run_complete()['status'], 'completed')
         for role, settings in zip(('analysis', 'review'), self.transport_settings):

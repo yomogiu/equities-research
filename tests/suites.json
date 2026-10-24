@@ -29,6 +29,7 @@
     "test_earnings_financial_display",
     "test_earnings_financial_outline",
     "test_earnings_financial_source_context",
+    "test_earnings_financial_statement_context",
     "test_earnings_followup_validation",
     "test_earnings_lossless_context",
     "test_earnings_mechanical_preflight",

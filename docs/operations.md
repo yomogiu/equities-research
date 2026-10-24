@@ -33,7 +33,10 @@ result; it does not choose repairs, change budgets or edit execution state. `sta
 read-only. `initialize` creates untouched jobs once from the static authorized batch.
 An operator may explicitly resume a proven closed model failure after fixing its cause.
 The same journal retains the failed attempt, all charged tokens and the code-change reason;
-this is bounded to two operator resumes. The scheduler never performs this action.
+this is bounded to two operator resumes. The scheduler never performs this action. A proven financial-table defect may instead
+be rebuilt explicitly in the same job: original table bytes are archived, source hashes
+and cumulative costs are preserved, and a correction round requires fresh analysis and
+review. The scheduler cannot bypass that review.
 Global universe analysis remains separately gated. Collection and calendar workflows
 are unchanged.
 

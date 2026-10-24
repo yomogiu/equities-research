@@ -377,3 +377,94 @@ def resume(root, reason, code_commit, *, reconcile=None):
         job.pop("reason", None)
         _write(root, job)
         return job
+
+
+def rebuild_tables(root, reason, code_commit):
+    """Explicitly repair tables rejected by review within this job's revision cap.
+
+    Archive the old calculated files as ordinary evidence, retaining their exact
+    hashes. Source files, paid usage, prior attempts and the frozen specification
+    do not change. The next advance performs financial_tables, then a new author
+    and independent review; this operation itself performs no calculation.
+    """
+    root = Path(root).resolve()
+    code_commit = _commit(code_commit)
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 4000:
+        raise ValueError("explicit bounded operator reason required")
+    with _lock(root):
+        job = _read(root)
+        if job["status"] != "blocked" or job["stage"] != "review" or not job["attempts"]:
+            raise ValueError("table rebuild requires a blocked independent review")
+        if job["revision_round"] >= job["max_revision_rounds"]:
+            raise ValueError("revision limit reached")
+        if job["tokens_used"] >= job["budget_tokens"]:
+            raise ValueError("token budget exhausted")
+        attempt = job["attempts"][-1]
+        outcome = attempt.get("outcome", {})
+        if (attempt["stage"] != "review" or outcome.get("status") != "blocked"
+                or not attempt.get("usage_recorded") or not outcome.get("session_id")):
+            raise ValueError("an accounted independent review result is required")
+        charged = sum(_integer(a["outcome"].get("tokens"), "recorded tokens")
+                      for a in job["attempts"] if a.get("usage_recorded"))
+        if charged != job["tokens_used"]:
+            raise ValueError("cumulative charged usage does not match attempt history")
+        _verify(root, job["artifacts"])
+        _verify(root, job.get("revision_input", {}))
+        review_outputs = outcome.get("outputs", {})
+        if not isinstance(review_outputs, dict):
+            raise ValueError("verified review artifact required")
+        _verify(root, review_outputs)
+        candidate = job["artifacts"].get(job["candidate_artifact"])
+        if not candidate or outcome.get("input_sha256") != candidate:
+            raise ValueError("review must bind the exact candidate")
+        review_name = f"review-r{job['revision_round']}.json"
+        if review_name not in review_outputs:
+            raise ValueError("verified review artifact required")
+        decision = json.loads(_artifact(root, review_name).read_text())
+        if (decision.get("verdict") != "revise" or
+                not any(isinstance(row, dict) and row.get("location") == "financial_tables"
+                        for row in decision.get("findings", []))):
+            raise ValueError("review must identify a financial_tables finding")
+        names = ("financial-configuration.json", "financial-analysis.json", "financial-tables.md")
+        if any(name not in job["artifacts"] for name in names):
+            raise ValueError("all original financial artifacts must remain bound")
+        archives = {}
+        for name in names:
+            archived = f"history/financial-r{job['revision_round']}/{name}"
+            target = _artifact(root, archived)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            digest = job["artifacts"][name]
+            if target.exists():
+                _verify(root, {archived: digest})
+            else:
+                # A crash leaves either an exact archive or an ignorable temp
+                # file, never a partial archive that blocks this free repair.
+                descriptor, temporary = tempfile.mkstemp(prefix=".archive-", dir=target.parent)
+                try:
+                    with os.fdopen(descriptor, "wb") as stream:
+                        stream.write(_artifact(root, name).read_bytes())
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    if _digest(Path(temporary)) != digest:
+                        raise ValueError("financial artifact changed during archival")
+                    os.replace(temporary, target)
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+                _verify(root, {archived: digest})
+            archives[archived] = digest
+        record = dict(action="rebuild_tables", reason=reason.strip(), attempt_id=attempt["id"],
+                      previous_code_commit=job.get("execution_code_commit", job["specification"].get("code_commit")),
+                      code_commit=code_commit, tokens_used=job["tokens_used"],
+                      revision_round=job["revision_round"], archived_artifacts=archives)
+        job.setdefault("administrative_history", []).append(record)
+        job["artifacts"].update(review_outputs)
+        job["artifacts"].update(archives)
+        for name in names:
+            del job["artifacts"][name]
+        job["revision_input"] = {job["candidate_artifact"]: job["artifacts"].pop(job["candidate_artifact"])}
+        job.update(stage="financial_tables", status="ready", revision_round=job["revision_round"] + 1,
+                   execution_code_commit=code_commit, accepted_candidate_sha256=None)
+        job.pop("reason", None)
+        _write(root, job)
+        return job

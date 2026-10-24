@@ -321,6 +321,61 @@ class SequentialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'substantive review'):
             pipeline.resume(self.root, 'Try another reviewer', 'a' * 40)
 
+    def blocked_financial_review(self, location='financial_tables'):
+        self.advance()
+        def tables(root, job):
+            return {'status': 'completed', 'tokens': 0, 'outputs': {
+                name: self.artifact(name, f'fictional calculation revision {job["revision_round"]}')
+                for name in ('financial-configuration.json', 'financial-analysis.json', 'financial-tables.md')}}
+        self.handlers['financial_tables'] = tables
+        self.advance(); self.advance()
+        def review(root, job):
+            name = f'review-r{job["revision_round"]}.json'
+            decision = {'verdict': 'revise', 'findings': [{'location': location, 'problem': 'Fictional limitation'}]}
+            return {'status': 'blocked', 'tokens': 10, 'session_id': f'reviewer-{job["revision_round"]}',
+                    'input_sha256': job['artifacts']['report.md'],
+                    'outputs': {name: self.artifact(name, json.dumps(decision))}}
+        self.handlers['review'] = review
+        return self.advance()
+
+    def test_table_rebuild_archives_originals_without_resetting_job(self):
+        before = self.blocked_financial_review()
+        result = pipeline.rebuild_tables(self.root, 'Repair fictional table configuration', 'b' * 40)
+        self.assertEqual(result['stage'], 'financial_tables')
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual(result['revision_round'], 1)
+        for name in ('tokens_used', 'attempts', 'specification', 'budget_tokens'):
+            self.assertEqual(result[name], before[name])
+        self.assertEqual(result['artifacts']['sources.json'], before['artifacts']['sources.json'])
+        self.assertIn('review-r0.json', result['artifacts'])
+        self.assertEqual(result['revision_input'], {'report.md': before['artifacts']['report.md']})
+        for name in ('financial-configuration.json', 'financial-analysis.json', 'financial-tables.md'):
+            archive = f'history/financial-r0/{name}'
+            self.assertEqual(result['artifacts'][archive], before['artifacts'][name])
+            self.assertEqual((self.root / archive).read_bytes(), (self.root / name).read_bytes())
+            self.assertNotIn(name, result['artifacts'])
+        after_tables = self.advance()
+        self.assertEqual(after_tables['stage'], 'analysis')
+        self.assertEqual(after_tables['tokens_used'], before['tokens_used'])
+        self.assertNotEqual(after_tables['artifacts']['financial-analysis.json'], before['artifacts']['financial-analysis.json'])
+
+    def test_table_rebuild_requires_actual_financial_finding(self):
+        with self.assertRaisesRegex(ValueError, 'blocked independent review'):
+            pipeline.rebuild_tables(self.root, 'Arbitrary rebuild', 'b' * 40)
+        self.blocked_financial_review(location='outlook')
+        with self.assertRaisesRegex(ValueError, 'financial_tables finding'):
+            pipeline.rebuild_tables(self.root, 'Arbitrary rebuild', 'b' * 40)
+
+    def test_table_rebuild_verifies_current_outputs_and_revision_bound(self):
+        before = self.blocked_financial_review()
+        (self.root / 'financial-tables.md').write_text('tampered')
+        with self.assertRaisesRegex(ValueError, 'changed'):
+            pipeline.rebuild_tables(self.root, 'Repair', 'b' * 40)
+        before['revision_round'] = before['max_revision_rounds']
+        (self.root / 'job.json').write_text(json.dumps(before))
+        with self.assertRaisesRegex(ValueError, 'revision limit'):
+            pipeline.rebuild_tables(self.root, 'Another repair', 'b' * 40)
+
 
 if __name__ == "__main__":
     unittest.main()
