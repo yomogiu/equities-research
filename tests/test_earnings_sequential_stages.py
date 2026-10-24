@@ -231,11 +231,12 @@ class SequentialStagesTests(unittest.TestCase):
         self.revise_forever = True
         result = self.run_complete()
         self.assertEqual(result['status'], 'blocked')
-        self.assertEqual(result['revision_round'], 2)
-        self.assertEqual(result['tokens_used'], 600)
-        self.assertEqual(self.counter, 6)
-        self.assertTrue((self.job/'correction-r2.json').exists())
-        self.assertTrue((self.job/'review-r2.json').exists())
+        self.assertEqual(result['revision_round'], 1)
+        self.assertEqual(result['tokens_used'], 400)
+        self.assertEqual(self.counter, 4)
+        self.assertIn('no progress', result['reason'])
+        self.assertFalse((self.job/'correction-r2.json').exists())
+        self.assertTrue((self.job/'review-r1.json').exists())
         self.assertFalse((self.job/'report.html').exists())
 
     def test_revision_rejects_changed_previous_review_before_paid_author(self):
@@ -247,24 +248,40 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertEqual(self.counter, 2)
         self.assertIn('review-r0.json', result['reason'])
 
-    def test_actual_table_rebuild_replaces_only_verified_archived_old_outputs(self):
-        self.financial_revise = True
-        before = self.run_complete()
-        self.assertEqual(before['status'], 'blocked')
+    def prepare_interim_basis(self):
+        from research import financial_evidence
+        from test_earnings_compact_evidence import refreeze
+        source = self.root/'filing.html'
+        raw = source.read_bytes().decode()
+        declaration = ('The consolidated financial statements have been prepared in accordance with '
+                       'generally accepted accounting principles for interim financial information and pursuant '
+                       'to the rules and regulations of the Securities and Exchange Commission.')
+        raw = raw.replace('</html>', '<ix:nonNumeric name="us-gaap:BasisOfAccounting" contextRef="c">'+declaration+'</ix:nonNumeric></html>')
+        source.write_text(raw)
+        case = stages.read(self.case)
+        facts = self.root/'financial-source.json'
+        extracted = financial_evidence.extract_inline_xbrl(raw, {'document_id':'fictional-filing',
+            'raw_sha256':storage.sha(source), 'text_sha256':storage.sha(self.root/'filing.txt')})
+        facts.write_text(json.dumps(extracted))
+        refreeze(self.case, case, source); refreeze(self.case, case, facts)
+
+    def test_automatic_table_repair_archives_originals_recomputes_and_requires_fresh_review(self):
+        self.prepare_interim_basis(); self.financial_revise = True
+        for _ in range(3): self.advance()
         original_hash = storage.sha(self.job/'financial-analysis.json')
-        controller.rebuild_tables(self.job, 'Repair fictional calculation', 'b' * 40)
-        original_compile = finance.compile
-        def repaired(bundle, config):
-            return {**original_compile(bundle, config), 'fictional_repair_marker': True}
-        with patch.object(finance, 'compile', side_effect=repaired):
-            result = self.advance()
-            self.assertEqual(result['status'], 'ready', result.get('reason'))
-            self.assertEqual(result['stage'], 'analysis')
-            self.assertEqual(result['tokens_used'], before['tokens_used'])
-            self.assertEqual(storage.sha(self.job/'history/financial-r0/financial-analysis.json'), original_hash)
-            self.assertNotEqual(storage.sha(self.job/'financial-analysis.json'), original_hash)
-            self.assertTrue(stages.read(self.job/'financial-analysis.json')['fictional_repair_marker'])
-            result = self.run_complete()
+        source_hash = storage.sha(self.job/'sources/financial.json')
+        before = self.advance()
+        self.assertEqual((before['status'], before['stage']), ('ready','financial_tables'))
+        self.assertEqual(before['revision_round'], 1)
+        self.assertTrue(before['automatic_table_repair'])
+        self.assertEqual(storage.sha(self.job/'history/financial-r0/financial-analysis.json'), original_hash)
+        result = self.advance()
+        self.assertEqual((result['status'], result['stage']), ('ready','analysis'), result.get('reason'))
+        self.assertEqual(result['tokens_used'], 200)
+        self.assertNotEqual(storage.sha(self.job/'financial-analysis.json'), original_hash)
+        self.assertEqual(storage.sha(self.job/'sources/financial.json'), source_hash)
+        self.assertIn('GAAP', (self.job/'financial-tables.md').read_text())
+        result = self.run_complete()
         self.assertEqual(result['status'], 'completed', result.get('reason'))
         self.assertEqual(result['tokens_used'], 400)
         self.assertEqual(result['revision_round'], 1)
@@ -274,11 +291,23 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertNotIn('financial_tables_markdown', stages.read(self.job/'context-review-r1/artifacts.json'))
         self.assertFalse((self.job/'correction-r1.json').exists())
         self.assertEqual(self.model_calls, [('gpt-6.1-sol','medium')] * 4)
+        self.assertEqual(len({a['outcome']['session_id'] for a in result['attempts'] if 'session_id' in a['outcome']}),4)
+
+    def test_unsupported_table_repair_stops_without_spending_another_author_review_pair(self):
+        self.financial_revise = True
+        result = self.run_complete()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['stage'], 'financial_tables')
+        self.assertIn('no table changes', result['reason'])
+        self.assertEqual(result['tokens_used'], 200)
+        self.assertEqual(self.counter, 2)
+        self.assertFalse((self.job/'report.html').exists())
+        self.assertEqual(self.advance(), result)
+        self.assertFalse(controller.automatic_repair_eligible(self.job))
 
     def test_table_rebuild_does_not_remove_differing_unbound_output(self):
-        self.financial_revise = True
-        self.run_complete()
-        controller.rebuild_tables(self.job, 'Repair fictional calculation', 'b' * 40)
+        self.prepare_interim_basis(); self.financial_revise = True
+        for _ in range(4): self.advance()
         different = '{"unrelated":"existing bytes"}'
         (self.job/'financial-analysis.json').write_text(different)
         result = self.advance()

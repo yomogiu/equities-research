@@ -338,6 +338,38 @@ class SequentialTests(unittest.TestCase):
         self.handlers['review'] = review
         return self.advance()
 
+    def test_old_closed_table_review_automatically_enters_same_bounded_repair(self):
+        before = self.blocked_financial_review()
+        self.assertFalse(pipeline.automatic_repair_eligible(self.root))
+        before['attempts'][-1]['outcome']['execution_certainty']='completed'
+        (self.root/'job.json').write_text(json.dumps(before))
+        self.assertTrue(pipeline.automatic_repair_eligible(self.root))
+        result = pipeline.rebuild_tables(self.root, 'Automatic closed-review repair', 'b'*40, automatic=True)
+        self.assertEqual(result['tokens_used'], before['tokens_used'])
+        self.assertEqual(result['budget_tokens'], before['budget_tokens'])
+        self.assertEqual(result['attempts'], before['attempts'])
+        self.assertEqual(result['revision_round'], 1)
+        self.assertTrue(result['administrative_history'][-1]['automatic'])
+        self.assertFalse(pipeline.automatic_repair_eligible(self.root))
+
+    def test_automatic_repair_never_reopens_final_allowance_or_exhausted_rounds(self):
+        before = self.blocked_financial_review()
+        before['attempts'][-1]['outcome']['execution_certainty']='completed'
+        for change in ({'final_review':{'state':'blocked'}}, {'revision_round':2}, {'tokens_used':100},
+                       {'automatic_table_repair':True}, {'stage':'analysis'}):
+            (self.root/'job.json').write_text(json.dumps({**before, **change}))
+            self.assertFalse(pipeline.automatic_repair_eligible(self.root))
+
+    def test_automatic_repair_revalidates_tampered_tables_and_review(self):
+        before = self.blocked_financial_review()
+        before['attempts'][-1]['outcome']['execution_certainty']='completed'
+        (self.root/'job.json').write_text(json.dumps(before))
+        (self.root/'financial-tables.md').write_text('unreviewed contents')
+        with self.assertRaisesRegex(ValueError,'changed'):
+            pipeline.rebuild_tables(self.root, 'Automatic repair', 'b'*40, automatic=True)
+        (self.root/'review-r0.json').write_text('{}')
+        self.assertFalse(pipeline.automatic_repair_eligible(self.root))
+
     def test_table_rebuild_archives_originals_without_resetting_job(self):
         before = self.blocked_financial_review()
         result = pipeline.rebuild_tables(self.root, 'Repair fictional table configuration', 'b' * 40)

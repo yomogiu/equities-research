@@ -198,8 +198,14 @@ def financial_tables(root, job):
     root = Path(root); bundle = evidence.load_bundle(root/'sources/manifest.json')
     config = financial_configuration(bundle, job['specification'].get('financial_analysis'))
     from . import earnings_financial_statement_context as statements
-    value = finance.compile(statements.qualify(bundle), config)
+    repair = job.get('financial_repair_policy') == statements.REPAIR_VERSION
+    value = finance.compile(statements.qualify(bundle, repair=repair), config)
     rendered = finance.preview_markdown(value)
+    if job.get('automatic_table_repair'):
+        previous = root/f'history/financial-r{job["revision_round"]-1}/financial-tables.md'
+        require(previous.is_file(), 'Automatic repair requires archived original tables')
+        require(rendered != previous.read_text(),
+                'Automatic financial repair made no table changes; unsupported mapping or source evidence requires engineering/source work')
     # An explicit table repair retained the prior files as hash-bound history.
     # Remove only those exact superseded bytes; unrelated or new partial files
     # remain subject to the ordinary immutable-write validation below.
@@ -403,8 +409,11 @@ def _role_context(root, job, role):
             artifacts['previous_review'] = plan['previous_review']
             artifacts['section_revision']['verified_changes'] = loaded['proof']['component_changes']
     else:
-        if role == 'analysis' and revision:
-            artifacts['review_findings'] = read(root/f'review-r{revision-1}.json')['findings']
+        if revision:
+            prior_review = read(root/f'review-r{revision-1}.json')
+            if role == 'analysis': artifacts['review_findings'] = prior_review['findings']
+            else: artifacts['previous_review'] = prior_review
+            needed.update(cited(prior_review)-trusted)
         if candidate:
             previous = revision if role == 'review' else revision-1
             needed.update(cited(read(root/f'analysis-r{previous}.json'))-trusted)
@@ -439,7 +448,7 @@ Each section heading states a concrete source-backed finding; its paragraph cita
 '''
     return common + '''Independently challenge the candidate against the ORIGINAL evidence, not the author's confidence. After reading all role pages, print(ctx.challenge_batch("guidance risk cash flow debt capital expenditure", 4)) and inspect any further evidence needed. Assess all eight criteria and all five expected questions. Missing inputs pass only if the report specifically discloses the limitation and correctly assesses available evidence. "evidence" explains the report location and source-grounded conclusion, not a generic approval.
 Return exactly {"verdict":"pass|revise","criteria":{NAME:{"status":"pass|fail","evidence":"...","citations":["..."]}},"questions":{NAME:{"status":"answered|disclosed_gap|fail","evidence":"...","gap":"specific missing input or empty string","citations":["..."]}},"findings":[{"location":"opening|demand|earnings|cash|outlook|qa|next_tests|financial_tables","problem":"...","fix":"concrete source-backed repair","citations":["..."]}]}.
-Criteria names: ''' + ', '.join(CRITERIA) + '. Question names: ' + ', '.join(questions.QUESTIONS) + '. Any failed criterion/question requires actionable findings and verdict revise. Pass requires every criterion pass, no failed question, and no findings. Do not rewrite deterministic table values; identify an input/calculation problem at financial_tables so the controller can stop for repair.\n'
+Criteria names: ''' + ', '.join(CRITERIA) + '. Question names: ' + ', '.join(questions.QUESTIONS) + '. Any failed criterion/question requires actionable findings and verdict revise. Pass requires every criterion pass, no failed question, and no findings. Do not rewrite deterministic table values; identify an input/calculation problem at financial_tables so the controller can attempt a bounded source-backed table repair. Do not approve missing source-supported core metrics merely because a repair was attempted.\n'
 
 
 def _coverage(index, role_dir, value, role):
@@ -688,7 +697,8 @@ def review(root, job):
         path = root/f'review-r{job["revision_round"]}.json'; write(path, value)
         result = done(root, [path], input_sha256=candidate_sha, **result)
         if value['verdict'] == 'revise':
-            result['status'] = 'blocked' if any(x['location'] == 'financial_tables' for x in value['findings']) else 'revise'
+            result['status'] = 'revise'
+            result['revision_target'] = 'financial_tables' if any(x['location'] == 'financial_tables' for x in value['findings']) else 'analysis'
             result['reason'] = 'Independent review requires source-backed corrections'
         return result
     except (ValueError, KeyError, TypeError, OSError) as error:

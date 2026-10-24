@@ -38,7 +38,7 @@ CONCEPTS = dict(evidence.METRICS, **{
     'ifrs-full:WeightedAverageNumberOfDilutedSharesOutstanding': 'diluted_shares',
 })
 ADDITIVE = {'revenue', 'gross_profit', 'operating_income', 'net_income',
-            'operating_cash_flow', 'capital_expenditure', 'cost_of_revenue'}
+            'operating_cash_flow', 'capital_expenditure', 'cost_of_revenue', 'research_and_development'}
 DERIVED = {
     'gross_profit': ('Calculated gross profit (revenue less cost of revenue)', 'subtract', 'revenue', 'cost_of_revenue'),
     'free_cash_flow': ('Free cash flow (operating cash flow less capital expenditure)', 'subtract', 'operating_cash_flow', 'capital_expenditure'),
@@ -214,7 +214,7 @@ def _inventory(bundle, capex_conventions, accounting_bases):
                 raise ValueError('Configured accounting basis contradicts source basis')
             basis = basis or override
             # Undeclared basis remains undeclared, including inline GAAP tags.
-            role = CONCEPTS.get(obs['concept']) or (statements.calculation_role(obs['concept'], identity) if statement_policy else None)
+            role = CONCEPTS.get(obs['concept']) or (statements.calculation_role(obs['concept'], identity, repair=bundle.get('financial_source_policy') == statements.REPAIR_VERSION) if statement_policy else None)
             convention = capex_conventions.get(obs['id'], 'positive_payment') if role == 'capital_expenditure' else None
             exact_inline_identity = statement_policy and obs.get('method') == 'inline_xbrl' and role and basis
             grouping_label = None if role and (obs.get('method') == 'reviewed_html_table' or exact_inline_identity) else label
@@ -292,7 +292,36 @@ def _capex_operand(cell, convention):
     return cell
 
 
-def _derive_metrics(groups, gaps):
+def _reconciled_revenue(by_role):
+    """Select a denominator only when original GP + cost proves one identity.
+
+    Match every common period, never select by magnitude, label or list order.
+    Both revenue series remain in the reported inventory. Conflicts, incomplete
+    comparisons and multiple compatible identities remain unresolved.
+    """
+    profits, costs, revenues = (by_role[k] for k in ('gross_profit', 'cost_of_revenue', 'revenue'))
+    if len(profits) != 1 or len(costs) != 1:
+        return None
+    common = set(profits[0]['_periods']) & set(costs[0]['_periods'])
+    if not common or any(not common <= set(row['_periods']) for row in revenues):
+        return None
+    matches = []
+    for row in revenues:
+        proof = []
+        for period in sorted(common):
+            revenue, profit, cost = (item['_periods'][period] for item in (row, profits[0], costs[0]))
+            if any(cell['status'] != 'available' for cell in (revenue, profit, cost)):
+                break
+            if _number(cost['value']) < 0 or _number(revenue['value']) != _number(profit['value']) + _number(cost['value']):
+                break
+            proof.append({'period': list(period), 'operator': 'revenue_equals_reported_gross_profit_plus_cost',
+                          'fact_ids': _ids([revenue, profit, cost])})
+        else:
+            matches.append({'row': row, 'proof': proof})
+    return matches[0] if len(matches) == 1 else None
+
+
+def _derive_metrics(groups, gaps, *, repair=False):
     # Every operand bucket keeps exact entity, dimensions, currency, and basis.
     buckets = defaultdict(list)
     for row in groups:
@@ -309,8 +338,14 @@ def _derive_metrics(groups, gaps):
             if len(valid) != len(row['_periods']):
                 gaps.append(_gap('Calculation role has incompatible period type', _ids(list(row['_periods'].values())), metric_id=row['metric_id']))
             if valid: by_role[row['metric_id']].append({**row, '_periods': valid})
+        revenue_proof = None
+        if repair and len(by_role['revenue']) > 1:
+            revenue_proof = _reconciled_revenue(by_role)
         for metric, (label, op, left_role, right_role) in DERIVED.items():
             lefts, rights = by_role[left_role], by_role[right_role]
+            if revenue_proof:
+                if left_role == 'revenue': lefts = [revenue_proof['row']]
+                if right_role == 'revenue': rights = [revenue_proof['row']]
             # Explicit missing operand rows prevent false zero-based calculations.
             if not lefts and not rights: continue
             exemplar = bucket[0]
@@ -338,6 +373,10 @@ def _derive_metrics(groups, gaps):
                         operand = _capex_operand(operand, selected_rows[0]['capex_convention'])
                     if len(selected_rows) == 1 and selected_rows[0]['metric_id'] == 'cost_of_revenue' and operand['status'] == 'available' and _number(operand['value']) < 0:
                         operand = _unavailable('Cost sign contradicts positive-expense taxonomy', period, operand['fact_ids'])
+                    if revenue_proof and selected_rows and selected_rows[0] is revenue_proof['row']:
+                        operand = deepcopy(operand)
+                        operand['calculation'] = {**operand.get('calculation', {}),
+                            'revenue_scope_reconciliation': deepcopy(revenue_proof['proof'])}
                     operands.append(operand)
                 row['_periods'][period] = _calculated(op, *operands, period)
                 if reported:
@@ -388,7 +427,7 @@ def build(bundle, *, current_period=None, as_of=None, capex_conventions=None, ac
         current_period = next(iter(quarter_candidates))
     elif current_period is None and len(quarter_candidates) > 1:
         gaps.append(_gap('Ambiguous current quarter boundaries; supply explicit current_period'))
-    groups = _derive_metrics(groups, gaps)
+    groups = _derive_metrics(groups, gaps, repair=bundle.get('financial_source_policy') == statements.REPAIR_VERSION)
     tables = []
     for family in FAMILIES:
         rows = []
@@ -428,7 +467,7 @@ def build(bundle, *, current_period=None, as_of=None, capex_conventions=None, ac
 
     from . import earnings_financial_statement_context as statements
     if statements.enabled(bundle):
-        result['source_policy'] = statements.VERSION
+        result['source_policy'] = bundle['financial_source_policy']
         result['arithmetic']['quarter_derivation'] += '; same-end half-year less trailing quarter gives the opening quarter for additive monetary flows only'
         for table in result['tables']:
             for row in table['rows']:

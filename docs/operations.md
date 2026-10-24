@@ -32,8 +32,10 @@ executing source preparation and a complete corrected-report cycle.
    with cited demand, profits, cash, outlook, earnings multiples and material Q&A.
 4. **Review:** a fresh session examines the exact candidate and original evidence,
    all eight review criteria and five expected questions. Revisions return to analysis
-   in the same job, at most twice. Tables and source hashes remain fixed. A financial
-   input/calculation finding blocks for correction rather than inviting a prose override.
+   in the same job, at most twice. Prose findings use targeted section corrections.
+   Table findings automatically archive the old tables and return to financial tables;
+   original sources and cumulative costs stay fixed. New tables require full analysis
+   and fresh independent review before publication.
 5. **Publication:** render only the exact accepted candidate. The private publisher
    persists artifacts and verifies remote bytes before recording successful publication.
 
@@ -84,10 +86,25 @@ attempt with no session or execution directory, or a zero-token replay-safe dete
 attempt, can be repaired explicitly without consuming that limit. Classification comes
 from the referenced attempt outcome, including for older resume records; the operator's
 reason cannot change it. All repair records remain in the same journal. The scheduler
-never performs this action. A proven financial-table defect may instead
-be rebuilt explicitly in the same job: original table bytes are archived, source hashes
-and cumulative costs are preserved, and a correction round requires fresh analysis and
-review. The scheduler cannot bypass that review.
+never performs this technical resume action. A conclusively completed independent
+review with financial-table findings instead enters the automatic table repair path.
+The normal tick can adopt an older blocked table review after exact-candidate, source,
+usage and revision checks; uncertain sessions, exhausted jobs and final-review allowances
+are excluded. The transition and each stage are persisted before further work.
+
+Automatic table repair currently applies a small deterministic rule set: source-bound
+SEC interim accounting-basis qualification; exact-concept duplicate consolidation;
+compatible additive-quarter derivation (never EPS/share subtraction); and selection of
+a revenue denominator only when one identity reconciles with reported gross profit plus
+cost across every shared period. Distinct revenue definitions remain separate rows.
+Every interpretation remains subject to fresh independent review. It does not invent
+missing observations, retrieve new sources, change code or accept arbitrary model mappings.
+
+Identical repaired table text stops before another author call. Repeated identical
+review findings also stop; a failed or unsupported repair stays blocked and the next
+tick selects another eligible company. At most two revision rounds share the original
+token allowance. Manual `rebuild-tables` remains available for diagnosed code fixes;
+neither path bypasses review or grants additional budget.
 An explicitly human-approved final-review allowance may fund one fresh review of the
 exact existing candidate. The core records the approval and original allowance, binds
 all retained artifacts, and prevents further model retries or corrections. Only a

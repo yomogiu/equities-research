@@ -221,5 +221,67 @@ class FinancialStatementContextTests(unittest.TestCase):
         value=report.compile(statements.qualify(bundle),report.configuration(*Q))
         self.assertIsNone(rows(value,'revenue')[0]['basis'])
 
+    def test_repair_qualifies_only_explicit_sec_interim_basis(self):
+        declaration = ('The consolidated financial statements have been prepared in accordance with '
+            'generally accepted accounting principles for interim financial information and pursuant to '
+            'the rules and regulations of the Securities and Exchange Commission.')
+        specs=[('us-gaap:Revenues',150,Q,'Revenue'),('us-gaap:Revenues',100,PY,'Revenue')]
+        bundle,_=self.build(specs,declaration=declaration)
+        self.assertIsNone(rows(report.compile(statements.qualify(bundle),report.configuration(*Q)),'revenue')[0]['basis'])
+        repaired=report.compile(statements.qualify(bundle,repair=True),report.configuration(*Q))
+        self.assertEqual(rows(repaired,'revenue')[0]['changes']['yoy']['percent'],'50.0')
+        self.assertEqual(repaired['observations'],bundle['financial']['observations'])
+        self.assertTrue(statements.source_support(repaired,bundle))
+        for text in (declaration.replace('Securities and Exchange Commission','fictional local regulator'),
+                     declaration.replace('have been prepared','have not been prepared'),
+                     'Management discusses interim GAAP under SEC rules.'):
+            bundle,_=self.build(specs,declaration=text)
+            value=report.compile(statements.qualify(bundle,repair=True),report.configuration(*Q))
+            self.assertIsNone(rows(value,'revenue')[0]['basis'])
+
+    def test_repair_selects_only_revenue_identity_reconciled_across_all_periods(self):
+        specs=[('us-gaap:Revenues',150,Q,'Revenue including special income'),
+               ('us-gaap:Revenues',130,PY,'Revenue including special income'),
+               ('us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax',150,Q,'Sales'),
+               ('us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax',100,PY,'Sales'),
+               ('us-gaap:GrossProfit',90,Q,'Gross profit'),('us-gaap:GrossProfit',80,PY,'Gross profit'),
+               ('us-gaap:CostOfRevenue',60,Q,'Cost'),('us-gaap:CostOfRevenue',50,PY,'Cost')]
+        bundle,original=self.build(specs)
+        self.assertNotEqual(rows(original,'gross_margin')[0]['cells']['current']['status'],'available')
+        repaired=report.compile(statements.qualify(bundle,repair=True),report.configuration(*Q))
+        margin=rows(repaired,'gross_margin')[0]
+        self.assertEqual(margin['cells']['current']['value'],'60.0')
+        self.assertEqual(len(rows(repaired,'revenue')),2)  # Distinct definitions are not duplicates.
+        self.assertIn('revenue_scope_reconciliation',str(margin['period_observations']))
+        # Conflicting proof and indistinguishable candidates must remain ambiguous.
+        for replacement in (100,130):
+            modified=list(specs);modified[1]=('us-gaap:Revenues',replacement,PY,'Revenue including special income')
+            modified[3]=('us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax',replacement,PY,'Sales')
+            bundle,_=self.build(modified)
+            value=report.compile(statements.qualify(bundle,repair=True),report.configuration(*Q))
+            self.assertNotEqual(rows(value,'gross_margin')[0]['cells']['current']['status'],'available')
+
+    def test_repair_keeps_diluted_share_definition_separate_from_adjusted_metric(self):
+        specs=[('us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding',50,Q,'Diluted'),
+               ('us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding',50,Q,
+                'Denominator for diluted net income per share – adjusted weighted-average shares and assumed conversions'),
+               ('us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding',60,Q,'Adjusted diluted shares')]
+        bundle,_=self.build(specs)
+        value=report.compile(statements.qualify(bundle,repair=True),report.configuration(*Q))
+        qualified=[r for r in rows(value,'diluted_shares') if r['basis']=='GAAP']
+        self.assertEqual(len(qualified),1)
+        self.assertEqual(len(qualified[0]['cells']['current']['fact_ids']),2)
+        self.assertEqual(qualified[0]['cells']['current']['value'],'50')
+        self.assertEqual(len(rows(value,'diluted_shares')),2)
+
+    def test_repair_derives_rd_prior_quarter_but_never_eps_or_share_subtraction(self):
+        specs=[('us-gaap:ResearchAndDevelopmentExpense',25,H,'R&D'),
+               ('us-gaap:ResearchAndDevelopmentExpense',15,Q,'R&D'),
+               ('us-gaap:EarningsPerShareDiluted',3,H,'EPS'),('us-gaap:EarningsPerShareDiluted',2,Q,'EPS')]
+        bundle,_=self.build(specs)
+        value=report.compile(statements.qualify(bundle,repair=True),report.configuration(*Q))
+        self.assertEqual(rows(value,'research_and_development')[0]['cells']['prior_quarter']['value'],'10')
+        self.assertEqual(rows(value,'diluted_eps')[0]['cells']['prior_quarter']['status'],'missing')
+
 
 if __name__=='__main__':unittest.main()

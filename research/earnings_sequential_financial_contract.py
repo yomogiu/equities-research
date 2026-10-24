@@ -66,9 +66,11 @@ def build(root):
     explicit = job['specification'].get('financial_analysis')
     require(explicit is None or explicit == configuration, 'Financial configuration differs from the job specification')
     value = storage.read(root/'financial-analysis.json')
-    require(value.get('source_policy') == statements.VERSION, 'Unsupported financial source policy')
+    repair = job.get('financial_repair_policy') == statements.REPAIR_VERSION
+    expected_policy = statements.REPAIR_VERSION if repair else statements.VERSION
+    require(value.get('source_policy') == expected_policy, 'Unsupported financial source policy')
     replayed = _replayed_facts(bundle)
-    reproduced = finance.compile(statements.qualify(bundle), configuration)
+    reproduced = finance.compile(statements.qualify(bundle, repair=repair), configuration)
     require(value == reproduced, 'Financial analysis differs from deterministic source recomputation')
     rendered = finance.preview_markdown(reproduced)
     require((root/'financial-tables.md').read_text() == rendered,
@@ -97,7 +99,7 @@ def build(root):
             audit.append({'section':section,'period_family':family,'metric':row['metric_id'],
                           'basis':row['basis'],'basis_origin':row.get('basis_origin'),
                           'unit':row['unit'],'missing_comparisons':unavailable})
-    result = {'version':VERSION, 'verification':'reproduced', 'source_policy':statements.VERSION,
+    result = {'version':VERSION, 'verification':'reproduced', 'source_policy':expected_policy,
               'artifact_sha256':hashes, 'source_computation_sha256':storage.digest(value),
               'trusted_table_ids':trusted,
               'requires_original_inspection_ids':sorted(all_references-set(trusted)),

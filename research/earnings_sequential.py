@@ -205,12 +205,39 @@ def _finish(root, job):
                 raise ValueError("outcome does not bind the exact candidate")
             if stage == "publication" and job["accepted_candidate_sha256"] != candidate:
                 raise ValueError("publication candidate was not accepted")
+        target = outcome.get('revision_target', 'analysis')
+        if target not in ('analysis', 'financial_tables') or ('revision_target' in outcome and (stage != 'review' or status != 'revise')):
+            raise ValueError('invalid revision target')
+        if status == 'revise' and target == 'financial_tables':
+            name = f"review-r{job['revision_round']}.json"
+            if name not in outputs or outcome.get('execution_certainty') != 'completed':
+                raise ValueError('Automatic table repair requires a completed bound review')
+            decision = json.loads(_artifact(root, name).read_text())
+            if decision.get('verdict') != 'revise' or not any(row.get('location') == 'financial_tables' for row in decision.get('findings', [])):
+                raise ValueError('Review must identify a financial_tables finding')
+        if status == 'revise' and job['revision_round'] and 'revision_target' in outcome:
+            current = f"review-r{job['revision_round']}.json"
+            previous = f"review-r{job['revision_round']-1}.json"
+            if current in outputs and previous in job['artifacts']:
+                def fingerprint(name):
+                    findings = json.loads(_artifact(root, name).read_text()).get('findings', [])
+                    return sorted((row.get('location'), ' '.join(row.get('problem', '').split()),
+                                   ' '.join(row.get('fix', '').split())) for row in findings)
+                if fingerprint(current) and fingerprint(current) == fingerprint(previous):
+                    raise ValueError('Repeated unchanged review findings; automatic repair made no progress')
         if status == "revise" and job["revision_round"] >= job["max_revision_rounds"]:
             raise ValueError("revision limit reached")
     except (ValueError, OSError) as exc:
         return _block(root, job, str(exc))
     attempt["status"] = status
     attempt["outputs"] = outputs
+    if status == 'revise' and target == 'financial_tables':
+        try:
+            return _table_revision(root, job, outputs, attempt,
+                                   job.get('execution_code_commit', job['specification'].get('code_commit')),
+                                   'Independent review requested automatic financial repair', automatic=True)
+        except (ValueError, OSError) as exc:
+            return _block(root, job, str(exc))
     if status == "revise":
         job["revision_round"] += 1
         # Prior findings and structured analysis remain immutable correction
@@ -444,7 +471,30 @@ def resume(root, reason, code_commit, *, reconcile=None):
         return job
 
 
-def rebuild_tables(root, reason, code_commit):
+def automatic_repair_eligible(root):
+    """Read-only screening for old closed table findings; rebuild revalidates all bytes."""
+    root = Path(root).resolve()
+    try:
+        job = _read(root)
+        if (job['status'] != 'blocked' or job['stage'] != 'review' or job.get('final_review')
+                or job['revision_round'] >= job['max_revision_rounds']
+                or job['tokens_used'] >= job['budget_tokens'] or not job['attempts']
+                or job.get('automatic_table_repair')):
+            return False
+        attempt = job['attempts'][-1]; result = attempt.get('outcome', {})
+        if (result.get('status') != 'blocked' or result.get('execution_certainty') != 'completed'
+                or not result.get('session_id') or not attempt.get('usage_recorded')):
+            return False
+        name = f"review-r{job['revision_round']}.json"
+        if name not in result.get('outputs', {}): return False
+        _verify(root, {name: result['outputs'][name]})
+        review = json.loads(_artifact(root, name).read_text())
+        return review.get('verdict') == 'revise' and any(row.get('location') == 'financial_tables' for row in review.get('findings', []))
+    except (ValueError, KeyError, TypeError, OSError):
+        return False
+
+
+def rebuild_tables(root, reason, code_commit, *, automatic=False):
     """Explicitly repair tables rejected by review within this job's revision cap.
 
     Archive the old calculated files as ordinary evidence, retaining their exact
@@ -492,49 +542,60 @@ def rebuild_tables(root, reason, code_commit):
                 not any(isinstance(row, dict) and row.get("location") == "financial_tables"
                         for row in decision.get("findings", []))):
             raise ValueError("review must identify a financial_tables finding")
-        names = ("financial-configuration.json", "financial-analysis.json", "financial-tables.md")
-        if any(name not in job["artifacts"] for name in names):
-            raise ValueError("all original financial artifacts must remain bound")
-        archives = {}
-        for name in names:
-            archived = f"history/financial-r{job['revision_round']}/{name}"
-            target = _artifact(root, archived)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            digest = job["artifacts"][name]
-            if target.exists():
-                _verify(root, {archived: digest})
-            else:
-                # A crash leaves either an exact archive or an ignorable temp
-                # file, never a partial archive that blocks this free repair.
-                descriptor, temporary = tempfile.mkstemp(prefix=".archive-", dir=target.parent)
-                try:
-                    with os.fdopen(descriptor, "wb") as stream:
-                        stream.write(_artifact(root, name).read_bytes())
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    if _digest(Path(temporary)) != digest:
-                        raise ValueError("financial artifact changed during archival")
-                    os.replace(temporary, target)
-                finally:
-                    if os.path.exists(temporary):
-                        os.unlink(temporary)
-                _verify(root, {archived: digest})
-            archives[archived] = digest
-        record = dict(action="rebuild_tables", reason=reason.strip(), attempt_id=attempt["id"],
-                      previous_code_commit=job.get("execution_code_commit", job["specification"].get("code_commit")),
-                      code_commit=code_commit, tokens_used=job["tokens_used"],
-                      revision_round=job["revision_round"], archived_artifacts=archives)
-        job.setdefault("administrative_history", []).append(record)
-        job["artifacts"].update(review_outputs)
-        job["artifacts"].update(archives)
-        for name in names:
-            del job["artifacts"][name]
-        job["revision_input"] = {job["candidate_artifact"]: job["artifacts"].pop(job["candidate_artifact"])}
-        job.update(stage="financial_tables", status="ready", revision_round=job["revision_round"] + 1,
-                   execution_code_commit=code_commit, accepted_candidate_sha256=None)
-        job.pop("reason", None)
-        _write(root, job)
-        return job
+        if automatic and outcome.get('execution_certainty') != 'completed':
+            raise ValueError('Automatic repair requires a conclusively completed review')
+        return _table_revision(root, job, review_outputs, attempt, code_commit, reason, automatic=automatic)
+
+
+def _table_revision(root, job, review_outputs, attempt, code_commit, reason, *, automatic):
+    """Lock-owned transition; one durable round, exact archives, unchanged costs."""
+    names = ("financial-configuration.json", "financial-analysis.json", "financial-tables.md")
+    if any(name not in job["artifacts"] for name in names):
+        raise ValueError("all original financial artifacts must remain bound")
+    archives = {}
+    for name in names:
+        archived = f"history/financial-r{job['revision_round']}/{name}"
+        target = _artifact(root, archived)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        digest = job["artifacts"][name]
+        if target.exists():
+            _verify(root, {archived: digest})
+        else:
+            # A crash leaves either an exact archive or an ignorable temp
+            # file, never a partial archive that blocks this free repair.
+            descriptor, temporary = tempfile.mkstemp(prefix=".archive-", dir=target.parent)
+            try:
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(_artifact(root, name).read_bytes())
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                if _digest(Path(temporary)) != digest:
+                    raise ValueError("financial artifact changed during archival")
+                os.replace(temporary, target)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            _verify(root, {archived: digest})
+        archives[archived] = digest
+    record = dict(action="rebuild_tables", reason=reason.strip(), attempt_id=attempt["id"],
+                  previous_code_commit=job.get("execution_code_commit", job["specification"].get("code_commit")),
+                  code_commit=code_commit, tokens_used=job["tokens_used"],
+                  revision_round=job["revision_round"], archived_artifacts=archives)
+    job.setdefault("administrative_history", []).append(record)
+    job["artifacts"].update(review_outputs)
+    job["artifacts"].update(archives)
+    for name in names:
+        del job["artifacts"][name]
+    job["revision_input"] = {job["candidate_artifact"]: job["artifacts"].pop(job["candidate_artifact"])}
+    job.update(stage="financial_tables", status="ready", revision_round=job["revision_round"] + 1,
+               execution_code_commit=code_commit, accepted_candidate_sha256=None)
+    job.pop("reason", None)
+    if automatic:
+        job['financial_repair_policy'] = 'filed-statement-repair-v1'
+        job['automatic_table_repair'] = True
+        record['automatic'] = True
+    _write(root, job)
+    return job
 
 
 def authorize_final_review(root, review_cap, authorization, code_commit):

@@ -11,6 +11,7 @@ import re
 from . import financial_evidence
 
 VERSION = 'filed-statement-context-v1'
+REPAIR_VERSION = 'filed-statement-repair-v1'
 BASIS_CONCEPTS = {
     'us-gaap:BasisOfAccounting',
     'us-gaap:OrganizationConsolidationAndPresentationOfFinancialStatementsDisclosureTextBlock',
@@ -21,22 +22,23 @@ BASIS_CONCEPTS = {
 
 def enabled(bundle):
     policy = bundle.get('financial_source_policy')
-    if policy not in (None, VERSION): raise ValueError('Unknown financial source policy')
-    return policy == VERSION
+    if policy not in (None, VERSION, REPAIR_VERSION): raise ValueError('Unknown financial source policy')
+    return policy in (VERSION, REPAIR_VERSION)
 
 
-def qualify(bundle):
+def qualify(bundle, *, repair=False):
     result = dict(bundle)
-    result['financial_source_policy'] = VERSION
+    result['financial_source_policy'] = REPAIR_VERSION if repair else VERSION
     return result
 
 
-def calculation_role(concept, identity):
+def calculation_role(concept, identity, *, repair=False):
     """Narrow opt-in additions; broader asset purchases require an exact label."""
     exact = {'us-gaap:RegulatedAndUnregulatedOperatingRevenue':'revenue',
              'us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent':'current_debt_and_capital_leases',
              'us-gaap:LongTermDebtAndCapitalLeaseObligations':'long_term_debt_and_capital_leases',
              'us-gaap:ShortTermBorrowings':'short_term_borrowings'}
+    if repair and concept == 'us-gaap:ResearchAndDevelopmentExpense': return 'research_and_development'
     if concept in exact: return exact[concept]
     if (concept == 'us-gaap:PaymentsToAcquireProductiveAssets'
             and identity.get('label_origin') == 'exact_source_cells'
@@ -46,7 +48,7 @@ def calculation_role(concept, identity):
     return None
 
 
-def declarations(raw, binding):
+def declarations(raw, binding, *, repair=False):
     """Read exact basis text and continuations; reject missing/cyclic bindings."""
     parser = financial_evidence._Parser(raw); parser.feed(raw); parser.close()
     continuations = {}
@@ -80,9 +82,13 @@ def declarations(raw, binding):
         fairly = re.search(r'consolidated financial statements contain all adjustments necessary to present fairly,? in accordance with GAAP', text, re.I)
         condensed = re.search(r'condensed consolidated financial statements do not include.{0,180}?normally presented annually under generally accepted accounting principles in the United States', text, re.I)
         us_basis = re.search(r'(?:generally accepted accounting principles (?:in|of) the United States|(?:U\.?S\.?|United States) (?:generally accepted accounting principles|GAAP))', text, re.I)
-        if not (affirmative or fairly or condensed) or not (us_basis or glossary_proof): continue
+        # The same source assertion explicitly binds interim GAAP to the SEC's
+        # rules. A bare GAAP acronym, regulator URL or taxonomy is insufficient.
+        sec_interim = repair and affirmative and re.search(
+            r'generally accepted accounting principles for interim financial information and (?:pursuant to|in accordance with) the rules and regulations of the Securities and Exchange Commission', text, re.I)
+        if not (affirmative or fairly or condensed) or not (us_basis or glossary_proof or sec_interim): continue
         if not us_basis: pieces.extend(glossary_proof)
-        if re.search(r'(?:not|no longer) (?:prepared|presented) (?:in accordance|in conformity)', text, re.I): continue
+        if re.search(r'(?:not|never|no longer) (?:been )?(?:prepared|presented) (?:in accordance|in conformity)', text, re.I): continue
         spans = [{'document_id':binding[2], 'sha256':binding[1], 'start':piece.start, 'end':piece.end,
                   'span_sha256':hashlib.sha256(raw[piece.start:piece.end].encode()).hexdigest(),
                   'offset_unit':'unicode_character'} for piece in pieces]
@@ -102,7 +108,7 @@ def apply(bundle, identities, cache):
     for binding, raw in cache.items():
         if source_kinds.get(binding) != 'filing': continue
         selected = []
-        for declaration in declarations(raw, binding):
+        for declaration in declarations(raw, binding, repair=bundle.get('financial_source_policy') == REPAIR_VERSION):
             matching = [context for context in contexts.values() if context.get('id') == declaration['context_ref'] and not context.get('dimensions')]
             entities = {(context.get('entity'),context.get('entity_scheme')) for context in matching}
             if len(entities) == 1:
@@ -114,7 +120,11 @@ def apply(bundle, identities, cache):
             continue
         row = identities[identifier]; context = contexts[observation['context_id']]
         if row.get('basis') or context.get('dimensions'): continue
-        if re.search(r'\b(?:adjusted|non[-\s]*GAAP|pro[-\s]*forma|constant currency|normalized)\b', row.get('label') or '', re.I): continue
+        label = row.get('label') or ''
+        diluted_definition = (bundle.get('financial_source_policy') == REPAIR_VERSION
+            and observation['concept'] == 'us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding'
+            and re.fullmatch(r'Denominator for diluted (?:net income|earnings) per share [–—-] adjusted weighted[- ]average shares and assumed conversions', label, re.I))
+        if not diluted_definition and re.search(r'\b(?:adjusted|non[-\s]*GAAP|pro[-\s]*forma|constant currency|normalized)\b', label, re.I): continue
         binding = (observation['source_path'],observation['source_sha256'],observation['source_document_id'])
         declarations_for_entity = [declaration for entity,declaration in by_source.get(binding, [])
                                    if entity == (context.get('entity'),context.get('entity_scheme'))]
@@ -131,7 +141,7 @@ def source_support(value, bundle):
     mandatory table packet, whose complete delivered inspection is enforced.
     No raw-to-plain-text offset conversion or new model call is involved.
     """
-    if value.get('source_policy') != VERSION: return []
+    if value.get('source_policy') not in (VERSION, REPAIR_VERSION): return []
     declarations_found = {}
     def collect(node):
         if isinstance(node, dict):

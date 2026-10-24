@@ -253,7 +253,7 @@ def front_rows(value,selection=None):
                if not row.get('dimensions')]
     result={key:[] for key in FRONT_METRICS}
     for target,roles in FRONT_METRICS.items():
-        if target == 'cash' and value.get('source_policy') == 'filed-statement-context-v1':
+        if target == 'cash' and value.get('source_policy') in ('filed-statement-context-v1', 'filed-statement-repair-v1'):
             roles = ('free_cash_flow','operating_cash_flow','capital_expenditure',*roles[2:])
         for role in roles:
             candidates=[(family,row) for family,row in inventory if front_role(row)==role]
@@ -376,7 +376,7 @@ def notes(value,selection=None):
         result.append('- Free cash flow equals operating cash flow less capital expenditure, using the same period and the declared source sign convention.')
     if 'total_debt' in derived:
         result.append('- Calculated total debt adds compatible current and noncurrent debt observations; it does not estimate unreported obligations.')
-        if value.get('source_policy') == 'filed-statement-context-v1':
+        if value.get('source_policy') in ('filed-statement-context-v1', 'filed-statement-repair-v1'):
             result.append('- Debt is the balance-sheet carrying amount. Outstanding principal or management-reported gross debt may differ because of discounts, premiums, issuance costs or scope; those figures are not interchangeable.')
     if any(row.get('basis_origin')=='caller_declared' for rows in selected.values() for _,row in rows):
         result.append('- A basis marked assumed is caller-declared where the source does not state it; it is not a company assertion.')
