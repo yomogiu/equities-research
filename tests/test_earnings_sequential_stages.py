@@ -287,11 +287,37 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertEqual(result['revision_round'], 1)
         author_context = stages.read(self.job/'context-analysis-r1/artifacts.json')
         self.assertEqual(author_context['financial_tables_markdown'], (self.job/'financial-tables.md').read_text())
-        self.assertNotIn('section_revision', author_context)
+        self.assertEqual(author_context['section_revision']['allowed_locations'], ['demand'])
+        self.assertEqual(set(author_context['section_revision']['table_changes']), {'demand'})
         self.assertNotIn('financial_tables_markdown', stages.read(self.job/'context-review-r1/artifacts.json'))
-        self.assertFalse((self.job/'correction-r1.json').exists())
-        self.assertEqual(self.model_calls, [('gpt-6.1-sol','medium')] * 4)
+        self.assertTrue((self.job/'correction-r1.json').exists())
+        proof=stages.read(self.job/'correction-r1.json')
+        self.assertEqual(set(proof['table_changes']),{'demand'})
+        self.assertEqual(len(proof['prior_financial_artifacts']),3)
+        before=stages.read(self.job/'analysis-r0.json');after=stages.read(self.job/'analysis-r1.json')
+        self.assertEqual(before['sections']['earnings'],after['sections']['earnings'])
+        self.assertEqual(self.model_calls, [('gpt-6.1-sol','medium'),('gpt-6.1-sol','medium'),('gpt-6-luna','max'),('gpt-6.1-sol','medium')])
         self.assertEqual(len({a['outcome']['session_id'] for a in result['attempts'] if 'session_id' in a['outcome']}),4)
+
+    def test_changed_table_correction_rejects_unaffected_prose_edits(self):
+        self.prepare_interim_basis();self.financial_revise=True
+        for _ in range(5):self.advance()
+        def mutate(value,reader):
+            value['replacements']['cash']={'text':'Unrequested rewrite.', 'citations':[]}
+        self.patch_mutator=mutate
+        result=self.advance()
+        self.assertEqual(result['status'],'blocked')
+        self.assertIn('exactly the reviewed locations',result['reason'])
+        self.assertFalse((self.job/'report.html').exists())
+
+    def test_changed_table_correction_rejects_tampered_previous_table_archive(self):
+        self.prepare_interim_basis();self.financial_revise=True
+        for _ in range(5):self.advance()
+        (self.job/'history/financial-r0/financial-analysis.json').write_text('{}')
+        result=self.advance()
+        self.assertEqual(result['status'],'blocked')
+        self.assertEqual(self.counter,2)
+        self.assertIn('changed',result['reason'])
 
     def test_unsupported_table_repair_stops_without_spending_another_author_review_pair(self):
         self.financial_revise = True

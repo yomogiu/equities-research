@@ -129,14 +129,14 @@ class SequentialRevisionTests(unittest.TestCase):
         self.assertIn('D2', plan['citations'])
         revisions.apply(plan, self.replacement())
 
-    def test_financial_findings_and_changed_tables_require_full_path(self):
+    def test_financial_findings_require_changed_archives_and_changes_require_findings(self):
         self.review['findings'][0]['location'] = 'financial_tables'
         self.rebind_review()
-        self.assertIsNone(self.plan())
+        with self.assertRaisesRegex(ValueError,'changed, archived tables'): self.plan()
         self.review['findings'][0]['location'] = 'earnings'; self.rebind_review()
         updated = self.save_many({'financial-analysis.json': {'fictional_revenue': 11}})
         self.job['artifacts'].update(updated)
-        self.assertIsNone(self.plan())
+        with self.assertRaisesRegex(ValueError,'independent table finding'): self.plan()
 
     def test_prior_analysis_must_reconstruct_the_reviewed_candidate(self):
         self.job['attempts'][-1]['outcome']['input_sha256'] = '0' * 64

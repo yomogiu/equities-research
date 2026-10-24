@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 
 VERSION = "sequential-narrative-revision-v1"
@@ -78,7 +79,7 @@ def _source_bindings(root):
 
 
 def plan(root, job, render_candidate):
-    """Return a verified patch plan, or None for initial/full table-repair work.
+    """Return a verified patch plan, or None for the initial author.
 
     ``render_candidate(analysis, financial, manifest_path)`` must be the actual
     renderer. Prior candidate bytes are reconstructed and matched to the prior
@@ -102,12 +103,9 @@ def plan(root, job, render_candidate):
     _require(review.get("verdict") == "revise" and isinstance(review.get("findings"), list)
              and review["findings"], "Actionable prior review findings required")
     locations = {row.get("location") for row in review["findings"]}
-    if "financial_tables" in locations:
-        return None
-    _require(locations <= set(LOCATIONS), "Unknown review finding location")
-    if any(record.get("action") == "rebuild_tables" and record.get("revision_round") == revision-1
-           for record in job.get("administrative_history", [])):
-        return None
+    table_repair = "financial_tables" in locations
+    _require(locations <= set(LOCATIONS) | {'financial_tables'}, "Unknown review finding location")
+    locations.discard('financial_tables')
     author_positions = [index for index, attempt in enumerate(job["attempts"])
                         if attempt["stage"] == "analysis" and attempt.get("revision_round") == revision-1
                         and attempt.get("outcome", {}).get("outputs", {}).get(analysis_name) == job["artifacts"][analysis_name]]
@@ -117,8 +115,33 @@ def plan(root, job, render_candidate):
                             if attempt["stage"] == "financial_tables" and attempt.get("status") == "completed"), None)
     _require(previous_tables is not None and all(name in previous_tables for name in FINANCIAL_FILES),
              "Prior financial calculation binding required")
+    financial_before = _read(root / 'financial-analysis.json')
+    table_changes = {}
+    prior_financial_artifacts = {}
+    added_table_citations = set()
     if any(previous_tables[name] != frozen[name] for name in FINANCIAL_FILES):
-        return None
+        _require(table_repair, 'Changed tables require an independent table finding')
+        for name in FINANCIAL_FILES:
+            archive = f'history/financial-r{revision-1}/{name}'
+            _require(job['artifacts'].get(archive) == previous_tables[name], 'Prior financial archive differs from reviewed table inputs')
+            prior_financial_artifacts[archive] = previous_tables[name]
+        _verify(root, prior_financial_artifacts)
+        financial_before = _read(root / f'history/financial-r{revision-1}/financial-analysis.json')
+        from . import earnings_financial_analysis_report as finance
+        before_sections = finance.sections(financial_before)
+        after_sections = finance.sections(_read(root/'financial-analysis.json'))
+        for name in set(before_sections) | set(after_sections):
+            before_text = '\n'.join(before_sections.get(name, []))
+            after_text = '\n'.join(after_sections.get(name, []))
+            if before_text != after_text:
+                _require(name in SECTIONS, 'Changed financial table lacks an affected narrative section')
+                locations.add(name)
+                table_changes[name] = {'before': _text_sha(before_text), 'after': _text_sha(after_text)}
+                added_table_citations.update(set(re.findall(r'\[\^([A-Za-z0-9_-]+)\]',after_text))
+                    - set(re.findall(r'\[\^([A-Za-z0-9_-]+)\]',before_text)))
+        _require(table_changes, 'Financial repair made no visible table changes')
+    elif table_repair:
+        raise ValueError('Financial finding requires changed, archived tables')
     original_sources = next((attempt.get("outcome", {}).get("outputs", {})
                              for attempt in job["attempts"][:author_positions[-1]]
                              if attempt["stage"] == "sources" and attempt.get("status") == "completed"), None)
@@ -128,16 +151,17 @@ def plan(root, job, render_candidate):
                  and attempt.get("revision_round") == revision-1
                  and attempt.get("outcome", {}).get("outputs", {}).get(review_name) == job["artifacts"][review_name]]
     _require(reviewers, "Prior review artifact lacks an attempt binding")
-    before = render_candidate(analysis, _read(root / "financial-analysis.json"), root / "sources/manifest.json")
+    before = render_candidate(analysis, financial_before, root / "sources/manifest.json")
     candidate_sha = _text_sha(before)
     _require(reviewers[-1]["outcome"].get("input_sha256") == candidate_sha, "Prior analysis does not reconstruct the reviewed candidate")
     if job.get("revision_input"):
         _require(job["revision_input"].get(job["candidate_artifact"]) == candidate_sha, "Correction candidate binding changed")
     allowed = [location for location in LOCATIONS if location in locations]
     components = _components(analysis)
-    citations = set().union(*(_citations(components[name]) for name in allowed), _citations(review["findings"]))
+    citations = set().union(*(_citations(components[name]) for name in allowed), _citations(review["findings"]), added_table_citations)
     return {"version": VERSION, "revision_round": revision, "previous_analysis": analysis, "previous_review": review,
             "allowed_locations": allowed, "citations": sorted(citations),
+            "table_changes": table_changes, "prior_financial_artifacts": prior_financial_artifacts,
             "baseline_artifacts": {analysis_name: job["artifacts"][analysis_name], review_name: job["artifacts"][review_name]},
             "frozen_artifacts": frozen, "original_sources": sources, "previous_candidate_sha256": candidate_sha,
             "unchanged_components": {name: _digest(value) for name, value in components.items() if name not in allowed},
@@ -192,6 +216,7 @@ def audit(root, job, revision_plan, merged, candidate_text, render_candidate):
     return {"version": VERSION, "revision_round": fresh["revision_round"], "changed_locations": fresh["allowed_locations"],
             "baseline_artifacts": fresh["baseline_artifacts"], "frozen_artifacts": fresh["frozen_artifacts"],
             "original_sources": fresh["original_sources"], "unchanged_components": fresh["unchanged_components"],
+            "table_changes": fresh["table_changes"], "prior_financial_artifacts": fresh["prior_financial_artifacts"],
             "analysis_before_digest": _digest(fresh["previous_analysis"]), "analysis_after_digest": _digest(merged),
             "candidate_before_sha256": fresh["previous_candidate_sha256"], "candidate_after_sha256": _text_sha(candidate_text),
             "component_changes": {name: {"before": _digest(_components(fresh["previous_analysis"])[name]),
@@ -208,7 +233,7 @@ def load(root, job, render_candidate):
         return None
     _verify(root, {name: job["artifacts"][name]})
     revision_plan = plan(root, job, render_candidate)
-    _require(revision_plan is not None, "Saved narrative patch is not valid for a full table rebuild")
+    _require(revision_plan is not None, "Saved correction requires a verified prior candidate")
     analysis_name = f"analysis-r{job['revision_round']}.json"
     _require(analysis_name in job["artifacts"] and job["candidate_artifact"] in job["artifacts"], "Bound replacement analysis and candidate required")
     merged = _read(root / analysis_name)

@@ -34,8 +34,8 @@ executing source preparation and a complete corrected-report cycle.
    all eight review criteria and five expected questions. Revisions return to analysis
    in the same job, at most twice. Prose findings use targeted section corrections.
    Table findings automatically archive the old tables and return to financial tables;
-   original sources and cumulative costs stay fixed. New tables require full analysis
-   and fresh independent review before publication.
+   original sources and cumulative costs stay fixed. Changed tables expand correction scope to the affected sections and require
+   fresh independent review of the full candidate before publication.
 5. **Publication:** render only the exact accepted candidate. The private publisher
    persists artifacts and verifies remote bytes before recording successful publication.
 
@@ -47,8 +47,8 @@ of the report. Original disclosures remain available; qualitative claims still n
 original-source inspection and independent review.
 
 Initial analysis and independent review default to `gpt-6.1-sol` with medium
-reasoning. Verified narrative corrections default to `gpt-6-luna` with max reasoning;
-full reauthoring after table repairs retains the analysis model. Per-job `models`
+reasoning. Verified corrections default to `gpt-6-luna` with max reasoning, including
+sections affected by verified table repairs. Per-job `models`
 overrides use the distinct `analysis`, `review` and `correction` keys.
 
 A narrative-only correction replaces exactly the sections identified by the prior
@@ -59,8 +59,12 @@ revised candidate, prior review, verified changes and original evidence for chan
 claims and findings. Every replacement citation, including a reused financial ID,
 requires original-source inspection. The reviewer still assesses all eight criteria
 and all five questions; previous passes do not automatically carry forward. The full
-call is read on the initial pass and remains available during corrections. A changed
-financial table requires the full author/review path; invalid proof or changed frozen
+call is read on the initial pass and remains available during corrections. Changed
+financial tables expand the replacement scope to the affected financial sections.
+The prior candidate is reconstructed with its archived tables; new tables are verified
+against original sources. The fresh reviewer sees the full candidate, both change
+proofs and original support, including newly parsed comparative disclosures.
+Invalid proof or changed frozen
 sources blocks execution. No model call or new budget is hidden in these checks.
 
 Only analysis and review invoke models. There are no retrieval-model stages, separate

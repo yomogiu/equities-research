@@ -79,7 +79,7 @@ def build(root):
     statements.source_support(reproduced, bundle)
     displayed = set(re.findall(r'\[\^(F[0-9]+)\]', '\n'.join(
         line for line in rendered.splitlines() if line.startswith('|'))))
-    all_references = set(re.findall(r'\[\^(F[0-9]+)\]', rendered))
+    all_references = set(re.findall(r'\[\^([FD][0-9]+)\]', rendered))
     trusted = sorted(displayed & replayed)
     slices = evidence.source_slices(root/'sources/manifest.json', trusted)
     source_bindings = sorted({(span['document_id'],span['sha256'])

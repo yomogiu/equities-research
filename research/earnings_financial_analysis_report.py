@@ -84,8 +84,12 @@ def validate_configuration(value):
 
 def compile(bundle,config):
     validate_configuration(config)
-    return analysis.build(bundle,current_period=config['current_period'],as_of=config['as_of'],
+    value = analysis.build(bundle,current_period=config['current_period'],as_of=config['as_of'],
                           capex_conventions=config['capex_conventions'],accounting_bases=config['accounting_bases'])
+    if bundle.get('financial_source_policy') == 'filed-statement-repair-v1':
+        from . import earnings_reported_comparatives
+        value = earnings_reported_comparatives.supplement(value, bundle)
+    return value
 
 
 def verified(bundle):
