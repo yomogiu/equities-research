@@ -16,8 +16,9 @@ HPY = ('2039-01-01','2039-06-30')
 BASIS = 'The accompanying consolidated financial statements have been prepared in accordance with generally accepted accounting principles in the United States.'
 
 
-def fixture(root, specs, declaration=BASIS, continued=False):
+def fixture(root, specs, declaration=BASIS, continued=False, glossary=None):
     parts=[]
+    if glossary is not None: parts.append('<table><tr><td>GAAP</td><td>'+glossary+'</td></tr></table>')
     for n,row in enumerate(specs):
         period=row[2];dim=row[4] if len(row)>4 else ''
         dates=('<xbrli:instant>'+period[0]+'</xbrli:instant>') if len(period)==1 else ('<xbrli:startDate>'+period[0]+'</xbrli:startDate><xbrli:endDate>'+period[1]+'</xbrli:endDate>')
@@ -72,6 +73,66 @@ class FinancialStatementContextTests(unittest.TestCase):
                 _,value=self.build(specs,declaration=declaration)
                 self.assertIsNone(rows(value,'revenue')[0]['basis'])
                 self.assertEqual(rows(value,'revenue')[0]['changes']['yoy']['status'],'unavailable')
+
+    def test_present_fairly_requires_exact_us_glossary_and_preserves_both_spans(self):
+        declaration='The accompanying consolidated financial statements contain all adjustments necessary to present fairly, in accordance with GAAP, the financial position.'
+        specs=[('us-gaap:RegulatedAndUnregulatedOperatingRevenue',120,Q,'Utility operating revenue'),
+               ('us-gaap:RegulatedAndUnregulatedOperatingRevenue',100,PY,'Operating revenue')]
+        bundle,value=self.build(specs,declaration=declaration,glossary='United States generally accepted accounting principles')
+        found=rows(value,'revenue');self.assertEqual(len(found),1)
+        self.assertEqual(found[0]['changes']['yoy']['percent'],'20.0')
+        support=statements.source_support(value,bundle)
+        self.assertEqual(len(support),2)
+        self.assertTrue(any('United States generally accepted' in row['text'] for row in support))
+        self.assertTrue(any('present fairly' in row['text'] for row in support))
+        legacy=report.compile(bundle,report.configuration(*Q))
+        self.assertFalse(rows(legacy,'revenue'))
+        for glossary in (None,'Generally accepted accounting principles','Canadian generally accepted accounting principles'):
+            with self.subTest(glossary=glossary):
+                _,value=self.build(specs,declaration=declaration,glossary=glossary)
+                self.assertIsNone(rows(value,'revenue')[0]['basis'])
+                self.assertEqual(rows(value,'revenue')[0]['changes']['yoy']['status'],'unavailable')
+
+    def test_glossary_alone_does_not_qualify_unrelated_or_negated_declaration(self):
+        for declaration in ('Management discusses GAAP measures.',
+                            'The consolidated financial statements are not presented in accordance with GAAP.'):
+            _,value=self.build([('us-gaap:Revenues',120,Q,'Revenue')], declaration=declaration,
+                               glossary='United States generally accepted accounting principles')
+            self.assertIsNone(rows(value,'revenue')[0]['basis'])
+
+    def test_productive_assets_requires_exact_original_capex_label(self):
+        for label in ('Capital expenditures','Capital/construction expenditures','Purchases of property, plant and equipment'):
+            with self.subTest(label=label):
+                bundle,value=self.build([('us-gaap:PaymentsToAcquireProductiveAssets',20,H,label),
+                                         ('us-gaap:NetCashProvidedByUsedInOperatingActivities',70,H,'Operating cash flow')])
+                self.assertEqual(rows(value,'capital_expenditure','half')[0]['cells']['current']['value'],'20')
+                self.assertEqual(rows(value,'free_cash_flow','half')[0]['cells']['current']['value'],'50')
+                self.assertFalse(rows(report.compile(bundle,report.configuration(*Q)),'capital_expenditure','half'))
+        for label in ('Purchases of productive assets','Capital expenditures and acquisitions','Not capital expenditures'):
+            with self.subTest(label=label):
+                _,value=self.build([('us-gaap:PaymentsToAcquireProductiveAssets',20,H,label)])
+                self.assertFalse(rows(value,'capital_expenditure','half'))
+
+    def test_lease_inclusive_debt_components_are_displayed_without_inferred_total(self):
+        specs=[('us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent',12,('2040-06-30',),'Current debt'),
+               ('us-gaap:LongTermDebtAndCapitalLeaseObligations',100,('2040-06-30',),'Long-term debt'),
+               ('us-gaap:ShortTermBorrowings',8,('2040-06-30',),'Short-term debt'),
+               ('us-gaap:LongTermDebtAndCapitalLeaseObligations',90,('2039-12-31',),'Long-term debt')]
+        bundle,value=self.build(specs)
+        selected=report.front_rows(value)['cash']
+        self.assertEqual({row['metric_id'] for _,row in selected},set(report.DEBT_COMPONENT_NAMES))
+        self.assertTrue(all(family=='instant' for family,_ in selected))
+        for _,row in selected:
+            self.assertEqual(row['cells']['current']['period'],['instant','2040-06-30'])
+            self.assertEqual(row['cells']['prior_quarter']['status'],'missing')
+            self.assertEqual(row['cells']['prior_year']['status'],'missing')
+        self.assertFalse(rows(value,'total_debt','instant'))
+        text='\n'.join(report.sections(value)['cash']+report.notes(value))
+        self.assertIn('capital leases',text)
+        self.assertIn('No combined total is inferred',text)
+        self.assertIn('Debt total unavailable',text)
+        self.assertTrue(all('[^'+row['cells']['current']['fact_ids'][0]+']' in text for _,row in selected))
+        self.assertFalse(report.front_rows(report.compile(bundle,report.configuration(*Q)))['cash'])
 
     def test_historical_nonoptin_computation_remains_unqualified(self):
         bundle,_=self.build([('us-gaap:Revenues',120,Q,'Revenue'),('us-gaap:Revenues',100,PY,'Revenue')])

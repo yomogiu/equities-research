@@ -17,7 +17,12 @@ FAMILIES={'quarter':'Quarter','half':'Six-month duration','nine-month':'Nine-mon
           'annual':'Annual','instant':'Point-in-time balances','other':'Other reported duration'}
 EARNINGS={'gross_profit','cost_of_revenue','operating_income','net_income','diluted_eps','diluted_shares',
           'gross_margin','operating_margin','net_margin','ebitda','ebitda_margin'}
-CASH={'operating_cash_flow','capital_expenditure','cash_and_equivalents','inventory','assets','liabilities',
+DEBT_COMPONENT_NAMES = {
+    'current_debt_and_capital_leases':'Current portion of long-term debt and capital leases',
+    'long_term_debt_and_capital_leases':'Long-term debt and capital leases (filed balance)',
+    'short_term_borrowings':'Short-term borrowings',
+}
+CASH={*DEBT_COMPONENT_NAMES,'operating_cash_flow','capital_expenditure','cash_and_equivalents','inventory','assets','liabilities',
       'short_term_investments','current_debt','noncurrent_debt',*analysis.DERIVED.keys()}
 EXPENSE_CONCEPTS={
     'us-gaap:CostOfRevenue','us-gaap:CostOfGoodsAndServicesSold','us-gaap:CostOfGoodsSold',
@@ -36,6 +41,7 @@ METRIC_LABELS.update(diluted_eps='Diluted EPS')
 
 
 def metric_label(row):
+    if row['metric_id'] in DEBT_COMPONENT_NAMES: return DEBT_COMPONENT_NAMES[row['metric_id']]
     source=display.strip_terminal_dot_leader(row['label'])
     concept=row.get('concepts',[''])[0]
     friendly=METRIC_LABELS.get(row['metric_id'],display.humanize(concept))
@@ -184,7 +190,7 @@ FRONT_METRICS={
     'earnings':('diluted_eps','gross_margin','research_and_development','diluted_shares',
                 'operating_income','operating_margin','net_income'),
     'cash':('free_cash_flow','operating_cash_flow','total_debt','current_debt','noncurrent_debt',
-            'cash_and_equivalents'),
+            'cash_and_equivalents', *DEBT_COMPONENT_NAMES),
 }
 DISPLAY_CONCEPTS={
     'us-gaap:ResearchAndDevelopmentExpense':'research_and_development',
@@ -252,7 +258,7 @@ def front_rows(value,selection=None):
         for role in roles:
             candidates=[(family,row) for family,row in inventory if front_role(row)==role]
             families=('quarter',) if target!='cash' else (
-                ('instant',) if role in ('total_debt','current_debt','noncurrent_debt','cash_and_equivalents')
+                ('instant',) if role in ('total_debt','current_debt','noncurrent_debt','cash_and_equivalents', *DEBT_COMPONENT_NAMES)
                 else ('quarter','nine-month','half','annual'))
             if role == 'capital_expenditure':
                 flow_families = [family for family,row in result['cash'] if front_role(row) in ('free_cash_flow','operating_cash_flow')]
@@ -360,6 +366,8 @@ def notes(value,selection=None):
     derived={front_role(row) for rows in selected.values() for _,row in rows if row.get('derived')}
     result=['- The main tables select consolidated core metrics. Other reported dates, segments and line items remain in financial-analysis.json; they are not silently substituted for quarter comparisons.',
             '- Source references identify the observations used. Exact values, source labels, accounting bases, missing-comparison reasons and calculation lineage remain in financial-analysis.json.']
+    if any(front_role(row) in DEBT_COMPONENT_NAMES for _, row in selected['cash']):
+        result.append('- Debt and capital-lease components and short-term borrowings are shown as filed. No combined total is inferred because component overlap and scope have not been established.')
     if selection is not None:
         result.append('- Debt/lease disclosures are explicitly selected source balances. Selection does not classify them as pure debt or authorize a combined total.')
     if derived&{'gross_margin','operating_margin'}:

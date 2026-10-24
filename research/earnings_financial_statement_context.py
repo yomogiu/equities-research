@@ -31,12 +31,36 @@ def qualify(bundle):
     return result
 
 
+def calculation_role(concept, identity):
+    """Narrow opt-in additions; broader asset purchases require an exact label."""
+    exact = {'us-gaap:RegulatedAndUnregulatedOperatingRevenue':'revenue',
+             'us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent':'current_debt_and_capital_leases',
+             'us-gaap:LongTermDebtAndCapitalLeaseObligations':'long_term_debt_and_capital_leases',
+             'us-gaap:ShortTermBorrowings':'short_term_borrowings'}
+    if concept in exact: return exact[concept]
+    if (concept == 'us-gaap:PaymentsToAcquireProductiveAssets'
+            and identity.get('label_origin') == 'exact_source_cells'
+            and re.fullmatch(r'(?:capital(?:/construction)? expenditures|purchases of property,? plant(?:,? and| &) equipment)',
+                             identity.get('label') or '', re.I)):
+        return 'capital_expenditure'
+    return None
+
+
 def declarations(raw, binding):
     """Read exact basis text and continuations; reject missing/cyclic bindings."""
     parser = financial_evidence._Parser(raw); parser.feed(raw); parser.close()
     continuations = {}
     for node in parser.root.all('continuation'):
         continuations.setdefault(node.attrs.get('id'), []).append(node)
+    # The acronym may be defined in an original glossary row outside the XBRL
+    # declaration. Bind that exact row too; a generic GAAP mention is insufficient.
+    glossary = []
+    for row in parser.root.all('tr'):
+        cells = [' '.join(cell.text().split()) for cell in row.all('td')]
+        cells = [cell for cell in cells if cell]
+        if len(cells) == 2 and cells[0].upper() == 'GAAP':
+            glossary.append((row, bool(re.fullmatch(r'(?:United States|U\.?S\.?) generally accepted accounting principles\.?', cells[1], re.I))))
+    glossary_proof = [row for row, valid in glossary] if glossary and all(valid for _, valid in glossary) else []
     result = []
     for node in parser.root.all('nonnumeric'):
         if node.attrs.get('name') not in BASIS_CONCEPTS or node.attrs.get('xsi:nil') in ('true','1'):
@@ -53,9 +77,11 @@ def declarations(raw, binding):
         # Both forms are source assertions about the accompanying statements.
         # An unrelated mention of GAAP or a reconciliation does not qualify.
         affirmative = re.search(r'consolidated financial statements.{0,300}?(?:prepared|presented).{0,160}?(?:in accordance with|in conformity with).{0,100}?(?:generally accepted accounting principles|GAAP)', text, re.I)
+        fairly = re.search(r'consolidated financial statements contain all adjustments necessary to present fairly,? in accordance with GAAP', text, re.I)
         condensed = re.search(r'condensed consolidated financial statements do not include.{0,180}?normally presented annually under generally accepted accounting principles in the United States', text, re.I)
         us_basis = re.search(r'(?:generally accepted accounting principles (?:in|of) the United States|(?:U\.?S\.?|United States) (?:generally accepted accounting principles|GAAP))', text, re.I)
-        if not (affirmative or condensed) or not us_basis: continue
+        if not (affirmative or fairly or condensed) or not (us_basis or glossary_proof): continue
+        if not us_basis: pieces.extend(glossary_proof)
         if re.search(r'(?:not|no longer) (?:prepared|presented) (?:in accordance|in conformity)', text, re.I): continue
         spans = [{'document_id':binding[2], 'sha256':binding[1], 'start':piece.start, 'end':piece.end,
                   'span_sha256':hashlib.sha256(raw[piece.start:piece.end].encode()).hexdigest(),

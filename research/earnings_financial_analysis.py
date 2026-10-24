@@ -214,7 +214,7 @@ def _inventory(bundle, capex_conventions, accounting_bases):
                 raise ValueError('Configured accounting basis contradicts source basis')
             basis = basis or override
             # Undeclared basis remains undeclared, including inline GAAP tags.
-            role = CONCEPTS.get(obs['concept'])
+            role = CONCEPTS.get(obs['concept']) or (statements.calculation_role(obs['concept'], identity) if statement_policy else None)
             convention = capex_conventions.get(obs['id'], 'positive_payment') if role == 'capital_expenditure' else None
             exact_inline_identity = statement_policy and obs.get('method') == 'inline_xbrl' and role and basis
             grouping_label = None if role and (obs.get('method') == 'reviewed_html_table' or exact_inline_identity) else label
