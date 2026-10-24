@@ -125,6 +125,20 @@ class SequentialStagesTests(unittest.TestCase):
             self.assertEqual(settings['max_tool_calls'], required + 4)
             self.assertLess(settings['max_tool_calls'], 32)
 
+    def test_optional_investigation_shrinks_before_mandatory_review_is_blocked(self):
+        self.advance(); self.advance(); self.advance()
+        job = stages.read(self.job/'job.json')
+        index = stages._role_context(self.job, job, 'review')
+        reader = context.Evidence(index, self.job/'unused-plan.jsonl', _replay=True)
+        prompt = stages._prompt('review', len(reader.role_batch_plan()))
+        mandatory = stages.runner.budget_preflight('review', index, prompt, 1_200_000)
+        bounded = stages._editorial_preflight('review', index, prompt, mandatory['planned_tokens'])
+        self.assertEqual(bounded['status'], 'ready')
+        self.assertEqual(bounded['additional_investigation_calls'], 0)
+        self.assertEqual(bounded['max_tool_calls'], mandatory['work_plan']['work_tool_limit'] + 1)
+        self.assertEqual(stages._editorial_preflight('review', index, prompt, mandatory['planned_tokens'] - 1)['status'],
+                         'insufficient_planned_budget')
+
     def test_full_original_call_read_is_mandatory(self):
         self.skip_call = True
         result = self.run_complete()

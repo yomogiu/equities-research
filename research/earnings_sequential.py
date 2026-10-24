@@ -295,3 +295,85 @@ def advance(root, handlers, execute=True):
         finally:
             _ACTIVE.reset(context)
         return _finish(root, _read(root))
+
+
+def _commit(value):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
+        raise ValueError("exact execution code commit required")
+    return value
+
+
+def bind_execution_code(root, code_commit):
+    """Select code for an unstarted job without changing its frozen specification."""
+    root = Path(root).resolve()
+    code_commit = _commit(code_commit)
+    with _lock(root):
+        job = _read(root)
+        if job["status"] != "ready" or job["attempts"]:
+            raise ValueError("only an unstarted ready job can bind execution code")
+        job["execution_code_commit"] = code_commit
+        _write(root, job)
+        return job
+
+
+def resume(root, reason, code_commit, *, reconcile=None):
+    """Explicitly resume a proven closed editorial failure, at most twice.
+
+    Budgets, evidence, attempts and revision counts are never reset. A legacy
+    blocked outcome without certainty may be reconciled by a trusted adapter
+    callback ``reconcile(root, job)``. It must validate authenticated execution
+    receipts and return ``execution_certainty='closed'``, already charged tokens,
+    and ``outputs`` mapping proof-file paths to hashes. The original outcome is
+    retained; reconciliation evidence belongs to this same job's admin history.
+    """
+    root = Path(root).resolve()
+    code_commit = _commit(code_commit)
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 4000:
+        raise ValueError("explicit bounded operator reason required")
+    with _lock(root):
+        job = _read(root)
+        if job["status"] != "blocked" or job["stage"] not in ("analysis", "review"):
+            raise ValueError("only a blocked editorial stage can resume")
+        history = job.get("administrative_history", [])
+        if sum(item.get("action") == "resume" for item in history) >= 2:
+            raise ValueError("operator resume limit reached")
+        if job["tokens_used"] >= job["budget_tokens"]:
+            raise ValueError("token budget exhausted")
+        if not job["attempts"]:
+            raise ValueError("completed failure outcome required")
+        attempt = job["attempts"][-1]
+        outcome = attempt.get("outcome", {})
+        tokens = _integer(outcome.get("tokens"), "closed outcome tokens")
+        if (outcome.get("status") == "revise" or
+                (job["stage"] == "review" and outcome.get("status") == "blocked" and outcome.get("input_sha256"))):
+            raise ValueError("a substantive review decision cannot be retried as a technical failure")
+        if attempt["stage"] != job["stage"] or not attempt.get("usage_recorded"):
+            raise ValueError("closed attempt must have accounted usage")
+        charged = sum(_integer(a["outcome"].get("tokens"), "recorded tokens")
+                      for a in job["attempts"] if a.get("usage_recorded"))
+        if charged != job["tokens_used"]:
+            raise ValueError("cumulative charged usage does not match attempt history")
+        _verify(root, job["artifacts"])
+        _verify(root, job.get("revision_input", {}))
+        certainty = outcome.get("execution_certainty")
+        if outcome.get("status") == "completed":
+            certainty = "completed"
+        proof = None
+        if certainty not in ("closed", "completed", "not_started"):
+            if not callable(reconcile):
+                raise ValueError("execution closure must be verified before resume")
+            proof = reconcile(root, copy.deepcopy(job))
+            if (not isinstance(proof, dict) or proof.get("execution_certainty") != "closed"
+                    or _integer(proof.get("tokens"), "reconciled tokens") != tokens
+                    or not isinstance(proof.get("outputs"), dict) or not proof["outputs"]):
+                raise ValueError("authenticated closure proof must match charged outcome")
+            _verify(root, proof["outputs"])
+        record = dict(action="resume", reason=reason.strip(), attempt_id=attempt["id"],
+                      previous_code_commit=job.get("execution_code_commit", job["specification"].get("code_commit")),
+                      code_commit=code_commit, tokens_used=job["tokens_used"], revision_round=job["revision_round"],
+                      stage=job["stage"], closure=proof or {"execution_certainty": certainty})
+        job.setdefault("administrative_history", []).append(record)
+        job.update(status="ready", execution_code_commit=code_commit)
+        job.pop("reason", None)
+        _write(root, job)
+        return job

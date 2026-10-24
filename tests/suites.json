@@ -58,6 +58,7 @@
     "test_earnings_scoped_final_proposals",
     "test_earnings_sequential",
     "test_earnings_sequential_dates",
+    "test_earnings_sequential_execution",
     "test_earnings_sequential_stages",
     "test_earnings_structural_addresses",
     "test_earnings_transport_connection",

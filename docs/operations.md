@@ -31,6 +31,9 @@ The private runtime CLI is `python3 scripts/run_reports.py tick`. It advances on
 company through up to five stages. The scheduler invokes this command and reports its
 result; it does not choose repairs, change budgets or edit execution state. `status` is
 read-only. `initialize` creates untouched jobs once from the static authorized batch.
+An operator may explicitly resume a proven closed model failure after fixing its cause.
+The same journal retains the failed attempt, all charged tokens and the code-change reason;
+this is bounded to two operator resumes. The scheduler never performs this action.
 Global universe analysis remains separately gated. Collection and calendar workflows
 are unchanged.
 

@@ -240,6 +240,87 @@ class SequentialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reserved"):
             pipeline.create(self.root / "new", {"candidate_artifact": "./job.json"})
 
+    def blocked_author(self, certainty="closed"):
+        self.advance(); self.advance()
+        def author(root, job):
+            return {"status": "blocked", "outputs": {}, "tokens": 7,
+                    "execution_certainty": certainty, "reason": "Fictitious closed failure"}
+        self.handlers["analysis"] = author
+        return self.advance()
+
+    def test_resume_preserves_costs_attempts_revision_and_specification(self):
+        before = self.blocked_author()
+        result = pipeline.resume(self.root, "Fix fictitious prompt", "a" * 40)
+        self.assertEqual(result["status"], "ready")
+        for name in ("tokens_used", "attempts", "revision_round", "specification", "budget_tokens"):
+            self.assertEqual(result[name], before[name])
+        self.assertEqual(result["execution_code_commit"], "a" * 40)
+        self.handlers["analysis"] = self.handler("analysis")
+        self.assertEqual(self.advance()["tokens_used"], 17)
+
+    def test_resume_is_bounded_to_two_explicit_retries(self):
+        self.blocked_author()
+        for _ in range(2):
+            pipeline.resume(self.root, "Fictitious repair", "a" * 40)
+            self.advance()
+        with self.assertRaisesRegex(ValueError, "resume limit"):
+            pipeline.resume(self.root, "Another repair", "a" * 40)
+
+    def test_resume_rejects_tampering_and_unknown_execution(self):
+        self.blocked_author("unknown")
+        with self.assertRaisesRegex(ValueError, "closure"):
+            pipeline.resume(self.root, "Fictitious repair", "a" * 40)
+        (self.root / "sources.json").write_text("changed")
+        with self.assertRaisesRegex(ValueError, "changed"):
+            pipeline.resume(self.root, "Fictitious repair", "a" * 40)
+
+    def test_resume_reconciles_existing_closed_receipts_without_editing_outcome(self):
+        before = self.blocked_author("unknown")
+        proof = {"execution_certainty": "closed", "tokens": 7,
+                 "outputs": {"closed.json": self.artifact("closed.json", "fictional proof")}}
+        result = pipeline.resume(self.root, "Verified closed fake execution", "a" * 40,
+                                 reconcile=lambda root, job: proof)
+        self.assertEqual(result["attempts"], before["attempts"])
+        self.assertEqual(result["administrative_history"][-1]["closure"], proof)
+
+    def test_uncertain_status_cannot_resume_even_with_reconciler(self):
+        job = self.blocked_author()
+        job["status"] = "execution_uncertain"
+        (self.root / "job.json").write_text(json.dumps(job))
+        with self.assertRaisesRegex(ValueError, "blocked editorial"):
+            pipeline.resume(self.root, "Fictitious repair", "a" * 40, reconcile=lambda *_: {})
+
+    def test_code_binding_only_before_first_attempt(self):
+        initial = pipeline.bind_execution_code(self.root, "a" * 40)
+        self.assertEqual(initial["execution_code_commit"], "a" * 40)
+        self.advance()
+        with self.assertRaisesRegex(ValueError, "unstarted"):
+            pipeline.bind_execution_code(self.root, "b" * 40)
+
+    def test_review_rejection_cannot_be_resumed_to_seek_an_approval(self):
+        self.through_analysis()
+        def review(root, job):
+            outcome = self.handler("review")(root, job)
+            outcome['status'] = 'revise'
+            return outcome
+        self.handlers['review'] = review
+        for _ in range(5):
+            result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        with self.assertRaisesRegex(ValueError, 'substantive review'):
+            pipeline.resume(self.root, 'Try another reviewer', 'a' * 40)
+
+    def test_financial_review_block_cannot_be_resumed_as_a_technical_failure(self):
+        self.through_analysis()
+        def review(root, job):
+            outcome = self.handler('review')(root, job)
+            outcome.update(status='blocked', execution_certainty='completed', reason='Financial table problem')
+            return outcome
+        self.handlers['review'] = review
+        self.advance()
+        with self.assertRaisesRegex(ValueError, 'substantive review'):
+            pipeline.resume(self.root, 'Try another reviewer', 'a' * 40)
+
 
 if __name__ == "__main__":
     unittest.main()
