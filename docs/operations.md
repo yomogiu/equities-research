@@ -23,6 +23,8 @@ The private runtime supplies source qualification and verified private publicati
 Only analysis and review invoke models. There are no retrieval-model stages, separate
 signal-author stages, successor jobs, repair queues or agent-to-agent handoffs in this path.
 The standard successful pass has two model calls; revisions add an author and reviewer.
+Each role plans its own required evidence reads. Whole-role token forecasts are advisory;
+admission checks minimum context feasibility and the runtime enforces actual usage.
 Every call consumes the same cumulative job allowance, including failed work. An uncertain
 paid execution stops for reconciliation rather than silently retrying. Deterministic,
 idempotent stages may safely resume after interruption. One process owns the job lock.
@@ -34,7 +36,12 @@ read-only. `initialize` creates untouched jobs once from the static authorized b
 An operator may explicitly resume a proven closed model failure or a safely replayable,
 zero-token deterministic failure after fixing its cause.
 The same journal retains the failed attempt, all charged tokens and the code-change reason;
-this is bounded to two operator resumes. The scheduler never performs this action. A proven financial-table defect may instead
+actual model restarts are bounded to two. A recorded zero-token `not_started` model
+attempt with no session or execution directory, or a zero-token replay-safe deterministic
+attempt, can be repaired explicitly without consuming that limit. Classification comes
+from the referenced attempt outcome, including for older resume records; the operator's
+reason cannot change it. All repair records remain in the same journal. The scheduler
+never performs this action. A proven financial-table defect may instead
 be rebuilt explicitly in the same job: original table bytes are archived, source hashes
 and cumulative costs are preserved, and a correction round requires fresh analysis and
 review. The scheduler cannot bypass that review.

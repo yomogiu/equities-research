@@ -396,6 +396,49 @@ class SequentialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'replay-safe'):
             pipeline.resume(self.root, 'Try again', 'b' * 40)
 
+    def test_zero_launch_repair_after_two_model_resumes_preserves_paid_limit(self):
+        self.blocked_author()
+        pipeline.resume(self.root, 'Repair first closed attempt', 'a' * 40)
+        self.advance()
+        pipeline.resume(self.root, 'Repair second closed attempt', 'a' * 40)
+        self.handlers['analysis'] = lambda root, job: {
+            'status': 'blocked', 'outputs': {}, 'tokens': 0,
+            'execution_certainty': 'not_started', 'reason': 'Conservative admission forecast'}
+        before = self.advance()
+        self.assertEqual(len(before['administrative_history']), 2)
+        result = pipeline.resume(self.root, 'Fix forecast before launch', 'b' * 40)
+        for name in ('tokens_used', 'attempts', 'revision_round', 'artifacts', 'specification'):
+            self.assertEqual(result[name], before[name])
+        self.assertEqual(len(result['administrative_history']), 3)
+        self.handlers['analysis'] = lambda root, job: {
+            'status': 'blocked', 'outputs': {}, 'tokens': 7,
+            'execution_certainty': 'closed', 'reason': 'Third charged failure'}
+        self.advance()
+        with self.assertRaisesRegex(ValueError, 'model resume limit'):
+            pipeline.resume(self.root, 'Another actual model restart', 'b' * 40)
+
+    def test_resume_history_reason_and_closure_hints_cannot_erase_paid_restarts(self):
+        self.blocked_author()
+        for _ in range(2):
+            pipeline.resume(self.root, 'Technical model restart', 'a' * 40)
+            self.advance()
+        job = json.loads((self.root/'job.json').read_text())
+        for record in job['administrative_history']:
+            record.update(reason='Claimed free repair', closure={'execution_certainty': 'not_started'})
+        (self.root/'job.json').write_text(json.dumps(job))
+        with self.assertRaisesRegex(ValueError, 'model resume limit'):
+            pipeline.resume(self.root, 'Claimed free again', 'a' * 40)
+
+    def test_zero_token_claim_with_session_is_still_a_model_restart(self):
+        attempt = {'stage': 'analysis', 'usage_recorded': True, 'outcome': {
+            'tokens': 0, 'execution_certainty': 'not_started', 'session_id': 'existing-session'}}
+        self.assertTrue(pipeline._model_restart(attempt))
+
+    def test_charged_not_started_claim_requires_authenticated_closure(self):
+        self.blocked_author(certainty='not_started')
+        with self.assertRaisesRegex(ValueError, 'closure'):
+            pipeline.resume(self.root, 'Claimed prelaunch repair', 'b' * 40)
+
 
 if __name__ == "__main__":
     unittest.main()

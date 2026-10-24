@@ -167,23 +167,52 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertEqual(self.run_complete()['status'], 'completed')
         for role, settings in zip(('analysis', 'review'), self.transport_settings):
             index = self.job/f'context-{role}-r0/index.json'
-            required = stages.runner.work_plan(role, index)['work_tool_limit']
-            self.assertEqual(settings['max_tool_calls'], required + 4)
-            self.assertLess(settings['max_tool_calls'], 32)
+            reader = context.Evidence(index, self.job/'unused-plan.jsonl', _replay=True)
+            required = len(reader.role_batch_plan()) + int(role == 'review')
+            self.assertEqual(settings['max_tool_calls'], min(8, required + 3) + 1)
+            self.assertLessEqual(settings['max_tool_calls'], 9)
 
-    def test_optional_investigation_shrinks_before_mandatory_review_is_blocked(self):
+    def review_plan(self, available=1_200_000):
         self.advance(); self.advance(); self.advance()
         job = stages.read(self.job/'job.json')
         index = stages._role_context(self.job, job, 'review')
         reader = context.Evidence(index, self.job/'unused-plan.jsonl', _replay=True)
         prompt = stages._prompt('review', len(reader.role_batch_plan()))
-        mandatory = stages.runner.budget_preflight('review', index, prompt, 1_200_000)
-        bounded = stages._editorial_preflight('review', index, prompt, mandatory['planned_tokens'])
-        self.assertEqual(bounded['status'], 'ready')
-        self.assertEqual(bounded['additional_investigation_calls'], 0)
-        self.assertEqual(bounded['max_tool_calls'], mandatory['work_plan']['work_tool_limit'] + 1)
-        self.assertEqual(stages._editorial_preflight('review', index, prompt, mandatory['planned_tokens'] - 1)['status'],
-                         'insufficient_planned_budget')
+        return index, prompt, stages._editorial_preflight('review', index, prompt, available)
+
+    def test_funded_review_is_admitted_below_whole_role_forecast(self):
+        index, prompt, forecast = self.review_plan()
+        available = forecast['minimum_context_tokens']
+        self.assertGreater(forecast['planned_tokens'], available)
+        with patch.object(stages.runner, 'budget_preflight', side_effect=AssertionError('legacy forecast forbidden')), \
+             patch.object(stages.runner, 'work_plan', side_effect=AssertionError('legacy work plan forbidden')):
+            admitted = stages._editorial_preflight('review', index, prompt, available)
+        self.assertEqual(admitted['status'], 'ready')
+        self.assertEqual(admitted['work_plan']['challenge_checks'], 1)
+        self.assertNotIn('validation_checks', admitted['work_plan'])
+        self.assertNotIn('filing_checks', admitted['work_plan'])
+        self.assertEqual(stages._editorial_preflight('review', index, prompt, available - 1)['status'],
+                         'insufficient_context_budget')
+
+    def test_below_forecast_launch_preserves_remaining_cap_and_evidence_coverage(self):
+        _, _, forecast = self.review_plan()
+        job = stages.read(self.job/'job.json')
+        remaining = forecast['minimum_context_tokens'] + 1000
+        self.assertLess(remaining, forecast['planned_tokens'])
+        job['tokens_used'] = job['budget_tokens'] - remaining
+        (self.job/'job.json').write_text(json.dumps(job))
+        result = self.advance()
+        self.assertEqual(result['status'], 'ready', result.get('reason'))
+        self.assertEqual(result['stage'], 'publication')
+        self.assertEqual(self.transport_settings[-1]['max_tokens'], remaining)
+        self.assertEqual(result['tokens_used'], job['tokens_used'] + 100)
+        self.assertEqual(self.counter, 2)
+
+    def test_oversized_mandatory_plan_is_rejected_without_skipping_pages(self):
+        index, prompt, _ = self.review_plan()
+        with patch.object(context.Evidence, 'role_batch_plan', return_value=[{'utf8_bytes':1000}]*8):
+            with self.assertRaisesRegex(ValueError, 'eight-call bounded'):
+                stages._editorial_preflight('review', index, prompt, 1_200_000)
 
     def test_full_original_call_read_is_mandatory(self):
         self.skip_call = True

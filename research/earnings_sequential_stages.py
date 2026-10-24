@@ -491,26 +491,48 @@ def failed_execution(root, job):
 
 
 def _editorial_preflight(role, index, prompt, available):
-    """Budget optional investigation as well as mandatory evidence inspection."""
-    plan = runner.budget_preflight(role, index, prompt, available)
-    extra_reads = 0
-    prefix = ((len(prompt.encode()) + 2) // 3 + plan['wire_envelope_allowance'] +
-              sum((size + 2) // 3 + plan['intermediate_output_allowance']
-                  for size in plan['tool_packet_utf8_bytes']))
-    extra_inputs = 0
-    required = plan['planned_tokens']
-    for proposed_reads in range(1, 4):
-        prefix += 20_000 + plan['intermediate_output_allowance']
-        extra_inputs += prefix
-        proposed_tokens = plan['planned_tokens'] + extra_inputs + proposed_reads * plan['intermediate_output_allowance']
-        if proposed_tokens <= available:
-            extra_reads, required = proposed_reads, proposed_tokens
-        else:
-            break
-    return {**plan, 'planned_tokens': required,
-            'status': 'ready' if available >= required else 'insufficient_planned_budget',
-            'additional_investigation_calls': extra_reads,
-            'max_tool_calls': plan['work_plan']['work_tool_limit'] + extra_reads + 1}
+    """Admit a funded stage; repeated-input forecasts are advisory only.
+
+    The sequential contract requires role pages and one review challenge, with
+    no legacy validation or filing-check calls. UTF-8 bytes / 3 estimates the
+    assembled context, not a tokenizer or a guarantee of completing the role.
+    The worker still reserves the registered output maximum before every turn
+    and charges all repeated input against the unchanged remaining job budget.
+    """
+    require(role in ('analysis', 'review'), 'Sequential editorial role required')
+    reader = context.Evidence(index, Path(index).parent/'unused-budget.jsonl', _replay=True)
+    pages = reader.role_batch_plan()
+    sizes = [page['utf8_bytes'] for page in pages]
+    challenges = int(role == 'review')
+    if challenges:
+        sizes.append(len(reader._challenge_batch('guidance risk cash flow debt capital expenditure', 4)[0].encode()))
+    mandatory_calls = len(sizes)
+    require(1 <= mandatory_calls <= 8, 'Required evidence pages exceed eight-call bounded work plan')
+    extra_reads = min(3, 8 - mandatory_calls)
+    output_reserve, intermediate, envelope = 128_000, 4096, 4096
+    prefix = (len(prompt.encode()) + 2) // 3 + envelope
+    estimated_inputs = prefix
+    for size in sizes:
+        prefix += (size + 2) // 3 + intermediate
+        estimated_inputs += prefix
+    minimum = prefix + output_reserve
+    # Retain a whole-role forecast for inspection, never as an admission gate.
+    for _ in range(extra_reads):
+        prefix += 20_000 + intermediate
+        estimated_inputs += prefix
+    forecast = estimated_inputs + (mandatory_calls + extra_reads) * intermediate + output_reserve
+    return {'version':'sequential-role-admission-v1',
+            'status':'ready' if available >= minimum else 'insufficient_context_budget',
+            'available_tokens':available, 'minimum_context_tokens':minimum,
+            'planned_tokens':forecast, 'estimated_repeated_input_tokens':estimated_inputs,
+            'registered_final_output_reserve':output_reserve,
+            'intermediate_output_allowance':intermediate, 'wire_envelope_allowance':envelope,
+            'utf8_bytes_per_estimated_token':3, 'tool_packet_utf8_bytes':sizes,
+            'work_plan':{'role_pages':len(pages), 'challenge_checks':challenges,
+                         'work_tool_limit':mandatory_calls},
+            'additional_investigation_calls':extra_reads,
+            'max_tool_calls':mandatory_calls + extra_reads + 1,
+            'notice':'Minimum context feasibility and whole-role cost are estimates, not guarantees. Actual per-turn input and registered output reservations enforce the remaining cumulative budget.'}
 
 
 def _model_impl(root, job, role):
@@ -520,7 +542,7 @@ def _model_impl(root, job, role):
     available = job['budget_tokens'] - job['tokens_used']
     preflight = _editorial_preflight(role, index, prompt, available)
     if preflight['status'] != 'ready':
-        return None, {'status':'blocked', 'outputs':{}, 'tokens':0, 'reason':'Remaining lifecycle budget is insufficient for the planned complete role', 'execution_certainty':'not_started'}
+        return None, {'status':'blocked', 'outputs':{}, 'tokens':0, 'reason':'Remaining lifecycle budget cannot fund the estimated mandatory context and registered output reserve', 'execution_certainty':'not_started'}
     prompt += '\nThe execution budget permits at most '+str(preflight['max_tool_calls']-1)+' IPython tool calls in total. Read the mandatory pages first, use remaining calls only for necessary evidence, and then submit the final JSON response without another tool call.\n'
     revision = job['revision_round']; role_dir = root/'roles'/_role_label(job, role)
     model, effort = job['specification'].get('models', {}).get(role, MODELS[role])

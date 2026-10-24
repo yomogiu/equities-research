@@ -316,8 +316,24 @@ def bind_execution_code(root, code_commit):
         return job
 
 
+def _model_restart(attempt):
+    """Classify the recorded attempt, never an operator's description of it."""
+    outcome = attempt.get("outcome", {})
+    tokens = _integer(outcome.get("tokens"), "recorded outcome tokens")
+    if not attempt.get("usage_recorded"):
+        raise ValueError("resume history must reference accounted attempts")
+    if (tokens == 0 and attempt.get("replay_safe") is True
+            and attempt["stage"] in ("sources", "financial_tables", "publication")):
+        return False
+    if (tokens == 0 and outcome.get("execution_certainty") == "not_started"
+            and attempt["stage"] in ("analysis", "review")
+            and not outcome.get("session_id") and not outcome.get("execution_directory")):
+        return False
+    return True
+
+
 def resume(root, reason, code_commit, *, reconcile=None):
-    """Explicitly resume a closed technical failure, at most twice.
+    """Explicitly repair a technical failure; at most two actual model restarts.
 
     Budgets, evidence, attempts and revision counts are never reset. A legacy
     blocked outcome without certainty may be reconciled by a trusted adapter
@@ -325,6 +341,8 @@ def resume(root, reason, code_commit, *, reconcile=None):
     receipts and return ``execution_certainty='closed'``, already charged tokens,
     and ``outputs`` mapping proof-file paths to hashes. The original outcome is
     retained; reconciliation evidence belongs to this same job's admin history.
+    Proven zero-token prelaunch and replay-safe deterministic repairs require
+    this same explicit action but do not consume the paid/model restart limit.
     """
     root = Path(root).resolve()
     code_commit = _commit(code_commit)
@@ -335,8 +353,6 @@ def resume(root, reason, code_commit, *, reconcile=None):
         if job["status"] != "blocked" or job["stage"] not in STAGES:
             raise ValueError("only a blocked stage can resume")
         history = job.get("administrative_history", [])
-        if sum(item.get("action") == "resume" for item in history) >= 2:
-            raise ValueError("operator resume limit reached")
         if not job["attempts"]:
             raise ValueError("completed failure outcome required")
         attempt = job["attempts"][-1]
@@ -353,6 +369,18 @@ def resume(root, reason, code_commit, *, reconcile=None):
             raise ValueError("a substantive review decision cannot be retried as a technical failure")
         if attempt["stage"] != job["stage"] or not attempt.get("usage_recorded"):
             raise ValueError("closed attempt must have accounted usage")
+        attempts_by_id = {row["id"]: row for row in job["attempts"]}
+        if len(attempts_by_id) != len(job["attempts"]):
+            raise ValueError("attempt identities must be unique")
+        model_restarts = 0
+        for item in history:
+            if item.get("action") == "resume":
+                previous = attempts_by_id.get(item.get("attempt_id"))
+                if previous is None:
+                    raise ValueError("resume history references an unknown attempt")
+                model_restarts += _model_restart(previous)
+        if _model_restart(attempt) and model_restarts >= 2:
+            raise ValueError("operator model resume limit reached")
         charged = sum(_integer(a["outcome"].get("tokens"), "recorded tokens")
                       for a in job["attempts"] if a.get("usage_recorded"))
         if charged != job["tokens_used"]:
@@ -362,6 +390,10 @@ def resume(root, reason, code_commit, *, reconcile=None):
         certainty = outcome.get("execution_certainty")
         if outcome.get("status") == "completed" or deterministic:
             certainty = "completed"
+        elif certainty == "not_started" and _model_restart(attempt):
+            # A session, execution directory or charged usage contradicts a
+            # prelaunch claim and requires authenticated closure instead.
+            certainty = "unknown"
         proof = None
         if certainty not in ("closed", "completed", "not_started"):
             if not callable(reconcile):
