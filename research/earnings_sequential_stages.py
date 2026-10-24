@@ -369,7 +369,7 @@ def _role_context(root, job, role):
         artifacts['citations'] = sorted(set(table_ids) | cited(read(root/f'analysis-r{previous}.json')))
     index = context.assemble(manifest, read(root/'passages.json'), root/('context-'+_role_label(job, role)),
         artifacts=artifacts, markdown=candidate,
-        metadata={'context_projection': context.COMPACT_VERSION, 'role': role,
+        metadata={'context_projection': context.COMPACT_VERSION, 'support_projection':context.SEQUENTIAL_SUPPORT_VERSION, 'role': role,
                   'workflow': VERSION, 'writing_standard': (root/'writing-standard.md').read_text(),
                   'revision_round': revision, 'questions': questions.QUESTIONS})
     return index

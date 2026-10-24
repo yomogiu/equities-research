@@ -9,9 +9,10 @@ from research import earnings_mixed_runner as base
 
 
 class CompactRoleContextTests(PassageFixture,unittest.TestCase):
-    def assemble(self,name,*,compact=True,markdown=None,artifacts=None):
+    def assemble(self,name,*,compact=True,markdown=None,artifacts=None,sequential=False):
         metadata={'role':'review','pending_findings':{'analysis:0':'Inspect the fictional source.'}}
         if compact:metadata['context_projection']=context.COMPACT_VERSION
+        if sequential:metadata.update(workflow='sequential-earnings-stages-v1',support_projection=context.SEQUENTIAL_SUPPORT_VERSION)
         return context.assemble(self.root/'evidence/manifest.json',self.catalog,self.root/name,
             artifacts=artifacts or {'report':self.report},
             markdown=markdown or '# Fictional report\n',metadata=metadata)
@@ -52,6 +53,27 @@ class CompactRoleContextTests(PassageFixture,unittest.TestCase):
         expected['metadata']=base.read(index.parent/'metadata.json')
         self.assertEqual(context.expand_handoff(projected),expected)
         self.assertEqual(reader.artifacts,artifacts)
+
+    def test_sequential_support_retains_every_source_block_id_and_provenance(self):
+        old=self.assemble('original-support')
+        new=self.assemble('sequential-support',sequential=True)
+        old_reader=context.Evidence(old,self.root/'old.jsonl')
+        reader=context.Evidence(new,self.root/'new.jsonl')
+        original,old_ids,old_rows=old_reader._support_body()
+        projected,ids,rows=reader._support_body()
+        a=json.loads(original);b=json.loads(projected)
+        self.assertEqual((ids,rows),(old_ids,old_rows))
+        self.assertEqual(context.expand_source_map(b),a['source_map'])
+        for field in ('unique_original_blocks','files','block_columns','passages','financial_contexts','units'):
+            self.assertEqual(b[field],a[field])
+        self.assertIn('complete_financial_inventory',a)
+        self.assertNotIn('complete_financial_inventory',b)
+        self.assertEqual(b['financial_inventory_reference']['sha256'],base.sha(new.parent/'financial.json'))
+        # New projection never changes old-context bytes or original source pins.
+        self.assertEqual(old_reader._support_body()[0],original)
+        self.assertEqual(base.read(old)['original_sha256'],base.read(new)['original_sha256'])
+        (new.parent/'financial.json').write_text('{}')
+        with self.assertRaises(ValueError):context.Evidence(new,self.root/'changed.jsonl')
 
     def test_small_handoff_never_expands_just_to_add_projection_metadata(self):
         index=self.assemble('small');reader=context.Evidence(index,self.root/'small.jsonl')

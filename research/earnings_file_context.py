@@ -9,6 +9,7 @@ from . import earnings_mixed_runner as base
 
 VERSION = 'earnings-file-context-v1'
 COMPACT_VERSION = 'compact-role-handoff-v1'
+SEQUENTIAL_SUPPORT_VERSION = 'sequential-original-support-v1'
 PAGE_CHARACTERS = 6000
 
 
@@ -61,6 +62,28 @@ def expand_handoff(packet):
         require(path==['metadata','pending_findings'],'Unknown handoff alias')
         result['metadata']['pending_findings']=copy.deepcopy(result['artifacts']['findings'])
     require(base.digest(result)==projection['original_handoff_sha256'],'Compact handoff digest changed')
+    return result
+
+
+def compact_source_map(mapping):
+    """Lossless column encoding of the source map; original blocks stay exact."""
+    columns = ['id','canonical_metric','concept','value','scale','unit_id','context_id',
+               'status','nil','source_document_id']
+    return {'source_map_columns':['id','spans','observation','full_original_row'],
+            'observation_columns':columns,
+            'source_map_rows':[[identifier,row['spans'],
+                [row['observation'].get(key) for key in columns] if 'observation' in row else None,
+                row.get('full_original_row')] for identifier,row in mapping.items()]}
+
+
+def expand_source_map(packet):
+    """Reconstruct the complete original ID map without inference."""
+    result = {}
+    for identifier,spans,observation,full_row in packet['source_map_rows']:
+        row = {'spans':spans}
+        if observation is not None: row['observation'] = dict(zip(packet['observation_columns'],observation))
+        if full_row is not None: row['full_original_row'] = full_row
+        result[identifier] = row
     return result
 
 
@@ -607,7 +630,19 @@ class Evidence:
         packet={'notice':'Complete selected original source scopes; inspection is not analytical acceptance. Passage locators identify up to three longest exact passages per scope; original text is printed once.',
             'passage_columns':['passage_id','scope_id','start','end'],'passages':locators,
             'source_map':mapping,'files':files,'block_columns':['file','start','end','text','extra_provenance'],'unique_original_blocks':packed,'financial_contexts':contexts,'units':units}
-        if selected is None:packet['complete_financial_inventory']=financial_inventory(financial)
+        metadata = base.read(self.root/'metadata.json')
+        sequential = metadata.get('support_projection') == SEQUENTIAL_SUPPORT_VERSION
+        if sequential:
+            require(metadata.get('workflow') == 'sequential-earnings-stages-v1', 'Sequential support projection requires sequential workflow')
+            projected = compact_source_map(mapping)
+            require(expand_source_map(projected) == mapping, 'Source-map projection changed original evidence')
+            packet.pop('source_map'); packet.update(projected)
+            packet['support_projection'] = SEQUENTIAL_SUPPORT_VERSION
+            packet['financial_inventory_reference'] = {
+                'path':'financial.json', 'sha256':self.index['files']['financial.json'],
+                'observation_count':len(financial['observations']),
+                'notice':'Complete concept/gap inventory is file-backed; ctx.financial_facts and ctx.search locate additional evidence. Every selected original source block and its full ID/provenance mapping is printed here.'}
+        elif selected is None:packet['complete_financial_inventory']=financial_inventory(financial)
         body=json.dumps(packet,ensure_ascii=False,separators=(',',':'))
         return body,ids,rows
 

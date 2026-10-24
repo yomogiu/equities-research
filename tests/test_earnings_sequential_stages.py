@@ -23,7 +23,7 @@ class SequentialStagesTests(unittest.TestCase):
         controller.create(self.job, {'case_path':str(self.case), 'writing_standard':str(self.writing),
             'financial_analysis':finance.configuration('2040-01-01','2040-03-31')})
         self.revise = False; self.financial_revise = False; self.counter = 0; self.skip_call = False
-        self.transport_settings = []; self.skip_author_filing = False
+        self.transport_settings = []; self.skip_author_filing = False; self.skip_support = False
         self.patch_runner = patch.object(stages.runner, 'run_role', side_effect=self.fake_runner)
         self.patch_runner.start(); self.addCleanup(self.patch_runner.stop)
         self.patch_delivery = patch.object(context, 'delivered_entries', side_effect=lambda job, entries:entries)
@@ -33,7 +33,10 @@ class SequentialStagesTests(unittest.TestCase):
         self.transport_settings.append(settings)
         role_dir.mkdir(parents=True); reader = context.Evidence(index, role_dir/'retrieval.jsonl')
         for page in range(len(reader.role_batch_plan())):
-            if not self.skip_call: reader.role_batch(page)
+            if self.skip_support:
+                for packet in reader.role_batch_plan()[page]['packets']:
+                    if packet['method'] != 'support_batch': getattr(reader,packet['method'])(packet['start'],packet['limit'])
+            elif not self.skip_call: reader.role_batch(page)
         role = bindings['role']; self.counter += 1
         if role == 'sequential_review': reader.challenge_batch('guidance risk cash flow debt capital expenditure', 4)
         elif not self.skip_author_filing: reader.filing_batch(stages.AUTHOR_FILING_QUERY, 4)
@@ -242,6 +245,14 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertIn('comparison-period one-offs', prompt)
         self.assertIn('strength of commitment', prompt)
         self.assertEqual(self.run_complete()['status'], 'completed')
+
+    def test_compact_sequential_support_still_requires_all_original_evidence(self):
+        self.skip_support = True
+        result = self.run_complete()
+        self.assertEqual(result['status'],'blocked')
+        self.assertIn('support inspection required',result['reason'])
+        self.assertEqual(result['tokens_used'],100)
+        self.assertFalse((self.job/'report.html').exists())
 
     def test_full_original_call_read_is_mandatory(self):
         self.skip_call = True
