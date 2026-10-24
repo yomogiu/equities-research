@@ -20,9 +20,30 @@ The private runtime supplies source qualification and verified private publicati
 5. **Publication:** render only the exact accepted candidate. The private publisher
    persists artifacts and verifies remote bytes before recording successful publication.
 
+Before either model stage, code replays the inline-XBRL extraction, financial
+configuration, calculations and table rendering against frozen source hashes. The
+model receives the tables once, a compact verification record, and explicit gaps.
+This verifies numerical reproducibility, not the completeness or accounting meaning
+of the report. Original disclosures remain available; qualitative claims still need
+original-source inspection and independent review.
+
+A narrative-only correction replaces exactly the sections identified by the prior
+review. Code preserves every other component, verifies the prior reviewed candidate,
+and saves hashes of the before/after components. The correction author receives the
+flagged sections and their original evidence. The fresh reviewer receives the entire
+revised candidate, prior review, verified changes and original evidence for changed
+claims and findings. Every replacement citation, including a reused financial ID,
+requires original-source inspection. The reviewer still assesses all eight criteria
+and all five questions; previous passes do not automatically carry forward. The full
+call is read on the initial pass and remains available during corrections. A changed
+financial table requires the full author/review path; invalid proof or changed frozen
+sources blocks execution. No model call or new budget is hidden in these checks.
+
 Only analysis and review invoke models. There are no retrieval-model stages, separate
 signal-author stages, successor jobs, repair queues or agent-to-agent handoffs in this path.
-The standard successful pass has two model calls; revisions add an author and reviewer.
+The standard successful pass has two model sessions; revisions add an author and reviewer.
+Each session may make several provider requests as it reads evidence, so repeated input
+counts toward actual usage. A smaller packet is not a measured token-saving guarantee.
 Each role plans its own required evidence reads. Whole-role token forecasts are advisory;
 admission checks minimum context feasibility and the runtime enforces actual usage.
 Every call consumes the same cumulative job allowance, including failed work. An uncertain

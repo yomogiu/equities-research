@@ -574,6 +574,12 @@ class Evidence:
         return body
 
     def _support_body(self,selected=None):
+        metadata = base.read(self.root/'metadata.json')
+        if selected is None and 'support_scope_ids' in metadata:
+            require(metadata.get('workflow') == 'sequential-earnings-stages-v1', 'Explicit support selection requires sequential workflow')
+            selected = metadata['support_scope_ids']
+            require(isinstance(selected,list) and all(isinstance(i,str) for i in selected)
+                    and len(set(selected)) == len(selected), 'Exact unique support scope IDs required')
         def refs(value):
             result=set()
             if isinstance(value,dict):
@@ -677,7 +683,12 @@ class Evidence:
                 pages.append({'characters':len(text),'utf8_bytes':len(text.encode('utf-8')),
                               'packets':packets[:]})
                 packets.clear();texts.clear()
-        for method in ('handoff_batch','call_batch','support_batch'):
+        methods = ('handoff_batch','call_batch','support_batch')
+        if metadata.get('review_scope') == 'verified_section_revision':
+            require(metadata.get('workflow') == 'sequential-earnings-stages-v1'
+                    and isinstance(metadata.get('revision_proof_sha256'),str), 'Verified sequential revision required')
+            methods = ('handoff_batch','support_batch')
+        for method in methods:
             start=0
             while True:
                 room=60000-sum(map(len,texts))

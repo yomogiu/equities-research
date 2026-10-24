@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 from test_earnings_compact_evidence import fixture
 from research import earnings_sequential_stages as stages
+from research import earnings_sequential as controller
 from research import earnings_file_context as context
 from research import earnings_financial_analysis_report as finance
 from research import earnings_mixed_runner as storage
@@ -18,12 +19,14 @@ class SequentialExecutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve(); case, _, _ = fixture(root)
             guide=root/'guide.md'; guide.write_text('Fictional concise writing.')
-            jobroot=root/'job'; jobroot.mkdir()
-            job={'revision_round':0,'artifacts':{},'attempts':[{'stage':'analysis','revision_round':0}],
-                 'specification':{'case_path':str(case),'writing_standard':str(guide),
-                                  'financial_analysis':finance.configuration('2040-01-01','2040-03-31')}}
-            self.assertEqual(stages.sources(jobroot,job)['status'],'completed')
-            self.assertEqual(stages.financial_tables(jobroot,job)['status'],'completed')
+            jobroot=root/'job'
+            controller.create(jobroot, {'case_path':str(case),'writing_standard':str(guide),
+                'financial_analysis':finance.configuration('2040-01-01','2040-03-31')})
+            controller.advance(jobroot, stages.handlers())
+            job=controller.advance(jobroot, stages.handlers())
+            self.assertEqual(job['stage'],'analysis')
+            self.assertEqual(job['status'],'ready')
+            self.assertIn('financial-analysis.json',job['artifacts'])
             index=stages._role_context(jobroot,job,'analysis')
             role=jobroot/'roles/analysis-r0'; role.mkdir(parents=True)
             context.write(role/'request.json',{'version':'file-prime-role-v1','job_path':str(role),'context_index':str(index)})

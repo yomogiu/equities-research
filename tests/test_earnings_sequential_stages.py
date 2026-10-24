@@ -24,6 +24,7 @@ class SequentialStagesTests(unittest.TestCase):
             'financial_analysis':finance.configuration('2040-01-01','2040-03-31')})
         self.revise = False; self.financial_revise = False; self.counter = 0; self.skip_call = False
         self.transport_settings = []; self.skip_author_filing = False; self.skip_support = False
+        self.patch_mutator = None; self.review_mutator = None; self.revise_forever = False
         self.patch_runner = patch.object(stages.runner, 'run_role', side_effect=self.fake_runner)
         self.patch_runner.start(); self.addCleanup(self.patch_runner.stop)
         self.patch_delivery = patch.object(context, 'delivered_entries', side_effect=lambda job, entries:entries)
@@ -49,13 +50,25 @@ class SequentialStagesTests(unittest.TestCase):
                      'qa':[{'exchange_id':exchange,'question':'Is this repeatable?',
                             'answer':'Management repeats its assertion.', 'assessment':'Uncertainty remains.', 'citations':ref}],
                      'next_tests':[paragraph]}
+            if 'section_revision' in reader.artifacts:
+                revision = reader.artifacts['section_revision']
+                replacements = copy.deepcopy(revision['current_components'])
+                for name, component in replacements.items():
+                    if isinstance(component, list):
+                        key = 'assessment' if name == 'qa' else 'text'
+                        component[0][key] += ' The fictional qualification remains material.'
+                    else:
+                        component['text'] += ' The fictional qualification remains material.'
+                value = {'replacements':replacements}
+                if self.patch_mutator: self.patch_mutator(value, reader)
         else:
             value = {'verdict':'pass', 'criteria':{k:{'status':'pass','evidence':'The fictional source supports this assessment.', 'citations':ref} for k in stages.CRITERIA},
                      'questions':{k:{'status':'disclosed_gap','evidence':'The report explicitly notes the fictional evidence gap.', 'gap':'No complete fictional evidence.', 'citations':ref} for k in stages.questions.QUESTIONS}, 'findings':[]}
-            if (self.revise or self.financial_revise) and bindings['revision'] == 0:
+            if self.revise_forever or ((self.revise or self.financial_revise) and bindings['revision'] == 0):
                 value['verdict'] = 'revise'; value['criteria']['reasoning']['status'] = 'fail'
                 value['findings'] = [{'location':'financial_tables' if self.financial_revise else 'outlook',
                                       'problem':'Fictional qualification omitted.', 'fix':'State the fictional source qualification.', 'citations':ref}]
+            if self.review_mutator: self.review_mutator(value, reader)
         return {'content':value, 'receipt':{'session':{'id':'fictional-session-'+str(self.counter),'usage':{'totalTokens':100}}}}
 
     def advance(self):
@@ -91,6 +104,136 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertTrue((self.job/'review-r0.json').exists())
         self.assertTrue((self.job/'analysis-r0.json').exists())
 
+    def begin_revision(self):
+        self.revise = True
+        for _ in range(4): result = self.advance()
+        self.assertEqual(result['stage'], 'analysis')
+        self.assertEqual(result['revision_round'], 1)
+        return result
+
+    def test_verified_patch_changes_only_reviewed_component_and_fresh_review_sees_full_candidate(self):
+        self.begin_revision()
+        before = stages.read(self.job/'analysis-r0.json')
+        result = self.advance()
+        self.assertEqual(result['stage'], 'review', result.get('reason'))
+        after = stages.read(self.job/'analysis-r1.json')
+        for location, component in stages._components(before).items():
+            if location != 'outlook': self.assertEqual(stages._components(after)[location], component)
+        self.assertNotEqual(after['sections']['outlook'], before['sections']['outlook'])
+        proof = stages.read(self.job/'correction-r1.json')
+        self.assertEqual(set(proof['component_changes']), {'outlook'})
+        self.assertEqual(result['artifacts']['correction-r1.json'], storage.sha(self.job/'correction-r1.json'))
+        self.assertEqual(result['tokens_used'], 300)
+        self.assertEqual(self.run_complete()['status'], 'completed')
+        for role in ('analysis', 'review'):
+            directory = self.job/f'context-{role}-r1'
+            metadata = stages.read(directory/'metadata.json')
+            self.assertEqual(metadata['review_scope'], 'verified_section_revision')
+            reader = context.Evidence(directory/'index.json', self.job/'unused.jsonl', _replay=True)
+            methods = {packet['method'] for page in reader.role_batch_plan() for packet in page['packets']}
+            self.assertNotIn('call_batch', methods)
+            self.assertIn('support_batch', methods)
+            log = context.audit(directory/'index.json', self.job/f'roles/{role}-r1/retrieval.jsonl')
+            self.assertFalse(any(entry['method'] == 'call_batch' for entry in log))
+        review_artifacts = stages.read(self.job/'context-review-r1/artifacts.json')
+        self.assertEqual(review_artifacts['previous_review'], stages.read(self.job/'review-r0.json'))
+        self.assertEqual(set(stages.read(self.job/'review-r1.json')['criteria']), set(stages.CRITERIA))
+        self.assertEqual(set(stages.read(self.job/'review-r1.json')['questions']), set(stages.questions.QUESTIONS))
+        index = stages.read(self.job/'context-review-r1/index.json')
+        self.assertIn('report.md', index['files'])
+        self.assertEqual((self.job/'context-review-r1/report.md').read_text(), (self.job/'report.md').read_text())
+
+    def test_patch_cannot_modify_unreviewed_component(self):
+        self.begin_revision()
+        old_candidate = (self.job/'report.md').read_bytes()
+        def malicious(value, reader):
+            value['replacements']['opening'] = {'text':'Unauthorized change.', 'citations':[]}
+        self.patch_mutator = malicious
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['tokens_used'], 300)
+        self.assertEqual(self.counter, 3)
+        self.assertEqual((self.job/'report.md').read_bytes(), old_candidate)
+        self.assertFalse((self.job/'correction-r1.json').exists())
+
+    def test_patch_new_original_citation_requires_delivered_support(self):
+        self.begin_revision()
+        def unread(value, reader):
+            value['replacements']['outlook']['citations'] = [reader.index['exchange_ids'][1]]
+        self.patch_mutator = unread
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('Every output citation requires', result['reason'])
+        self.assertEqual(result['tokens_used'], 300)
+
+    def test_patch_trusted_table_id_still_requires_original_inspection(self):
+        self.begin_revision()
+        def unread(value, reader):
+            ids = reader.artifacts['financial_validation']['trusted_table_ids']
+            self.assertTrue(ids)
+            value['replacements']['outlook']['citations'] = [ids[0]]
+        self.patch_mutator = unread
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked', result.get('reason'))
+        self.assertIn('Every output citation requires', result['reason'])
+        self.assertEqual(result['tokens_used'], 300)
+
+    def test_delta_reviewer_cannot_cite_uninspected_original_from_old_full_call(self):
+        self.begin_revision(); self.advance()
+        def unread(value, reader):
+            value['criteria']['reasoning']['citations'] = [reader.index['exchange_ids'][1]]
+        self.review_mutator = unread
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('Every output citation requires', result['reason'])
+        self.assertEqual(result['tokens_used'], 400)
+        self.assertFalse((self.job/'report.html').exists())
+
+    def test_modified_revision_proof_is_rejected_even_if_active_hash_is_rebound(self):
+        self.begin_revision(); job = self.advance()
+        proof_path = self.job/'correction-r1.json'
+        proof = stages.read(proof_path); proof['component_changes']['outlook']['before'] = '0' * 64
+        proof_path.write_text(json.dumps(proof))
+        job['artifacts']['correction-r1.json'] = storage.sha(proof_path)
+        (self.job/'job.json').write_text(json.dumps(job))
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('revision proof changed', result['reason'])
+        self.assertEqual(self.counter, 3)
+        self.assertEqual(result['tokens_used'], 300)
+
+    def test_original_source_change_after_patch_stops_before_fresh_review(self):
+        self.begin_revision(); self.advance()
+        case = stages.read(self.case)
+        source = Path(case['sources'][0]['path'])
+        source.write_text(source.read_text() + ' Unreviewed fictional change.')
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(self.counter, 3)
+        self.assertEqual(result['tokens_used'], 300)
+        self.assertFalse((self.job/'report.html').exists())
+
+    def test_delta_review_still_requires_all_criteria(self):
+        self.begin_revision(); self.advance()
+        def incomplete(value, reader): value['criteria'].pop('reasoning')
+        self.review_mutator = incomplete
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('eight', result['reason'])
+        self.assertEqual(result['tokens_used'], 400)
+        self.assertFalse((self.job/'report.html').exists())
+
+    def test_repeated_delta_review_rejections_remain_bounded_and_unpublished(self):
+        self.revise_forever = True
+        result = self.run_complete()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['revision_round'], 2)
+        self.assertEqual(result['tokens_used'], 600)
+        self.assertEqual(self.counter, 6)
+        self.assertTrue((self.job/'correction-r2.json').exists())
+        self.assertTrue((self.job/'review-r2.json').exists())
+        self.assertFalse((self.job/'report.html').exists())
+
     def test_revision_rejects_changed_previous_review_before_paid_author(self):
         self.revise = True
         for _ in range(4): self.advance()
@@ -111,16 +254,21 @@ class SequentialStagesTests(unittest.TestCase):
             return {**original_compile(bundle, config), 'fictional_repair_marker': True}
         with patch.object(finance, 'compile', side_effect=repaired):
             result = self.advance()
-        self.assertEqual(result['status'], 'ready', result.get('reason'))
-        self.assertEqual(result['stage'], 'analysis')
-        self.assertEqual(result['tokens_used'], before['tokens_used'])
-        self.assertEqual(storage.sha(self.job/'history/financial-r0/financial-analysis.json'), original_hash)
-        self.assertNotEqual(storage.sha(self.job/'financial-analysis.json'), original_hash)
-        self.assertTrue(stages.read(self.job/'financial-analysis.json')['fictional_repair_marker'])
-        result = self.run_complete()
+            self.assertEqual(result['status'], 'ready', result.get('reason'))
+            self.assertEqual(result['stage'], 'analysis')
+            self.assertEqual(result['tokens_used'], before['tokens_used'])
+            self.assertEqual(storage.sha(self.job/'history/financial-r0/financial-analysis.json'), original_hash)
+            self.assertNotEqual(storage.sha(self.job/'financial-analysis.json'), original_hash)
+            self.assertTrue(stages.read(self.job/'financial-analysis.json')['fictional_repair_marker'])
+            result = self.run_complete()
         self.assertEqual(result['status'], 'completed', result.get('reason'))
         self.assertEqual(result['tokens_used'], 400)
         self.assertEqual(result['revision_round'], 1)
+        author_context = stages.read(self.job/'context-analysis-r1/artifacts.json')
+        self.assertEqual(author_context['financial_tables_markdown'], (self.job/'financial-tables.md').read_text())
+        self.assertNotIn('section_revision', author_context)
+        self.assertNotIn('financial_tables_markdown', stages.read(self.job/'context-review-r1/artifacts.json'))
+        self.assertFalse((self.job/'correction-r1.json').exists())
 
     def test_table_rebuild_does_not_remove_differing_unbound_output(self):
         self.financial_revise = True
