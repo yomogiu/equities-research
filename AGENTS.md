@@ -28,7 +28,10 @@ For new earnings reports, use the five-stage sequential controller described in
 The author and reviewer must use distinct signed-in sessions. Review receives the
 original evidence and exact candidate, without the author's conversational reasoning.
 Enforce the eight criteria, five expected questions, at most two revision rounds and
-one cumulative allowance. Do not create legacy handoffs, successor requests or separate
+one cumulative allowance. Keep the active path independent of retired controllers;
+shared utilities belong in neutral modules, with legacy compatibility imports pointing
+toward those utilities. Preserve source/table bytes and review/accounting gates when
+refactoring. Do not create legacy handoffs, successor requests or separate
 signal-role jobs. Preserve old pinned artifacts for audit; do not restart them as new jobs.
 
 ## Code checks

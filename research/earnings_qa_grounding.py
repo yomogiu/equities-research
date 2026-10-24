@@ -9,7 +9,7 @@ import copy
 import json
 from pathlib import Path
 import re
-from research import earnings_experiment as base
+from research import earnings_source_case as base
 
 VERSION = 'source-bound-qa-membership-v1'
 HEADER_VERSION = 'source-bound-qa-membership-v2'

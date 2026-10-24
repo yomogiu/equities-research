@@ -5,6 +5,23 @@ The active report path is **Sources → financial tables → analysis → review
 `research.earnings_sequential_stages` supplies the five concrete handlers.
 The private runtime supplies source qualification and verified private publication.
 
+The active path uses shared modules with no legacy-controller dependency:
+
+| Module | Responsibility |
+| --- | --- |
+| `earnings_runtime_common` | Immutable file/hash operations, exact model selection and installed runtime discovery |
+| `earnings_source_case` | Existing source-case serialization and frozen-input validation |
+| `earnings_source_preparation` | Deterministic evidence derivation after caller-owned source qualification |
+| `earnings_markdown_render` | Report rendering and escaping without historical report builders |
+| `earnings_file_context` / `earnings_file_runner` | Source inspection and authenticated model execution |
+
+Archived workflows re-export shared helpers for compatibility. Their controllers and
+result validators are not imported by the sequential path. The legacy result preflight
+is isolated in `earnings_legacy_result_validation`; sequential schemas and acceptance
+remain owned by the stage controller. Existing artifact serialization, hashes and source
+qualification rules remain unchanged. Dependency tests forbid retired imports while
+executing source preparation and a complete corrected-report cycle.
+
 1. **Sources:** freeze qualified issuer/period evidence, original filing and complete
    call, writing standard, source hashes and observation cutoff. Historical reports
    explicitly identify their fixed source snapshot. Missing or ambiguous evidence blocks.

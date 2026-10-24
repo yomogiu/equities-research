@@ -24,7 +24,7 @@ class ReferenceProposalTests(unittest.TestCase):
    with self.assertRaises(ValueError):r.candidate_and_targets(old,new,self.catalog,self.index)
 class ReferenceWorkPlanTests(unittest.TestCase):
  def test_target_evidence_and_validation_have_explicit_slots(self):
-  with patch.object(runner.context,'Evidence') as reader,patch.object(runner.old,'read',return_value={'source_scope_ids':['q','a']}):
+  with patch.object(runner.context,'Evidence') as reader,patch.object(runner.runtime,'read',return_value={'source_scope_ids':['q','a']}):
    reader.return_value._handoff_body.return_value='x'*100;reader.return_value._support_body.return_value=('x'*100,[],[])
    self.assertEqual(runner.work_plan('retrieval_reference',Path('/tmp/index.json'))['work_tool_limit'],3)
    reader.return_value._support_body.return_value=('x'*500000,[],[])

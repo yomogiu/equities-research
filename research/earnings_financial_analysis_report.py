@@ -9,8 +9,8 @@ import json
 from pathlib import Path
 from . import earnings_financial_analysis as analysis
 from . import earnings_financial_display as display
-from . import earnings_markdown as markdown
-from . import earnings_mixed_runner as base
+from . import earnings_markdown_render as markdown
+from . import earnings_runtime_common as base
 
 HEADERS=['Metric','Unit / basis','Current','Prior quarter','Prior year','QoQ Δ / change','YoY Δ / change']
 FAMILIES={'quarter':'Quarter','half':'Six-month duration','nine-month':'Nine-month duration',

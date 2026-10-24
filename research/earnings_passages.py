@@ -8,7 +8,7 @@ from __future__ import annotations
 import copy
 import re
 from research import earnings_compact_evidence as evidence
-from research import earnings_experiment as base
+from research import earnings_source_case as base
 
 VERSION = 'earnings-passages-v1'
 BOUNDARY = re.compile(r'(?<=[.!?])[ \t\r\n]+|\r?\n')

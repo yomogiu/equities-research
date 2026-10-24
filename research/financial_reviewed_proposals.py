@@ -4,7 +4,7 @@ This receipt does not alter frozen proposals or grant report acceptance. A calle
 must select an exact profile and closed review, including complete source delivery.
 """
 from pathlib import Path
-from . import financial_evidence as f, earnings_mixed_runner as b
+from . import financial_evidence as f, earnings_runtime_common as b
 
 VERSION='authenticated-text-proposals-v1'
 

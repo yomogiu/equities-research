@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import re
 
-from research import earnings_experiment as base
+from research import earnings_source_case as base
 from research import financial_evidence as financial
 
 VERSION = 'earnings-compact-evidence-v1'

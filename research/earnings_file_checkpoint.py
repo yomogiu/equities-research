@@ -1,7 +1,7 @@
 """Data-only role checkpoints; fresh contexts resume only proven closed attempts."""
 from pathlib import Path
 import json
-from . import earnings_mixed_runner as base, earnings_file_context as context
+from . import earnings_runtime_common as base, earnings_file_context as context
 
 VERSION='file-role-checkpoint-v1'
 MAX_RESUMES=2

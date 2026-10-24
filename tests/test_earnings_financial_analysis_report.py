@@ -1,5 +1,6 @@
 """Fictional financial-only previews, immutable opt-in and compact metric tables."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -43,6 +44,13 @@ class FinancialTableTests(unittest.TestCase):
   self.assertIn('Calculated · GAAP (unaudited) inputs',text)
   self.assertNotIn('class="direction',page)
   self.assertIn('<table>',page)
+ def test_shared_renderer_extraction_preserves_frozen_financial_preview_bytes(self):
+  # Captured before the renderer extraction from these same fictional inputs.
+  text=report.preview_markdown(self.value)
+  self.assertEqual(hashlib.sha256(text.encode()).hexdigest(),
+                   'fdf9df22f4c4118beeb04b0b3e1c1aeee83da20819e6fb0f81f66bf6873dfab8')
+  self.assertEqual(hashlib.sha256(report.preview_html(text).encode()).hexdigest(),
+                   '686247d51e315aae081207f9f28d8cefc9bea816202912730c75361d776fef6f')
  def test_income_expense_routing_and_neutral_unknown_concepts(self):
   rendered=report.sections(self.value)
   self.assertIn('Research and development','\n'.join(rendered['earnings']))

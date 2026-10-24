@@ -17,8 +17,8 @@ from . import earnings_passages as passages
 from . import earnings_financial_analysis_report as finance
 from . import earnings_file_context as context
 from . import earnings_file_runner as runner
-from . import earnings_mixed_runner as storage
-from . import earnings_markdown as markdown
+from . import earnings_runtime_common as storage
+from . import earnings_markdown_render as markdown
 from . import earnings_report_questions as questions
 
 VERSION = 'sequential-earnings-stages-v1'

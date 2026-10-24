@@ -3,7 +3,7 @@
 These checks validate review completeness and repair addresses, not the truth of
 an authored answer. Original-source inspection and independent review still apply.
 """
-from . import earnings_mixed_runner as base
+from . import earnings_runtime_common as base
 
 VERSION = 'core-financial-report-questions-v1'
 REPORT_LOCATIONS = ('demand','earnings','cash','outlook','qa')

@@ -92,7 +92,7 @@ class ResultPreflightTests(PassageFixture, unittest.TestCase):
             process=Mock();process.wait.return_value=1
             return process
         from pathlib import Path
-        with patch.object(runner.old,'_runtime_paths',return_value=(Path('/fake/node'),Path('/fake/sdk'))), patch.object(runner.subprocess,'Popen',side_effect=launch) as process:
+        with patch.object(runner.runtime,'_runtime_paths',return_value=(Path('/fake/node'),Path('/fake/sdk'))), patch.object(runner.subprocess,'Popen',side_effect=launch) as process:
             with self.assertRaisesRegex(RuntimeError,'no retry'):
                 runner.run_role(job,'Fictional role','gpt-6-luna','max',{'role':'retrieval'},reader.root/'index.json',max_tokens=200000)
             with self.assertRaisesRegex(RuntimeError,'cannot be launched again'):
@@ -105,7 +105,7 @@ class ResultPreflightTests(PassageFixture, unittest.TestCase):
         from unittest.mock import Mock
         process=Mock();process.pid=123;process.returncode=-15
         process.wait.side_effect=[runner.subprocess.TimeoutExpired('fictional-worker',1),-15]
-        with patch.object(runner.old,'_runtime_paths',return_value=(Path('/fake/node'),Path('/fake/sdk'))), patch.object(runner.subprocess,'Popen',return_value=process), patch.object(runner.os,'killpg') as kill:
+        with patch.object(runner.runtime,'_runtime_paths',return_value=(Path('/fake/node'),Path('/fake/sdk'))), patch.object(runner.subprocess,'Popen',return_value=process), patch.object(runner.os,'killpg') as kill:
             with self.assertRaisesRegex(RuntimeError,'no retry'):
                 runner.run_role(job,'Fictional role','gpt-6-luna','max',{'role':'retrieval'},reader.root/'index.json',max_tokens=200000)
             kill.assert_called_once_with(123,runner.signal.SIGTERM)

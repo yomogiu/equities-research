@@ -11,7 +11,7 @@ import re
 from . import earnings_compact_evidence as evidence
 from . import earnings_financial_analysis_report as finance
 from . import earnings_financial_statement_context as statements
-from . import earnings_mixed_runner as storage
+from . import earnings_runtime_common as storage
 from . import financial_evidence
 
 VERSION = 'sequential-financial-contract-v1'
