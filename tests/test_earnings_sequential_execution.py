@@ -19,7 +19,7 @@ class SequentialExecutionTests(unittest.TestCase):
             root = Path(temporary).resolve(); case, _, _ = fixture(root)
             guide=root/'guide.md'; guide.write_text('Fictional concise writing.')
             jobroot=root/'job'; jobroot.mkdir()
-            job={'revision_round':0,'attempts':[{'stage':'analysis','revision_round':0}],
+            job={'revision_round':0,'artifacts':{},'attempts':[{'stage':'analysis','revision_round':0}],
                  'specification':{'case_path':str(case),'writing_standard':str(guide),
                                   'financial_analysis':finance.configuration('2040-01-01','2040-03-31')}}
             self.assertEqual(stages.sources(jobroot,job)['status'],'completed')

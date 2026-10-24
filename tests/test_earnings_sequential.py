@@ -287,7 +287,7 @@ class SequentialTests(unittest.TestCase):
         job = self.blocked_author()
         job["status"] = "execution_uncertain"
         (self.root / "job.json").write_text(json.dumps(job))
-        with self.assertRaisesRegex(ValueError, "blocked editorial"):
+        with self.assertRaisesRegex(ValueError, "blocked stage"):
             pipeline.resume(self.root, "Fictitious repair", "a" * 40, reconcile=lambda *_: {})
 
     def test_code_binding_only_before_first_attempt(self):
@@ -375,6 +375,26 @@ class SequentialTests(unittest.TestCase):
         (self.root / 'job.json').write_text(json.dumps(before))
         with self.assertRaisesRegex(ValueError, 'revision limit'):
             pipeline.rebuild_tables(self.root, 'Another repair', 'b' * 40)
+
+    def test_zero_cost_deterministic_failure_can_resume_without_reset(self):
+        self.advance()
+        def failed_tables(root, job):
+            return {'status': 'blocked', 'outputs': {}, 'tokens': 0, 'reason': 'Fictional deterministic failure'}
+        failed_tables.replay_safe = True
+        self.handlers['financial_tables'] = failed_tables
+        before = self.advance()
+        result = pipeline.resume(self.root, 'Fix local table writer', 'b' * 40)
+        for name in ('attempts', 'artifacts', 'tokens_used', 'revision_round', 'specification'):
+            self.assertEqual(result[name], before[name])
+        self.assertEqual(result['stage'], 'financial_tables')
+        self.assertEqual(result['status'], 'ready')
+
+    def test_deterministic_resume_rejects_stage_without_safe_zero_cost_contract(self):
+        self.advance()
+        self.handlers['financial_tables'] = lambda root, job: {'status': 'blocked', 'outputs': {}, 'tokens': 0}
+        self.advance()
+        with self.assertRaisesRegex(ValueError, 'replay-safe'):
+            pipeline.resume(self.root, 'Try again', 'b' * 40)
 
 
 if __name__ == "__main__":

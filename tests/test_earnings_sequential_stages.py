@@ -22,7 +22,7 @@ class SequentialStagesTests(unittest.TestCase):
         self.job = self.root/'job'
         controller.create(self.job, {'case_path':str(self.case), 'writing_standard':str(self.writing),
             'financial_analysis':finance.configuration('2040-01-01','2040-03-31')})
-        self.revise = False; self.counter = 0; self.skip_call = False
+        self.revise = False; self.financial_revise = False; self.counter = 0; self.skip_call = False
         self.transport_settings = []
         self.patch_runner = patch.object(stages.runner, 'run_role', side_effect=self.fake_runner)
         self.patch_runner.start(); self.addCleanup(self.patch_runner.stop)
@@ -48,9 +48,10 @@ class SequentialStagesTests(unittest.TestCase):
         else:
             value = {'verdict':'pass', 'criteria':{k:{'status':'pass','evidence':'The fictional source supports this assessment.', 'citations':ref} for k in stages.CRITERIA},
                      'questions':{k:{'status':'disclosed_gap','evidence':'The report explicitly notes the fictional evidence gap.', 'gap':'No complete fictional evidence.', 'citations':ref} for k in stages.questions.QUESTIONS}, 'findings':[]}
-            if self.revise and bindings['revision'] == 0:
+            if (self.revise or self.financial_revise) and bindings['revision'] == 0:
                 value['verdict'] = 'revise'; value['criteria']['reasoning']['status'] = 'fail'
-                value['findings'] = [{'location':'outlook','problem':'Fictional qualification omitted.', 'fix':'State the fictional source qualification.', 'citations':ref}]
+                value['findings'] = [{'location':'financial_tables' if self.financial_revise else 'outlook',
+                                      'problem':'Fictional qualification omitted.', 'fix':'State the fictional source qualification.', 'citations':ref}]
         return {'content':value, 'receipt':{'session':{'id':'fictional-session-'+str(self.counter),'usage':{'totalTokens':100}}}}
 
     def advance(self):
@@ -94,6 +95,39 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertEqual(result['status'], 'blocked')
         self.assertEqual(self.counter, 2)
         self.assertIn('review-r0.json', result['reason'])
+
+    def test_actual_table_rebuild_replaces_only_verified_archived_old_outputs(self):
+        self.financial_revise = True
+        before = self.run_complete()
+        self.assertEqual(before['status'], 'blocked')
+        original_hash = storage.sha(self.job/'financial-analysis.json')
+        controller.rebuild_tables(self.job, 'Repair fictional calculation', 'b' * 40)
+        original_compile = finance.compile
+        def repaired(bundle, config):
+            return {**original_compile(bundle, config), 'fictional_repair_marker': True}
+        with patch.object(finance, 'compile', side_effect=repaired):
+            result = self.advance()
+        self.assertEqual(result['status'], 'ready', result.get('reason'))
+        self.assertEqual(result['stage'], 'analysis')
+        self.assertEqual(result['tokens_used'], before['tokens_used'])
+        self.assertEqual(storage.sha(self.job/'history/financial-r0/financial-analysis.json'), original_hash)
+        self.assertNotEqual(storage.sha(self.job/'financial-analysis.json'), original_hash)
+        self.assertTrue(stages.read(self.job/'financial-analysis.json')['fictional_repair_marker'])
+        result = self.run_complete()
+        self.assertEqual(result['status'], 'completed', result.get('reason'))
+        self.assertEqual(result['tokens_used'], 400)
+        self.assertEqual(result['revision_round'], 1)
+
+    def test_table_rebuild_does_not_remove_differing_unbound_output(self):
+        self.financial_revise = True
+        self.run_complete()
+        controller.rebuild_tables(self.job, 'Repair fictional calculation', 'b' * 40)
+        different = '{"unrelated":"existing bytes"}'
+        (self.job/'financial-analysis.json').write_text(different)
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual((self.job/'financial-analysis.json').read_text(), different)
+        self.assertEqual(result['tokens_used'], 200)
 
     def test_revision_rejects_changed_previous_candidate_before_paid_author(self):
         self.revise = True

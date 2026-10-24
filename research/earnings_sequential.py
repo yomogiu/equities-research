@@ -317,7 +317,7 @@ def bind_execution_code(root, code_commit):
 
 
 def resume(root, reason, code_commit, *, reconcile=None):
-    """Explicitly resume a proven closed editorial failure, at most twice.
+    """Explicitly resume a closed technical failure, at most twice.
 
     Budgets, evidence, attempts and revision counts are never reset. A legacy
     blocked outcome without certainty may be reconciled by a trusted adapter
@@ -332,18 +332,22 @@ def resume(root, reason, code_commit, *, reconcile=None):
         raise ValueError("explicit bounded operator reason required")
     with _lock(root):
         job = _read(root)
-        if job["status"] != "blocked" or job["stage"] not in ("analysis", "review"):
-            raise ValueError("only a blocked editorial stage can resume")
+        if job["status"] != "blocked" or job["stage"] not in STAGES:
+            raise ValueError("only a blocked stage can resume")
         history = job.get("administrative_history", [])
         if sum(item.get("action") == "resume" for item in history) >= 2:
             raise ValueError("operator resume limit reached")
-        if job["tokens_used"] >= job["budget_tokens"]:
-            raise ValueError("token budget exhausted")
         if not job["attempts"]:
             raise ValueError("completed failure outcome required")
         attempt = job["attempts"][-1]
         outcome = attempt.get("outcome", {})
         tokens = _integer(outcome.get("tokens"), "closed outcome tokens")
+        deterministic = (job["stage"] in ("sources", "financial_tables", "publication")
+                         and attempt.get("replay_safe") is True and tokens == 0)
+        if job["stage"] not in ("analysis", "review") and not deterministic:
+            raise ValueError("deterministic resume requires an accounted zero-token replay-safe stage")
+        if not deterministic and job["tokens_used"] >= job["budget_tokens"]:
+            raise ValueError("token budget exhausted")
         if (outcome.get("status") == "revise" or
                 (job["stage"] == "review" and outcome.get("status") == "blocked" and outcome.get("input_sha256"))):
             raise ValueError("a substantive review decision cannot be retried as a technical failure")
@@ -356,7 +360,7 @@ def resume(root, reason, code_commit, *, reconcile=None):
         _verify(root, job["artifacts"])
         _verify(root, job.get("revision_input", {}))
         certainty = outcome.get("execution_certainty")
-        if outcome.get("status") == "completed":
+        if outcome.get("status") == "completed" or deterministic:
             certainty = "completed"
         proof = None
         if certainty not in ("closed", "completed", "not_started"):

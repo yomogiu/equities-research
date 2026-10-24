@@ -197,9 +197,22 @@ def financial_tables(root, job):
     config = financial_configuration(bundle, job['specification'].get('financial_analysis'))
     from . import earnings_financial_statement_context as statements
     value = finance.compile(statements.qualify(bundle), config)
+    rendered = finance.preview_markdown(value)
+    # An explicit table repair retained the prior files as hash-bound history.
+    # Remove only those exact superseded bytes; unrelated or new partial files
+    # remain subject to the ordinary immutable-write validation below.
+    for name in ('financial-configuration.json', 'financial-analysis.json', 'financial-tables.md'):
+        path = root/name
+        archive = f'history/financial-r{job["revision_round"]-1}/{name}'
+        expected = job['artifacts'].get(archive)
+        if name not in job['artifacts'] and expected and path.exists() and storage.sha(path) == expected:
+            require(storage.sha(root/archive) == expected, 'Original archived financial artifact changed')
+            path.unlink()
     write(root/'financial-configuration.json', config)
     write(root/'financial-analysis.json', value)
-    (root/'financial-tables.md').write_text(finance.preview_markdown(value))
+    table_path = root/'financial-tables.md'
+    require(not table_path.exists() or table_path.read_text() == rendered, 'Existing financial table text differs')
+    table_path.write_text(rendered)
     return done(root, [root/'financial-configuration.json', root/'financial-analysis.json', root/'financial-tables.md'])
 
 
