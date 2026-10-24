@@ -439,6 +439,96 @@ class SequentialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'closure'):
             pipeline.resume(self.root, 'Claimed prelaunch repair', 'b' * 40)
 
+    def blocked_unlaunched_review(self):
+        self.through_analysis()
+        self.handlers['review'] = lambda root, job: {
+            'status': 'blocked', 'outputs': {}, 'tokens': 0,
+            'execution_certainty': 'not_started', 'reason': 'Insufficient review admission budget'}
+        return self.advance()
+
+    def grant_final_review(self):
+        return pipeline.authorize_final_review(self.root, 120, 'Approve one final review capped at 120 tokens.', 'c' * 40)
+
+    def test_final_review_grant_preserves_evidence_usage_spec_and_exact_approval(self):
+        before = self.blocked_unlaunched_review()
+        after = self.grant_final_review()
+        for name in ('artifacts', 'attempts', 'tokens_used', 'revision_round', 'specification'):
+            self.assertEqual(after[name], before[name])
+        self.assertEqual(after['budget_tokens'], before['tokens_used'] + 120)
+        self.assertEqual(after['administrative_history'][-1]['authorization'],
+                         'Approve one final review capped at 120 tokens.')
+        self.assertEqual(after['administrative_history'][-1]['additional_tokens'], 30)
+        with self.assertRaisesRegex(ValueError, 'already exists'):
+            self.grant_final_review()
+
+    def test_final_review_pass_allows_only_zero_token_publication(self):
+        self.blocked_unlaunched_review(); self.grant_final_review()
+        self.handlers['review'] = self.handler('review')
+        self.handlers['publication'].replay_safe = True
+        result = self.advance()
+        self.assertEqual(result['stage'], 'publication')
+        self.assertEqual(result['final_review']['state'], 'accepted')
+        self.assertEqual(result['final_review']['attempt_id'], result['attempts'][-1]['id'])
+        self.assertEqual(self.advance()['status'], 'completed')
+
+    def test_final_review_revision_is_blocked_without_new_correction(self):
+        self.blocked_unlaunched_review(); self.grant_final_review()
+        def review(root, job):
+            result = self.handler('review')(root, job)
+            result['status'] = 'revise'
+            return result
+        self.handlers['review'] = review
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['revision_round'], 0)
+        self.assertEqual(result['final_review']['state'], 'blocked')
+        self.assertEqual(result['attempts'][-1]['outcome']['status'], 'revise')
+        with self.assertRaisesRegex(ValueError, 'another model attempt'):
+            pipeline.resume(self.root, 'Retry final review', 'c' * 40)
+        with self.assertRaisesRegex(ValueError, 'further table corrections'):
+            pipeline.rebuild_tables(self.root, 'Correct final review', 'c' * 40)
+
+    def test_final_review_failed_prelaunch_still_cannot_launch_another_attempt(self):
+        self.blocked_unlaunched_review(); self.grant_final_review()
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['final_review']['state'], 'blocked')
+        with self.assertRaisesRegex(ValueError, 'another model attempt'):
+            pipeline.resume(self.root, 'Try again', 'c' * 40)
+
+    def test_final_review_cap_overrun_records_cost_and_blocks_publication(self):
+        self.blocked_unlaunched_review(); self.grant_final_review()
+        def review(root, job):
+            self.assertEqual(job['remaining_tokens'], 120)
+            result = self.handler('review')(root, job)
+            result['tokens'] = 121
+            return result
+        self.handlers['review'] = review
+        result = self.advance()
+        self.assertEqual(result['tokens_used'], 131)
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('budget exceeded', result['reason'])
+        self.assertNotIn('publication', self.calls)
+
+    def test_final_review_candidate_mutation_blocks_before_launch(self):
+        self.blocked_unlaunched_review(); self.grant_final_review()
+        self.handlers['review'] = self.handler('review')
+        (self.root/'report.md').write_text('Different candidate')
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertNotIn('review', self.calls)
+
+    def test_final_review_allowance_cannot_be_used_for_analysis(self):
+        self.blocked_unlaunched_review()
+        job = self.grant_final_review()
+        job['stage'] = 'analysis'
+        (self.root/'job.json').write_text(json.dumps(job))
+        previous_calls = list(self.calls)
+        result = self.advance()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('cannot fund another stage', result['reason'])
+        self.assertEqual(self.calls, previous_calls)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -140,6 +140,9 @@ def _block(root, job, reason):
     job.update(status="blocked", reason=reason)
     if job["attempts"] and job["attempts"][-1]["status"] == "running":
         job["attempts"][-1]["status"] = "blocked"
+    final = job.get("final_review")
+    if final and job["attempts"] and final.get("attempt_id") == job["attempts"][-1]["id"] and job["attempts"][-1]["stage"] == "review":
+        final["state"] = "blocked"
     _write(root, job)
     return job
 
@@ -165,6 +168,13 @@ def _finish(root, job):
             raise ValueError("outputs must be an artifact mapping")
         _verify(root, job["artifacts"])
         _verify(root, outputs)
+        final = job.get("final_review")
+        if final:
+            _verify(root, final["artifacts"])
+            if stage == "review" and (attempt["id"] != final.get("attempt_id") or final["state"] != "running"):
+                raise ValueError("final review allowance belongs to one exact attempt")
+            if stage == "publication" and (tokens != 0 or final["state"] != "accepted"):
+                raise ValueError("final review allowance permits only zero-token publication after acceptance")
         if any(name in job["artifacts"] and job["artifacts"][name] != digest for name, digest in outputs.items()):
             raise ValueError("stage overwrote a retained artifact")
         if job["tokens_used"] > job["budget_tokens"]:
@@ -175,6 +185,8 @@ def _finish(root, job):
             raise ValueError("replay-safe handler must use zero model tokens")
         if status == "blocked":
             return _block(root, job, str(outcome.get("reason", "stage blocked")))
+        if final and status == "revise":
+            return _block(root, job, "final authorized review requires corrections; no further correction authorized")
         if not outputs:
             raise ValueError("completed stage requires durable output artifacts")
         if stage in ("analysis", "review"):
@@ -212,6 +224,8 @@ def _finish(root, job):
             job.pop("revision_input", None)
         if stage == "review":
             job["accepted_candidate_sha256"] = job["artifacts"][job["candidate_artifact"]]
+            if job.get("final_review"):
+                job["final_review"]["state"] = "accepted"
         if stage == "publication":
             job["status"] = "completed"
         else:
@@ -251,6 +265,8 @@ def advance(root, handlers, execute=True):
         try:
             _verify(root, job["artifacts"])
             _verify(root, job.get("revision_input", {}))
+            if job.get("final_review"):
+                _verify(root, job["final_review"]["artifacts"])
         except (ValueError, OSError) as exc:
             return _block(root, job, str(exc))
         if job["stage"] == "publication" and (not job["accepted_candidate_sha256"] or
@@ -262,6 +278,15 @@ def advance(root, handlers, execute=True):
         if not callable(handler):
             return _block(root, job, "stage handler unavailable")
         replay_safe = getattr(handler, "replay_safe", False) is True
+        final = job.get("final_review")
+        if final:
+            if job["stage"] == "review":
+                if (final["state"] != "authorized" or final.get("attempt_id") is not None
+                        or job["tokens_used"] != final["starting_tokens"]
+                        or job["budget_tokens"] != final["starting_tokens"] + final["review_cap"]):
+                    return _block(root, job, "final review allowance belongs to one exact attempt")
+            elif job["stage"] != "publication" or final["state"] != "accepted" or not replay_safe:
+                return _block(root, job, "final review allowance cannot fund another stage")
         if replay_safe and job["stage"] not in ("sources", "financial_tables", "publication"):
             return _block(root, job, "model stages cannot declare safe replay")
         if replay is None:
@@ -272,6 +297,8 @@ def advance(root, handlers, execute=True):
             attempt = replay
             attempt["replays"] = attempt.get("replays", 0) + 1
         job["status"] = "running"
+        if final and job["stage"] == "review":
+            final.update(state="running", attempt_id=attempt["id"])
         _write(root, job)
         context = _ACTIVE.set((root, attempt["id"]))
         try:
@@ -352,6 +379,8 @@ def resume(root, reason, code_commit, *, reconcile=None):
         job = _read(root)
         if job["status"] != "blocked" or job["stage"] not in STAGES:
             raise ValueError("only a blocked stage can resume")
+        if job.get("final_review") and job["stage"] != "publication":
+            raise ValueError("final review authorization does not permit another model attempt")
         history = job.get("administrative_history", [])
         if not job["attempts"]:
             raise ValueError("completed failure outcome required")
@@ -429,6 +458,8 @@ def rebuild_tables(root, reason, code_commit):
         raise ValueError("explicit bounded operator reason required")
     with _lock(root):
         job = _read(root)
+        if job.get("final_review"):
+            raise ValueError("final review authorization does not permit further table corrections")
         if job["status"] != "blocked" or job["stage"] != "review" or not job["attempts"]:
             raise ValueError("table rebuild requires a blocked independent review")
         if job["revision_round"] >= job["max_revision_rounds"]:
@@ -501,6 +532,57 @@ def rebuild_tables(root, reason, code_commit):
         job["revision_input"] = {job["candidate_artifact"]: job["artifacts"].pop(job["candidate_artifact"])}
         job.update(stage="financial_tables", status="ready", revision_round=job["revision_round"] + 1,
                    execution_code_commit=code_commit, accepted_candidate_sha256=None)
+        job.pop("reason", None)
+        _write(root, job)
+        return job
+
+
+def authorize_final_review(root, review_cap, authorization, code_commit):
+    """Bind one explicitly approved final review to the unchanged candidate.
+
+    The user-supplied approval is retained verbatim. Existing costs/specification
+    stay intact; the only added allowance is ``review_cap`` minus the previously
+    remaining budget. No correction or another model attempt may use this grant.
+    """
+    root = Path(root).resolve()
+    review_cap = _integer(review_cap, "final review cap", 1, MAX_TOKENS)
+    code_commit = _commit(code_commit)
+    if not isinstance(authorization, str) or not authorization.strip() or len(authorization) > 8000:
+        raise ValueError("explicit final review authorization required")
+    with _lock(root):
+        job = _read(root)
+        if job.get("final_review"):
+            raise ValueError("final review authorization already exists")
+        if job["status"] != "blocked" or job["stage"] != "review" or not job["attempts"]:
+            raise ValueError("final review requires a blocked unlaunched review")
+        attempt = job["attempts"][-1]
+        outcome = attempt.get("outcome", {})
+        if (attempt["stage"] != "review" or not attempt.get("usage_recorded")
+                or outcome.get("status") != "blocked" or _model_restart(attempt)):
+            raise ValueError("final review requires an accounted zero-token not_started outcome")
+        charged = sum(_integer(row["outcome"].get("tokens"), "recorded tokens")
+                      for row in job["attempts"] if row.get("usage_recorded"))
+        if charged != job["tokens_used"]:
+            raise ValueError("cumulative charged usage does not match attempt history")
+        _verify(root, job["artifacts"])
+        _verify(root, job.get("revision_input", {}))
+        candidate = job["artifacts"].get(job["candidate_artifact"])
+        if not candidate:
+            raise ValueError("exact candidate artifact required")
+        new_budget = job["tokens_used"] + review_cap
+        if new_budget <= job["budget_tokens"]:
+            raise ValueError("final review approval must specify an additional bounded allowance")
+        record = dict(action="authorize_final_review", authorization=authorization, review_cap=review_cap,
+                      previous_budget_tokens=job["budget_tokens"], budget_tokens=new_budget,
+                      additional_tokens=new_budget - job["budget_tokens"], tokens_used=job["tokens_used"],
+                      revision_round=job["revision_round"], candidate_sha256=candidate,
+                      previous_code_commit=job.get("execution_code_commit", job["specification"].get("code_commit")),
+                      code_commit=code_commit)
+        job.setdefault("administrative_history", []).append(record)
+        job["final_review"] = dict(state="authorized", attempt_id=None, review_cap=review_cap,
+                                   starting_tokens=job["tokens_used"], candidate_sha256=candidate,
+                                   artifacts=copy.deepcopy(job["artifacts"]))
+        job.update(status="ready", budget_tokens=new_budget, execution_code_commit=code_commit)
         job.pop("reason", None)
         _write(root, job)
         return job

@@ -45,6 +45,10 @@ never performs this action. A proven financial-table defect may instead
 be rebuilt explicitly in the same job: original table bytes are archived, source hashes
 and cumulative costs are preserved, and a correction round requires fresh analysis and
 review. The scheduler cannot bypass that review.
+An explicitly human-approved final-review allowance may fund one fresh review of the
+exact existing candidate. The core records the approval and original allowance, binds
+all retained artifacts, and prevents further model retries or corrections. Only a
+passing review permits zero-token publication. The scheduler cannot grant allowances.
 Global universe analysis remains separately gated. Collection and calendar workflows
 are unchanged.
 
