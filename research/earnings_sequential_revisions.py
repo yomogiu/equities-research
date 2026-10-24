@@ -204,6 +204,46 @@ def apply(revision_plan, response):
     return merged
 
 
+def exact_deletions(revision_plan):
+    """Apply only unambiguous reviewer-requested sentence deletions, or decline.
+
+    This creates no new claims or citations. Every affected component must have
+    an explicit deletion finding; other repairs still go to the correction model.
+    A fresh reviewer, not this syntax recognizer, decides whether all fixes suffice.
+    """
+    if revision_plan is None: return None
+    replacements = {}
+    for location in revision_plan['allowed_locations']:
+        original = _components(revision_plan['previous_analysis'])[location]
+        if not isinstance(original, dict) or 'text' not in original: return None
+        findings = [row for row in revision_plan['previous_review']['findings'] if row['location']==location]
+        if not findings: return None
+        text = original['text']
+        for finding in findings:
+            fix = finding['fix']
+            if re.search(r'\b(?:add|replace|rewrite|insert|calculate|rephrase)\b',fix,re.I): return None
+            prefix = re.search(r"delete the sentence beginning ['‘]([^'’]+)['’]",fix,re.I)
+            suffix = re.search(r"sentence ending ['‘]([^'’]+)['’]",finding['problem'],re.I)
+            if prefix:
+                mode, fragment = 'prefix', prefix.group(1)
+            elif suffix and re.search(r'\bdelete that sentence\b',fix,re.I):
+                mode, fragment = 'suffix', suffix.group(1)
+            else: return None
+            if len(fragment)<12 or text.count(fragment)!=1: return None
+            sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])',text)
+            matches = [i for i,sentence in enumerate(sentences) if
+                       (sentence.startswith(fragment) if mode=='prefix' else
+                        sentence.rstrip('.!?').endswith(fragment.rstrip('.!?')))]
+            if len(matches)!=1: return None
+            del sentences[matches[0]]
+            text = ' '.join(sentences).strip()
+            if not text: return None
+        replacements[location] = {**copy.deepcopy(original),'text':text}
+    response = {'replacements':replacements}
+    apply(revision_plan,response)  # Same exact-component schema and unchanged-content checks.
+    return response
+
+
 def audit(root, job, revision_plan, merged, candidate_text, render_candidate):
     """Return a deterministic delta proof before writing the replacement draft."""
     fresh = plan(root, job, render_candidate)

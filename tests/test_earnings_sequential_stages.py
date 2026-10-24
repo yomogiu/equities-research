@@ -319,6 +319,32 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertEqual(self.counter,2)
         self.assertIn('changed',result['reason'])
 
+    def test_exact_deletion_correction_uses_zero_tokens_and_fresh_full_review(self):
+        self.revise=True
+        native=self.fake_runner
+        def with_redundancy(*args,**kwargs):
+            result=native(*args,**kwargs)
+            if args[4]['role']=='sequential_analysis' and args[4]['revision']==0:
+                result['content']['sections']['outlook']['text'] += ' The redundant workflow sentence is unnecessary.'
+            return result
+        self.patch_runner.stop()
+        with patch.object(stages.runner,'run_role',side_effect=with_redundancy):
+            def deletion(value,reader):
+                if value['verdict']=='revise':
+                    value['findings'][0]['fix']="Delete the sentence beginning 'The redundant workflow sentence'."
+            self.review_mutator=deletion
+            result=self.run_complete()
+        self.assertEqual(result['status'],'completed',result.get('reason'))
+        self.assertEqual(result['tokens_used'],300)
+        self.assertEqual(self.counter,3)  # Initial author and two independent reviews.
+        correction=next(a for a in result['attempts'] if a['stage']=='analysis' and a['revision_round']==1)
+        self.assertEqual(correction['outcome']['execution_kind'],'deterministic_revision')
+        self.assertEqual(correction['outcome']['tokens'],0)
+        self.assertNotIn('session_id',correction['outcome'])
+        self.assertEqual(stages.read(self.job/'analysis-r1.json')['sections']['outlook']['text'],'Fictional evidence remains uncertain.')
+        self.assertTrue((self.job/'correction-r1.json').exists())
+        self.assertEqual(set(stages.read(self.job/'review-r1.json')['criteria']),set(stages.CRITERIA))
+
     def test_unsupported_table_repair_stops_without_spending_another_author_review_pair(self):
         self.financial_revise = True
         result = self.run_complete()

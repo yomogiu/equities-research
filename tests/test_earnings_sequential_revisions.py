@@ -138,6 +138,27 @@ class SequentialRevisionTests(unittest.TestCase):
         self.job['artifacts'].update(updated)
         with self.assertRaisesRegex(ValueError,'independent table finding'): self.plan()
 
+    def test_exact_deletions_preserve_all_other_words_and_citations(self):
+        plan=self.plan()
+        plan['previous_analysis']['sections']['earnings']['text']='Earnings reflect demand. The table repeats $1.25 of earnings. The qualification remains material.'
+        plan['previous_review']['findings'][0]['fix']="Delete the sentence beginning 'The table repeats'. Retain the qualification."
+        response=revisions.exact_deletions(plan)
+        self.assertEqual(response['replacements']['earnings']['text'],'Earnings reflect demand. The qualification remains material.')
+        self.assertEqual(response['replacements']['earnings']['citations'],['Q1'])
+        plan['previous_review']['findings'][0].update(problem="The sentence ending 'qualification remains material' is redundant.",fix='Delete that sentence.')
+        response=revisions.exact_deletions(plan)
+        self.assertEqual(response['replacements']['earnings']['text'],'Earnings reflect demand. The table repeats $1.25 of earnings.')
+
+    def test_exact_deletions_decline_ambiguity_whole_component_removal_or_new_claims(self):
+        plan=self.plan();plan['previous_analysis']['sections']['earnings']['text']='Fictional uncertainty remains.'
+        finding=plan['previous_review']['findings'][0]
+        for fix in ("Delete the sentence beginning 'Fictional uncertainty'.", "Delete the sentence beginning 'Not present in paragraph'.",
+                    "Delete the sentence beginning 'Fictional uncertainty'. Add a new conclusion."):
+            finding['fix']=fix;self.assertIsNone(revisions.exact_deletions(plan))
+        plan['previous_analysis']['sections']['earnings']['text']='Duplicate material phrase. Duplicate material phrase. Evidence remains.'
+        finding['fix']="Delete the sentence beginning 'Duplicate material phrase'."
+        self.assertIsNone(revisions.exact_deletions(plan))
+
     def test_prior_analysis_must_reconstruct_the_reviewed_candidate(self):
         self.job['attempts'][-1]['outcome']['input_sha256'] = '0' * 64
         with self.assertRaisesRegex(ValueError, 'reconstruct'):

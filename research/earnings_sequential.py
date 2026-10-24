@@ -189,7 +189,17 @@ def _finish(root, job):
             return _block(root, job, "final authorized review requires corrections; no further correction authorized")
         if not outputs:
             raise ValueError("completed stage requires durable output artifacts")
-        if stage in ("analysis", "review"):
+        deterministic_revision = stage == 'analysis' and outcome.get('execution_kind') == 'deterministic_revision'
+        if deterministic_revision:
+            proof_name = f"correction-r{job['revision_round']}.json"
+            if tokens != 0 or not job['revision_round'] or proof_name not in outputs or outcome.get('session_id'):
+                raise ValueError('Deterministic revision requires zero tokens, no model session and a bound correction proof')
+            proof = json.loads(_artifact(root, proof_name).read_text())
+            prior_review = f"review-r{job['revision_round']-1}.json"
+            if (prior_review not in job['artifacts'] or proof.get('candidate_after_sha256') != outputs.get(job['candidate_artifact'])
+                    or proof.get('baseline_artifacts', {}).get(prior_review) != job['artifacts'].get(prior_review)):
+                raise ValueError('Deterministic revision proof does not bind candidate and independent review')
+        if stage in ("analysis", "review") and not deterministic_revision:
             session = outcome.get("session_id")
             if not isinstance(session, str) or not session:
                 raise ValueError("analysis/review requires an attributable session_id")

@@ -51,8 +51,12 @@ reasoning. Verified corrections default to `gpt-6-luna` with max reasoning, incl
 sections affected by verified table repairs. Per-job `models`
 overrides use the distinct `analysis`, `review` and `correction` keys.
 
-A narrative-only correction replaces exactly the sections identified by the prior
-review. Code preserves every other component, verifies the prior reviewed candidate,
+An exact, unambiguous reviewer-requested sentence deletion is applied in code when
+all affected components can be repaired solely by deletion. It adds no claims or
+citations, uses zero model tokens, records an explicit deterministic execution kind
+without a synthetic model session, and still requires a fresh full-report review.
+Other corrections use Luna Max. A narrative-only correction replaces exactly the
+sections identified by the prior review. Code preserves every other component, verifies the prior reviewed candidate,
 and saves hashes of the before/after components. The correction author receives the
 flagged sections and their original evidence. The fresh reviewer receives the entire
 revised candidate, prior review, verified changes and original evidence for changed

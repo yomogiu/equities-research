@@ -664,13 +664,26 @@ def _model(root, job, role):
 
 
 def analysis(root, job):
-    root = Path(root); value, result = _model(root, job, 'analysis')
+    root = Path(root)
+    from . import earnings_sequential_revisions as revisions
+    try:
+        plan = revisions.plan(root, job, render_candidate)
+        value = revisions.exact_deletions(plan)
+    except (ValueError, KeyError, TypeError, OSError) as error:
+        return {'status':'blocked','outputs':{},'tokens':0,'execution_certainty':'not_started','reason':str(error)}
+    if value is not None:
+        result = {'tokens':0,'execution_kind':'deterministic_revision','execution_certainty':'completed'}
+    else:
+        value, result = _model(root, job, 'analysis')
     if value is None: return result
     try:
         revision = job['revision_round']; path = root/f'analysis-r{revision}.json'
         from . import earnings_sequential_revisions as revisions
         plan = revisions.plan(root, job, render_candidate)
         merged = revisions.apply(plan, value) if plan else value
+        if result.get('execution_kind') == 'deterministic_revision':
+            bundle = evidence.load_bundle(root/'sources/manifest.json')
+            validate_analysis(merged,set(evidence._scopes(bundle)),set(x['id'] for x in bundle['transcript_index']['exchanges']))
         rendered = render_candidate(merged, read(root/'financial-analysis.json'), root/'sources/manifest.json')
         extra = []
         if plan:
