@@ -23,6 +23,7 @@ class SequentialStagesTests(unittest.TestCase):
         controller.create(self.job, {'case_path':str(self.case), 'writing_standard':str(self.writing),
             'financial_analysis':finance.configuration('2040-01-01','2040-03-31')})
         self.revise = False; self.financial_revise = False; self.counter = 0; self.skip_call = False
+        self.model_calls = []
         self.transport_settings = []; self.skip_author_filing = False; self.skip_support = False
         self.patch_mutator = None; self.review_mutator = None; self.revise_forever = False
         self.patch_runner = patch.object(stages.runner, 'run_role', side_effect=self.fake_runner)
@@ -32,6 +33,7 @@ class SequentialStagesTests(unittest.TestCase):
 
     def fake_runner(self, role_dir, prompt, model, effort, bindings, index, **settings):
         self.transport_settings.append(settings)
+        self.model_calls.append((model, effort))
         role_dir.mkdir(parents=True); reader = context.Evidence(index, role_dir/'retrieval.jsonl')
         for page in range(len(reader.role_batch_plan())):
             if self.skip_support:
@@ -99,6 +101,8 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed', result.get('reason'))
         self.assertEqual(result['revision_round'], 1)
         self.assertEqual(result['tokens_used'], 400)
+        self.assertEqual(self.model_calls, [('gpt-6.1-sol','medium'), ('gpt-6.1-sol','medium'),
+                                            ('gpt-6-luna','max'), ('gpt-6.1-sol','medium')])
         self.assertEqual(financial_sha, storage.sha(self.job/'financial-analysis.json'))
         self.assertEqual(self.counter, 4)
         self.assertTrue((self.job/'review-r0.json').exists())
@@ -269,6 +273,7 @@ class SequentialStagesTests(unittest.TestCase):
         self.assertNotIn('section_revision', author_context)
         self.assertNotIn('financial_tables_markdown', stages.read(self.job/'context-review-r1/artifacts.json'))
         self.assertFalse((self.job/'correction-r1.json').exists())
+        self.assertEqual(self.model_calls, [('gpt-6.1-sol','medium')] * 4)
 
     def test_table_rebuild_does_not_remove_differing_unbound_output(self):
         self.financial_revise = True

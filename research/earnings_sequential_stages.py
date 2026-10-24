@@ -26,7 +26,8 @@ SECTIONS = {'demand': 'Demand', 'earnings': 'Profits and margins',
             'cash': 'Cash and financial capacity', 'outlook': 'Outlook and earnings valuation'}
 CRITERIA = ('source_accuracy', 'qa_fidelity', 'financial_context', 'reasoning',
             'counterevidence', 'coverage', 'materiality', 'concise_writing')
-MODELS = {'analysis': ['gpt-6.1-sol', 'medium'], 'review': ['gpt-6.1-sol', 'medium']}
+MODELS = {'analysis': ['gpt-6.1-sol', 'medium'], 'review': ['gpt-6.1-sol', 'medium'],
+          'correction': ['gpt-6-luna', 'max']}
 AUTHOR_FILING_QUERY = 'operating margin charges restructuring impairment cash restricted joint venture liquidity guidance adjusted earnings outlook'
 
 
@@ -610,7 +611,8 @@ def _model_impl(root, job, role):
         return None, {'status':'blocked', 'outputs':{}, 'tokens':0, 'reason':'Remaining lifecycle budget cannot fund the estimated mandatory context and registered output reserve', 'execution_certainty':'not_started'}
     prompt += '\nThe execution budget permits at most '+str(preflight['max_tool_calls']-1)+' IPython tool calls in total. Read the mandatory pages first, use remaining calls only for necessary evidence, and then submit the final JSON response without another tool call.\n'
     revision = job['revision_round']; role_dir = root/'roles'/_role_label(job, role)
-    model, effort = job['specification'].get('models', {}).get(role, MODELS[role])
+    model_role = 'correction' if role == 'analysis' and selective else role
+    model, effort = job['specification'].get('models', {}).get(model_role, MODELS[model_role])
     measured = None
     try:
         response = runner.run_role(role_dir, prompt, model, effort,

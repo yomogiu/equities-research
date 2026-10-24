@@ -27,6 +27,11 @@ This verifies numerical reproducibility, not the completeness or accounting mean
 of the report. Original disclosures remain available; qualitative claims still need
 original-source inspection and independent review.
 
+Initial analysis and independent review default to `gpt-6.1-sol` with medium
+reasoning. Verified narrative corrections default to `gpt-6-luna` with max reasoning;
+full reauthoring after table repairs retains the analysis model. Per-job `models`
+overrides use the distinct `analysis`, `review` and `correction` keys.
+
 A narrative-only correction replaces exactly the sections identified by the prior
 review. Code preserves every other component, verifies the prior reviewed candidate,
 and saves hashes of the before/after components. The correction author receives the
