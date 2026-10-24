@@ -23,7 +23,7 @@ class SequentialStagesTests(unittest.TestCase):
         controller.create(self.job, {'case_path':str(self.case), 'writing_standard':str(self.writing),
             'financial_analysis':finance.configuration('2040-01-01','2040-03-31')})
         self.revise = False; self.financial_revise = False; self.counter = 0; self.skip_call = False
-        self.transport_settings = []
+        self.transport_settings = []; self.skip_author_filing = False
         self.patch_runner = patch.object(stages.runner, 'run_role', side_effect=self.fake_runner)
         self.patch_runner.start(); self.addCleanup(self.patch_runner.stop)
         self.patch_delivery = patch.object(context, 'delivered_entries', side_effect=lambda job, entries:entries)
@@ -36,6 +36,7 @@ class SequentialStagesTests(unittest.TestCase):
             if not self.skip_call: reader.role_batch(page)
         role = bindings['role']; self.counter += 1
         if role == 'sequential_review': reader.challenge_batch('guidance risk cash flow debt capital expenditure', 4)
+        elif not self.skip_author_filing: reader.filing_batch(stages.AUTHOR_FILING_QUERY, 4)
         exchange = reader.index['exchange_ids'][0]
         ref = [exchange]
         if role == 'sequential_analysis':
@@ -168,7 +169,7 @@ class SequentialStagesTests(unittest.TestCase):
         for role, settings in zip(('analysis', 'review'), self.transport_settings):
             index = self.job/f'context-{role}-r0/index.json'
             reader = context.Evidence(index, self.job/'unused-plan.jsonl', _replay=True)
-            required = len(reader.role_batch_plan()) + int(role == 'review')
+            required = len(reader.role_batch_plan()) + 1
             self.assertEqual(settings['max_tool_calls'], min(8, required + 3) + 1)
             self.assertLessEqual(settings['max_tool_calls'], 9)
 
@@ -213,6 +214,34 @@ class SequentialStagesTests(unittest.TestCase):
         with patch.object(context.Evidence, 'role_batch_plan', return_value=[{'utf8_bytes':1000}]*8):
             with self.assertRaisesRegex(ValueError, 'eight-call bounded'):
                 stages._editorial_preflight('review', index, prompt, 1_200_000)
+
+    def test_author_without_original_filing_read_is_blocked_after_charging_usage(self):
+        self.skip_author_filing = True
+        result = self.run_complete()
+        self.assertEqual(result['status'], 'blocked')
+        self.assertIn('Original filing context inspection required', result['reason'])
+        self.assertEqual(result['tokens_used'], 100)
+        self.assertEqual(self.counter, 1)
+        self.assertFalse((self.job/'report.html').exists())
+
+    def test_author_plan_includes_delivered_original_filing_not_search_previews(self):
+        self.advance(); self.advance()
+        job = stages.read(self.job/'job.json')
+        index = stages._role_context(self.job, job, 'analysis')
+        reader = context.Evidence(index, self.job/'unused-plan.jsonl', _replay=True)
+        pages = len(reader.role_batch_plan())
+        prompt = stages._prompt('analysis', pages)
+        plan = stages._editorial_preflight('analysis', index, prompt, 1_200_000)
+        self.assertEqual(plan['work_plan']['author_filing_checks'], 1)
+        self.assertEqual(plan['work_plan']['challenge_checks'], 0)
+        self.assertEqual(plan['work_plan']['work_tool_limit'], pages + 1)
+        original, ids = reader._filing_batch(stages.AUTHOR_FILING_QUERY, 4)
+        self.assertTrue(ids)
+        self.assertEqual(plan['tool_packet_utf8_bytes'][-1], len(original.encode()))
+        self.assertIn('print(ctx.filing_batch(', prompt)
+        self.assertIn('comparison-period one-offs', prompt)
+        self.assertIn('strength of commitment', prompt)
+        self.assertEqual(self.run_complete()['status'], 'completed')
 
     def test_full_original_call_read_is_mandatory(self):
         self.skip_call = True
