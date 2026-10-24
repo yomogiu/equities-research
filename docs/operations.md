@@ -129,3 +129,23 @@ old pinned run. Those instructions do not govern new sequential reports.
 Use the signed-in subscription and configured private storage. Never put real evidence,
 reports, watchlists, session receipts or authentication in this public repository.
 Passing tests establishes code behavior, not live model execution or remote publication.
+
+
+### Presentation-only corrections
+
+A completed review that passes all seven substantive criteria and flags only a
+supported repeated debt caveat can take one deterministic presentation repair.
+The rule removes two known generated notices only when the complete debt/lease
+limitation remains in the cash commentary. It preserves every financial row,
+source, citation and narrative byte. A separate candidate and deletion proof
+retain the previously reviewed report. The next stage is independent review,
+without another source, table or author run. All eight criteria and five expected
+questions remain mandatory; the review and publication bind the new candidate.
+
+This pass has a separate one-repair bound and uses the existing cumulative token
+budget, including after the two substantive revision rounds. Unsupported changes,
+uncertain executions, another editorial failure or insufficient budget stop. Normal
+execution never expands the budget. An explicit user request to correct and review
+an already blocked report may be recorded through `repair_editorial`; an optional
+bounded review allowance is recorded alongside all previous usage. Publication
+still requires acceptance. Scheduling is controlled independently.

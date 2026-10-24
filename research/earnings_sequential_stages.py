@@ -691,7 +691,7 @@ def analysis(root, job):
             proof_path = root/f'correction-r{revision}.json'
             write(proof_path, proof); extra.append(proof_path)
         write(path, merged)
-        candidate = root/job['specification'].get('candidate_artifact', 'report.md')
+        candidate = root/job['candidate_artifact']
         candidate.parent.mkdir(parents=True, exist_ok=True)
         candidate.write_text(rendered)
         return done(root, [path, candidate, *extra], **result)
@@ -700,7 +700,7 @@ def analysis(root, job):
 
 
 def review(root, job):
-    root = Path(root); candidate = root/job['specification'].get('candidate_artifact', 'report.md')
+    root = Path(root); candidate = root/job['candidate_artifact']
     candidate_sha = storage.sha(candidate)
     value, result = _model(root, job, 'review')
     if value is None: return result
@@ -708,7 +708,8 @@ def review(root, job):
         require(storage.sha(candidate) == candidate_sha, 'Candidate changed during review')
         from . import earnings_sequential_revisions as revisions
         revisions.load(root, job, render_candidate)
-        path = root/f'review-r{job["revision_round"]}.json'; write(path, value)
+        from .earnings_sequential_editorial import review_name
+        path = root/review_name(job); write(path, value)
         result = done(root, [path], input_sha256=candidate_sha, **result)
         if value['verdict'] == 'revise':
             result['status'] = 'revise'
@@ -720,17 +721,18 @@ def review(root, job):
 
 
 def publication(root, job):
-    root = Path(root); candidate = root/job['specification'].get('candidate_artifact', 'report.md')
+    root = Path(root); candidate = root/job['candidate_artifact']
     digest = storage.sha(candidate)
     from . import earnings_sequential_revisions as revisions
     revisions.load(root, job, render_candidate)
     require(job.get('accepted_candidate_sha256') == digest, 'Publication requires accepted exact candidate')
-    decision = read(root/f'review-r{job["revision_round"]}.json')
+    from .earnings_sequential_editorial import review_name
+    decision = read(root/review_name(job))
     validate_review(decision, set(evidence._scopes(evidence.load_bundle(root/'sources/manifest.json'))))
     require(decision['verdict'] == 'pass', 'Independent review has not passed')
     (root/'report.html').write_text(markdown.render(candidate.read_text(), status='accepted'))
     receipt = {'version':VERSION, 'status':'accepted_local', 'candidate_sha256':digest,
-               'html_sha256':storage.sha(root/'report.html'), 'review_sha256':storage.sha(root/f'review-r{job["revision_round"]}.json'),
+               'html_sha256':storage.sha(root/'report.html'), 'review_sha256':storage.sha(root/review_name(job)),
                'financial_analysis_sha256':storage.sha(root/'financial-analysis.json'),
                'source_manifest_sha256':storage.sha(root/'sources/manifest.json'),
                'scope_notes':read(root/'sources/manifest.json').get('scope_notes', []),

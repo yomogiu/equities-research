@@ -268,6 +268,9 @@ def audit(root, job, revision_plan, merged, candidate_text, render_candidate):
 def load(root, job, render_candidate):
     """Verify the saved delta and both candidates before the fresh review."""
     root = Path(root).resolve()
+    if job.get('editorial_repair'):
+        from . import earnings_sequential_editorial as editorial
+        return editorial.load(root, job, render_candidate)
     name = f"correction-r{job['revision_round']}.json"
     if name not in job["artifacts"]:
         return None

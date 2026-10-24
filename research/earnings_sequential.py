@@ -219,7 +219,8 @@ def _finish(root, job):
         if target not in ('analysis', 'financial_tables') or ('revision_target' in outcome and (stage != 'review' or status != 'revise')):
             raise ValueError('invalid revision target')
         if status == 'revise' and target == 'financial_tables':
-            name = f"review-r{job['revision_round']}.json"
+            from .earnings_sequential_editorial import review_name
+            name = review_name(job)
             if name not in outputs or outcome.get('execution_certainty') != 'completed':
                 raise ValueError('Automatic table repair requires a completed bound review')
             decision = json.loads(_artifact(root, name).read_text())
@@ -235,6 +236,14 @@ def _finish(root, job):
                                    ' '.join(row.get('fix', '').split())) for row in findings)
                 if fingerprint(current) and fingerprint(current) == fingerprint(previous):
                     raise ValueError('Repeated unchanged review findings; automatic repair made no progress')
+        if status == 'revise' and not job.get('editorial_repair'):
+            if _editorial_revision(root, job, outputs, outcome):
+                attempt['status'] = status
+                attempt['outputs'] = outputs
+                _write(root, job)
+                return job
+        if status == 'revise' and job.get('editorial_repair'):
+            raise ValueError('Editorial review still requires corrections; bounded repair exhausted')
         if status == "revise" and job["revision_round"] >= job["max_revision_rounds"]:
             raise ValueError("revision limit reached")
     except (ValueError, OSError) as exc:
@@ -655,5 +664,64 @@ def authorize_final_review(root, review_cap, authorization, code_commit):
                                    artifacts=copy.deepcopy(job["artifacts"]))
         job.update(status="ready", budget_tokens=new_budget, execution_code_commit=code_commit)
         job.pop("reason", None)
+        _write(root, job)
+        return job
+
+
+def _editorial_revision(root, job, outputs, outcome):
+    from . import earnings_sequential_editorial as editorial
+    from .earnings_sequential_stages import render_candidate
+    prepared = editorial.prepare(root, job, outputs, outcome, render_candidate)
+    if prepared is None: return False
+    proof, candidate = prepared
+    proof_name = 'editorial-repair-1.json'
+    for name, content in ((proof['candidate_after'], candidate),
+                          (proof_name, json.dumps(proof, indent=2, sort_keys=True)+'\n')):
+        path = _artifact(root, name)
+        if path.exists() and path.read_text() != content:
+            raise ValueError('Editorial output already exists with different content')
+        path.write_text(content)
+    job['artifacts'].update(outputs)
+    job['artifacts'].update({proof_name:_digest(root/proof_name),
+                            proof['candidate_after']:proof['candidate_after_sha256']})
+    job['editorial_repair'] = {'proof_artifact':proof_name, 'max_repairs':1,
+                              'starting_tokens':job['tokens_used']}
+    job.update(candidate_artifact=proof['candidate_after'], stage='review', status='ready',
+               accepted_candidate_sha256=None)
+    job.pop('reason', None)
+    return True
+
+
+def repair_editorial(root, authorization, code_commit, *, review_cap=None):
+    """Adopt a closed review for one deterministic repair plus a fresh review.
+
+    This operator entry is for already blocked jobs; normal completed reviews
+    use the same rule without extending budgets. An explicit review request may
+    supply one bounded review cap; it never funds analysis or table regeneration.
+    """
+    root = Path(root).resolve()
+    code_commit = _commit(code_commit)
+    if not isinstance(authorization, str) or not authorization.strip():
+        raise ValueError('Explicit repair authorization required')
+    with _lock(root):
+        job = _read(root)
+        if job['status'] != 'blocked' or job['stage'] != 'review' or not job['attempts']:
+            raise ValueError('Editorial repair requires a closed blocked review')
+        attempt = job['attempts'][-1]; outcome = attempt.get('outcome', {})
+        if (attempt['stage'] != 'review' or not attempt.get('usage_recorded')
+                or outcome.get('status') != 'revise'
+                or sum(a['outcome']['tokens'] for a in job['attempts'] if a.get('usage_recorded')) != job['tokens_used']):
+            raise ValueError('Editorial repair requires fully accounted completed review')
+        previous_budget = job['budget_tokens']
+        if review_cap is not None:
+            review_cap = _integer(review_cap, 'editorial review cap', 1, MAX_TOKENS)
+            job['budget_tokens'] = max(previous_budget, job['tokens_used'] + review_cap)
+        if not _editorial_revision(root, job, outcome.get('outputs', {}), outcome):
+            raise ValueError('No supported presentation-only repair')
+        job.setdefault('administrative_history', []).append(dict(action='repair_editorial',
+            authorization=authorization, tokens_used=job['tokens_used'], revision_round=job['revision_round'],
+            previous_budget_tokens=previous_budget, budget_tokens=job['budget_tokens'], review_cap=review_cap,
+            previous_code_commit=job.get('execution_code_commit'), code_commit=code_commit))
+        job['execution_code_commit'] = code_commit
         _write(root, job)
         return job
