@@ -313,6 +313,9 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         if 'report.md' in reader.index['files']:self.drain(reader,'file','report.md')
         self.drain(reader,'file','transcript.md')
         role=bindings['role'];meta=base.read(Path(index).parent/'metadata.json');art=base.read(Path(index).parent/'artifacts.json')
+        delivered_text='Fictional source inspection'
+        if role=='review' and meta.get('context_projection')==c.COMPACT_VERSION:
+            delivered_text+=reader.challenge_batch()
         if role=='financial':content=copy.deepcopy(self.financial)
         elif role=='retrieval':content=copy.deepcopy(self.retrieval)
         elif role=='analysis':
@@ -336,6 +339,17 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
                 failed=fail and key=='analysis:0'
                 content['decisions'].append({'unit_id':key,'verdict':'revise' if failed else 'pass','reason':'Fictional source check',
                     'passage_ids':[self.ids[0]],'review_kind':'factual' if failed else 'none','editorial_repairs':[]})
+                if failed and getattr(self,'exact_proposals',False):
+                    content['decisions'][-1]['editorial_repairs']=[{'field_path':['text'],
+                        'before':art['units'][key]['value']['text'],
+                        'after':'Fictional exact proposed claim '+str(meta['round']),
+                        'reason':'Fictional exact source repair'}]
+            if art.get('report_questions'):
+                from research import earnings_report_questions as questions
+                content['question_assessments']={name:{'status':'disclosed_gap',
+                    'evidence':'Fictional report explicitly discloses unavailable source inputs.',
+                    'unit_ids':[],'report_locations':['outlook' if name=='valuation' else name],'gap':'Fictional source packet is intentionally incomplete'}
+                    for name in questions.QUESTIONS}
         response='# Role result\n\n```json\n'+json.dumps(content)+'\n```\n';(job/'response.md').write_text(response)
         sid='fictional-'+job.name;launch={'id':'fictional-launch','request_sha256':base.digest(q)};base.save(job/'launch.json',launch)
         for name in ('runtime-start.json','runtime-finish.json'):base.save(job/name,{'launch_id':launch['id'],'session_id':sid,'model':model,'effort':effort,'oauth':True})
@@ -343,15 +357,15 @@ class FilePipelineTests(PassageFixture,unittest.TestCase):
         usage={'input':10,'output':10,'cacheRead':0,'cacheWrite':0,'totalTokens':20}
         assistant={'role':'assistant','provider':'openai-codex','api':'openai-codex-responses','model':model,'usage':usage}
         messages=[{'role':'user','content':prompt},{**assistant,'stopReason':'toolUse','content':[{'type':'toolCall','id':'inspect','name':'ipython','arguments':{'code':'# Fictional complete API inspection'}}]},
-                  {'role':'toolResult','toolName':'ipython','toolCallId':'inspect','content':[{'type':'text','text':'Fictional source inspection'}],'details':{'delivery_id':'a'*24},'isError':False},
+                  {'role':'toolResult','toolName':'ipython','toolCallId':'inspect','content':[{'type':'text','text':delivered_text}],'details':{'delivery_id':'a'*24},'isError':False},
                   {**assistant,'stopReason':'stop','content':[{'type':'text','text':response}]}]
         events=[{'type':'session','id':sid,'cwd':str(job)},{'type':'model_change','provider':'openai-codex','modelId':model},{'type':'thinking_level_change','thinkingLevel':effort}]+[{'type':'message','message':x} for x in messages]
         (job/'sessions').mkdir();(job/'sessions/fake.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in events))
         import hashlib
         delivered={k:messages[2][k] for k in ('content','details','isError')}
         raw=json.dumps(delivered,ensure_ascii=False,separators=(',',':')).encode()
-        (job/'tool-output').mkdir();(job/'tool-output'/('a'*24+'.txt')).write_text('Fictional source inspection')
-        entry={'id':'a'*24,'tool_call_id':'inspect','sha256':base.sha(job/'tool-output'/('a'*24+'.txt')),'original_bytes':len('Fictional source inspection'.encode()),'unsupported':False,'complete':True,'retrieval_start':0,'retrieval_end':len((job/'retrieval.jsonl').read_text().splitlines()),'delivered_sha256':hashlib.sha256(raw).hexdigest(),'delivered_bytes':len(raw),'limit':8192}
+        (job/'tool-output').mkdir();(job/'tool-output'/('a'*24+'.txt')).write_text(delivered_text)
+        entry={'id':'a'*24,'tool_call_id':'inspect','sha256':base.sha(job/'tool-output'/('a'*24+'.txt')),'original_bytes':len(delivered_text.encode()),'unsupported':False,'complete':True,'retrieval_start':0,'retrieval_end':len((job/'retrieval.jsonl').read_text().splitlines()),'delivered_sha256':hashlib.sha256(raw).hexdigest(),'delivered_bytes':len(raw),'limit':8192}
         (job/'delivery.jsonl').write_text(json.dumps(entry)+'\n')
         if q.get('execution_policy'):
             from research.earnings_file_checkpoint import capture

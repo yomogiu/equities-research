@@ -19,6 +19,7 @@ from . import earnings_batch_review as batch, earnings_signals as signals
 from . import earnings_mechanical_preflight as mechanical, earnings_qa_grounding as grounding
 
 VERSION='file-backed-markdown-review-v1'
+EFFICIENT_PROFILE='deterministic-preparation-compact-review-v1'
 PROMPTS=Path(__file__).resolve().parent.parent/'prompts/earnings'
 # Narrative authors use the already configured reviewed-writing model. Keep
 # factual retrieval on its own route and retain fresh independent sessions.
@@ -63,11 +64,25 @@ def verify_budget_authorization(path,case):
     return a
 
 
-def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None, signal_preparation=None, report_template=template.VERSION, model_profile=None):
+def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, financial_mode="deterministic-original-facts-v1", budget_authorization=None, preparation=None, analysis_preparation=None, review_preparation=None, signal_preparation=None, report_template=template.VERSION, model_profile=None, financial_analysis=None, execution_profile=None):
+    # Only new financial-analysis requests receive this profile by default.
+    # Historical freezes and prepared continuations keep their original paths.
+    if execution_profile is None and financial_analysis is not None:execution_profile=EFFICIENT_PROFILE
+    require(execution_profile in (None,EFFICIENT_PROFILE),'Unknown execution profile')
+    if execution_profile is not None:
+        require(financial_mode=='deterministic-original-facts-v1' and report_template==template.VERSION and
+                all(x is None for x in (recovery,preparation,analysis_preparation,review_preparation,signal_preparation)),
+                'Efficient execution requires a new deterministic six-section request')
     selected_models=profile_models(model_profile)
     require(model_profile is None or not any(x is not None for x in (recovery,preparation,analysis_preparation,review_preparation,signal_preparation)),'Profile is for new requests only')
     root=Path(output).resolve();case=Path(case).resolve();writing=Path(writing).resolve()
     require(financial_mode in ('deterministic-original-facts-v1','model-original-selector-v1'),'Known financial preparation mode required')
+    if financial_analysis is not None:
+        from . import earnings_financial_analysis_report as financial_report
+        financial_report.validate_configuration(financial_analysis)
+        require(financial_mode=='deterministic-original-facts-v1' and report_template==template.VERSION and
+                all(x is None for x in (recovery,preparation,analysis_preparation,review_preparation,signal_preparation)),
+                'Financial analysis is an opt-in for new deterministic six-section requests only')
     require(max_tokens is None and budget_authorization is not None or type(max_tokens) is int and 1<=max_tokens<=1200000,'Explicit lifecycle budget or approved cap removal required')
     require(not root.exists() or not any(root.iterdir()),'New pipeline directory required')
     root.mkdir(parents=True,exist_ok=True)
@@ -90,6 +105,13 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
         'qa_grounding_sha256':base.sha(root/'qa-grounding.json'),'report_signals':True,'deterministic_corrections':True,
         'transport':'file-evidence-ipython-markdown-v1','financial_mode':financial_mode}
     if model_profile is not None:p['model_profile']=model_profile
+    if execution_profile is not None:p['execution_profile']=execution_profile
+    if financial_analysis is not None:
+        compiled=financial_report.compile(bundle,financial_analysis)
+        context.write(root/'financial-analysis.json',compiled)
+        p.update(financial_analysis=copy.deepcopy(financial_analysis),financial_analysis_sha256=base.sha(root/'financial-analysis.json'))
+        from . import earnings_report_questions as questions
+        p['report_questions']=questions.contract()
     require(report_template in (None, template.VERSION),'Known report template required')
     # Prepared continuations retain their authenticated author schema and writing.
     if report_template and not any(x is not None for x in (recovery, preparation, analysis_preparation, review_preparation, signal_preparation)):
@@ -152,6 +174,11 @@ def initialize(case, output, writing, *, max_tokens=1200000, recovery=None, fina
 
 def load(root):
     p=base.read(root/'protocol.json')
+    if 'execution_profile' in p:
+        require(p['execution_profile']==EFFICIENT_PROFILE and p.get('financial_mode')=='deterministic-original-facts-v1'
+                and p.get('report_template')==template.VERSION and not any(p.get(k) for k in
+                ('recovery_path','preparation_path','analysis_preparation_path','review_preparation_path','signal_preparation_path')),
+                'Frozen execution profile requires its original new-request configuration')
     if 'analysis_repair_rounds' in p:
         require(type(p['analysis_repair_rounds']) is int and p['analysis_repair_rounds']==1 and p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1'),'Unbound analysis correction round')
     require(p['version']==VERSION and (validate_profile(p) or p['models']=={k:list(v) for k,v in MODELS.items()} or p.get('preparation_path') and base.read(p['preparation_path']).get('version') in ('authenticated-exact-retrieval-identity-transport-v1','authenticated-pending-author-retrieval-preparation-v1','authenticated-charged-retrieval-preparation-v1','authenticated-two-charged-retrieval-preparation-v1','authenticated-final-cardinality-retrieval-preparation-v1','authenticated-final-cardinality-resume-preparation-v1','authenticated-reference-retrieval-preparation-v1','authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1','authenticated-single-retrieval-question-address-preparation-v1','authenticated-single-retrieval-answer-quote-preparation-v1','authenticated-linked-bare-json-preparation-v1') or p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version') in ('authenticated-single-duplicate-analysis-quotation-v1','authenticated-quoted-turn-exchange-address-v1','authenticated-analysis-address-preparation-v1','authenticated-analysis-host-address-preparation-v1','authenticated-analysis-turn-address-preparation-v1','authenticated-source-adjudicated-turn-dedup-preparation-v1') or p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version') in ('authenticated-scoped-final-proposals-continuation-v1','authenticated-pending-final-correction-preparation-v1','authenticated-header-basis-continuation-v1','authenticated-inspection-correction-continuation-v1','authenticated-completed-role-coverage-continuation-v1','authenticated-completed-review-inspection-continuation-v1','authenticated-invalid-correction-cardinality-continuation-v1','authenticated-invalid-correction-reference-continuation-v1','authenticated-resolved-eps-scope-continuation-v1','authenticated-review-direction-schema-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-final-heading-proposal-continuation-v1','authenticated-empty-signal-source-preparation-v1','authenticated-missing-review-source-preparation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1')) and p['max_correction_rounds']==2
@@ -223,18 +250,34 @@ def load(root):
         bundle['qa_grounding']=base.read(root/'qa-grounding.json')
     if p.get('review_preparation_path') and base.read(p['review_preparation_path']).get('version')=='authenticated-scoped-final-proposals-continuation-v1':
         bundle['qa_grounding']=base.read(root/'qa-grounding.json')
+    if p.get('financial_analysis') is not None:
+        from . import earnings_financial_analysis_report as financial_report
+        require(p.get('financial_mode')=='deterministic-original-facts-v1' and p.get('report_template')==template.VERSION and
+                not any(p.get(k) for k in ('recovery_path','preparation_path','analysis_preparation_path','review_preparation_path','signal_preparation_path')),
+                'Frozen financial analysis requires its original new-request configuration')
+        require(base.sha(root/'financial-analysis.json')==p.get('financial_analysis_sha256'),'Frozen computed financial analysis changed')
+        bundle['financial_analysis_config']=p['financial_analysis']
+        bundle['financial_analysis']=base.read(root/'financial-analysis.json')
+        financial_report.verified(bundle)
+    else:require('financial_analysis_sha256' not in p,'Unbound financial analysis artifact')
+    if 'report_questions' in p:
+        from . import earnings_report_questions as questions
+        require(p.get('financial_analysis') is not None,'Expected questions require financial analysis')
+        questions.verify(p['report_questions'])
     return p,bundle,catalog
 
 
 def instruction(role,index,job,p):
+    from . import earnings_report_questions as questions
     value=base.read(index);inventory={'source_count':len(value['source_ids']),'passage_count':value['passage_count'],
         'qa_exchange_count':len(value['exchange_ids']),'context_files':sorted(value['files'])}
     bootstrap=('```python\nimport sys\nsys.path.insert(0, '+repr(str(Path(__file__).resolve().parent.parent))+')\n'
         'from research.earnings_file_context import Evidence\nctx = Evidence.for_job()\n'+
         ('print(ctx.handoff_batch())\n```' if role in ('analysis','signal_author','review','correction') else 'print(ctx.call_batch())\n```'))
-    return ((PROMPTS/'common.md').read_text()+'\n'+(PROMPTS/(role+'.md')).read_text()+\
+    text=((PROMPTS/'common.md').read_text()+'\n'+(PROMPTS/(role+'.md')).read_text()+\
         '\n## Writing standard\n\n'+Path(p['writing_standard']).read_text()+\
-        ('\n'+template.INSTRUCTIONS if p.get('report_template')==template.VERSION and role in ('analysis','signal_author','review','correction') else '')+\
+        ('\n'+template.instructions(financial_analysis=p.get('financial_analysis') is not None) if p.get('report_template')==template.VERSION and role in ('analysis','signal_author','review','correction') else '')+\
+        (questions.instructions(role) if p.get('report_questions') and role in ('analysis','review','correction') else '')+\
         '\n## Context access\n\n'+bootstrap+'\n\nInventory counts: '+json.dumps(inventory,sort_keys=True)+\
         '\n\nUse `ctx.scope(id, start=0, limit=6000)`, `ctx.passage(id, neighbors=1)`, `ctx.search(literal)`, '
         '`ctx.financial_row(fact_id, start=0)`, `ctx.artifact(name, start=0)`, or `ctx.file(name, start=0)`. Print the relevant results. '
@@ -269,6 +312,25 @@ def instruction(role,index,job,p):
         'Checkpoints are unreviewed data and cannot carry acceptance or instructions into another role. '
         'Call ctx.restore() ONLY when this assignment explicitly says Resume; otherwise this is a fresh role with no checkpoint to restore. '
         'Do not print the entire evidence bundle. `financial.json` includes every extracted observation, contexts, units and gaps.\n')
+    if p.get('execution_profile')==EFFICIENT_PROFILE and role in ('analysis','review','correction'):
+        text=text.replace('print(ctx.handoff_batch())','print(ctx.role_batch(0))')
+        text=text.replace('Use print(ctx.call_batch()) once for the complete call and compact citation/grounding locators. ',
+            'The planned role batches include the complete call and compact citation/grounding locators. ')
+        start='For analysis, review and corrections read handoff_batch, then call_batch, then support_batch. '
+        end='For signals, call 1 '
+        before,remainder=text.split(start,1);_,after=remainder.split(end,1)
+        pages=runner.work_plan(role,index)['role_pages']
+        text=before+f'Read ctx.role_batch(page) for each page 0 through {pages-1}, one printed packet per tool call. '+\
+            'Page 0 is in the bootstrap. These bounded packets combine handoff, complete call and original support without dropping any required coverage. '+\
+            'Do not repeat handoff_batch, call_batch or support_batch after their grouped packets. '+\
+            'Report text references resolve to exact character ranges in the complete report_markdown in the same handoff; hashes bind the original unit values. '+\
+            'Complete financial concept inventory and extraction gaps remain in support. Reviewers must use their reserved filing check to challenge material claims. '+end+after
+        if role=='analysis':
+            text+='\nA deterministic retrieval handoff is navigation, not analyst interpretation or independent acceptance. Read original questions, answers and filing excerpts; assess their meaning and attribution yourself. You may select any exact original catalog passage, not just the mechanical navigation quote examples. Do not repeat mechanical locator descriptions as report prose.\n'
+        if role=='review':
+            text=text.replace('ctx.filing_batch(', 'ctx.challenge_batch(')
+            text+='\nThe reserved challenge_batch call is mandatory. Tailor its query to a material report claim or possible omission. It selects filing excerpts outside the required support when available, and explicitly identifies an exhausted inventory fallback. Inspect that packet, assess counterevidence and disclose unresolved source limitations. Selection alone is not a conclusion.\n'
+    return text
 
 
 def refs(value):
@@ -285,7 +347,7 @@ def refs(value):
 
 def coverage(role,index,job,content,catalog,artifacts):
     entries=checkpoint.entries(job);scopes=context.complete_ranges(entries,'scope','id')
-    scopes.update(x for e in entries if e['method']=='filing_batch' for x in e['ids'])
+    scopes.update(x for e in entries if e['method'] in ('filing_batch','challenge_batch') for x in e['ids'])
     files=context.complete_ranges(entries,'file','name');pids={x for e in entries if e['method']=='passage' for x in e['ids']}
     call_scopes,call_files=context.inspected_call(index,entries);scopes.update(call_scopes);files.update(call_files)
     support_scopes,handoff_files,support_rows=context.inspected_role_batches(index,entries);scopes.update(support_scopes);files.update(handoff_files)
@@ -298,8 +360,11 @@ def coverage(role,index,job,content,catalog,artifacts):
     original=context.Evidence(index,job/'retrieval.jsonl').records
     missing.update(x for x in required if x in original and len(original[x].get('table_row',{}).get('text',''))>context.PAGE_CHARACTERS and x not in rows)
     inventory=base.read(index)
+    efficient=base.read(Path(index).parent/'metadata.json').get('context_projection')=='compact-role-handoff-v1'
+    if efficient and role=='review':
+        require(any(e['method']=='challenge_batch' for e in entries),'Independent filing challenge must be visibly inspected')
     if role in ('retrieval','analysis','review'):missing.update(set(inventory['exchange_ids'])-scopes)
-    if role in ('retrieval','review'):
+    if role in ('retrieval','review') or efficient and role=='analysis':
         missing.update(set(inventory['section_ids'])-scopes)
         require('transcript.md' in files,'Complete original call must be inspected, including unassigned spans')
     if role in ('review','signal_author','correction'):require('report.md' in files,'Complete candidate Markdown must be inspected')
@@ -309,6 +374,8 @@ def coverage(role,index,job,content,catalog,artifacts):
 
 def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessions,tokens):
     metadata={**metadata,'case_scope_notes':base.read(p['case_path']).get('scope_notes',[])}
+    if p.get('execution_profile')==EFFICIENT_PROFILE:
+        metadata.update(context_projection='compact-role-handoff-v1',role=role)
     index=context.assemble(p['evidence_manifest'],catalog,root/'contexts'/name,artifacts=artifacts,markdown=report,metadata=metadata)
     original=root/'jobs'/name
     try:job,spent,resume=checkpoint.select(original)
@@ -324,6 +391,13 @@ def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessi
         if (job/'request.json').exists():
             return {'status':'budget_exhausted','stage':name,'tokens':tokens,'reason':'Closed attempt has no newer usable checkpoint or resume limit reached'},tokens
         if cap<1024:return {'status':'budget_exhausted','stage':name,'tokens':tokens},tokens
+        if p.get('execution_profile')==EFFICIENT_PROFILE:
+            preflight=runner.budget_preflight(role,index,text,cap)
+            context.write(root/'budget-preflights'/f'{job.name}.json',preflight)
+            if preflight['status']!='ready':
+                return {'status':'budget_exhausted','stage':name,'tokens':tokens,
+                    'reason':'Pre-launch planning envelope exceeds remaining budget; no model was launched',
+                    'budget_preflight':preflight},tokens
         if not execute:return {'status':'pending','stage':name,'tokens':tokens,'prompt_characters':len(text),'context_index':str(index),'resume':bool(resume)},tokens
         try:
             runner.run_role(job,text,*p['models'][role],bindings,index,max_tokens=cap,max_tool_calls=p['max_tool_calls_per_job'],**({'resume':resume} if resume else {}))
@@ -344,20 +418,27 @@ def _job(root,p,bundle,catalog,role,name,artifacts,metadata,report,execute,sessi
     return value,tokens
 
 
-def review_payload(value,items,state):
+def review_payload(value,items,state,question_contract=None):
     required={'batch_sha256','report_sha256','report_criteria','signal_criteria','decisions','reopen'}
+    if question_contract is not None:required.add('question_assessments')
     require(set(value)==required and value['batch_sha256']==base.digest(items) and value['report_sha256']==signals.report_digest(state),'Reviewer assessed another candidate')
     for name,criteria in [('report_criteria',legacy.CRITERIA),('signal_criteria',signals.CRITERIA)]:
         require(set(value[name])==set(criteria),'Every global criterion required')
         for x in value[name].values():
             require(set(x)=={'status','evidence'} and x['status'] in ('pass','fail','unavailable') and isinstance(x['evidence'],str) and x['evidence'].strip(),'Specific complete rubric assessment required')
+    if question_contract is not None:
+        from . import earnings_report_questions as questions
+        questions.verify(question_contract)
+        questions.validate(value['question_assessments'],items,value)
     return {k:value[k] for k in ('batch_sha256','decisions','reopen')}
 
 
-def review_result(value,items,state,pack,catalog,job):
-    payload=review_payload(value,items,state)
+def review_result(value,items,state,pack,catalog,job,question_contract=None):
+    payload=review_payload(value,items,state,question_contract)
     accepted,findings=batch.adjudicate(items,set(items),{},payload,catalog,base.sha(job/'output.json'),batch.EDITORIAL_VERSION)
     global_pass=all(x['status']=='pass' for name in ('report_criteria','signal_criteria') for x in value[name].values())
+    if question_contract is not None:
+        global_pass=global_pass and all(x['status']!='fail' for x in value['question_assessments'].values())
     require(global_pass or findings,'Failed global criterion must identify affected units')
     return accepted,findings,global_pass and not findings and set(accepted)==set(items)
 
@@ -387,6 +468,14 @@ def _advance(root,execute):
             context.write(root/'financial-compiled.json',{'status':'source_bound_draft_pending_independent_review','content':artifacts[role],
                 'financial_source_sha256':base.sha(root/'evidence/financial.json')})
             continue
+        if role=='retrieval' and p.get('execution_profile')==EFFICIENT_PROFILE:
+            from . import earnings_deterministic_retrieval
+            compiled=earnings_deterministic_retrieval.build({**bundle,'qa_grounding':base.read(root/'qa-grounding.json')},catalog)
+            context.write(root/'retrieval-compiled.json',compiled)
+            if compiled['status']=='ready':
+                pipe.validate(role,compiled['content'],bundle,catalog)
+                artifacts[role]=compiled['content']
+                continue
         if role=='retrieval' and p.get('preparation_path'):
             inherited=base.read(p['preparation_path'])
             pipe.validate(role,inherited['content'],bundle,catalog)
@@ -402,6 +491,9 @@ def _advance(root,execute):
             require(inherited_analysis['session_ids'][0] in sessions and inherited_analysis['session_ids'][1] not in sessions,'Analysis session lineage differs')
             sessions.add(inherited_analysis['session_ids'][1]);continue
         state=None;report=None;dependencies={**artifacts,'qa_grounding':base.read(root/'qa-grounding.json')}
+        if p.get('financial_analysis') is not None:
+            from . import earnings_financial_analysis_report as financial_report
+            dependencies['financial_analysis']=financial_report.handoff(bundle['financial_analysis'])
         if role=='retrieval' and p.get('budget_authorization'):
             approved=base.read(p['budget_authorization'])
             if approved.get('preparation_handoff'):
@@ -414,6 +506,7 @@ def _advance(root,execute):
             state={'artifacts':copy.deepcopy(artifacts),'format':mechanical.formatting(artifacts['financial'],bundle)}
             mechanical.check(state,bundle,catalog)
             dependencies={'state':state,'finding_catalog':signals.finding_catalog(state)}
+            if p.get('financial_analysis') is not None:dependencies['financial_analysis']=financial_report.handoff(bundle['financial_analysis'])
             metadata['report_sha256']=signals.report_digest(state);report=markdown.report(state,bundle,catalog)
         if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
             dependencies['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
@@ -449,6 +542,7 @@ def _advance(root,execute):
     repair_rounds=p.get('analysis_repair_rounds',p.get('retrieval_repair_rounds'))
     if repair_rounds in (1,2):
         start_round=repair_rounds
+    previous_review=None;previous_review_job=None
     for round_no in ((1,) if scoped_final else range(start_round,3)):
         if round_no and not scoped_final and not (continued and continued.get('version') in ('authenticated-final-heading-proposal-continuation-v1','authenticated-combined-review-final-preparation-v1','authenticated-six-role-review-final-preparation-v1') and round_no==2) and not (repair_rounds==round_no) and not (continued and continued.get('version') in ('authenticated-completed-review-inspection-continuation-v1','authenticated-exact-review-proposals-continuation-v1','authenticated-empty-signal-source-preparation-v1') and round_no==1):
             name='correction-'+str(round_no);before=copy.deepcopy(items)
@@ -458,25 +552,44 @@ def _advance(root,execute):
             else:
                 state,pack=batch.validate(items,bundle,catalog);report=markdown.report(state,bundle,catalog,pack)
             deps={'units':items,'findings':findings};metadata={'round':round_no,'before_sha256':base.digest(items),'unit_sha256':{k:base.digest(v['value']) for k,v in items.items()}}
+            if p.get('report_questions'):deps['report_questions']=p['report_questions']
             existed=any((root/'jobs'/(name+suffix)/'output.json').exists() for suffix in ('','--resume-1','--resume-2'))
             inherited_correction=continued.get('prepared_correction') if continued and round_no==1 else None
-            if inherited_correction:
+            exact=None
+            if p.get('execution_profile')==EFFICIENT_PROFILE and previous_review is not None:
+                from . import earnings_exact_repairs
+                payload=review_payload(previous_review,items,state,p.get('report_questions'))
+                exact=earnings_exact_repairs.build(items,payload,bundle,catalog,
+                    bound_batch_sha256=base.digest(items),bound_review_sha256=base.digest(payload),
+                    source_review_sha256=base.sha(previous_review_job/'output.json'))
+            if exact is not None:
+                value={'content':exact['plan']}
+                context.write(root/'deterministic-corrections'/f'{name}.json',exact)
+                source_proof={'mode':'exact-reviewer-proposals','tokens':0,
+                    'proposal_derivation':exact['derivation'],
+                    'source_review_sha256':base.sha(previous_review_job/'output.json')}
+            elif inherited_correction:
                 value={'content':inherited_correction['content']};correction_job=Path(inherited_correction['job'])
             else:
                 value,tokens=_job(root,p,bundle,catalog,'correction',name,deps,metadata,report,execute and not launched,sessions,tokens)
                 if value.get('status') in ('pending','launch_uncertain','budget_exhausted'):return value
                 if not existed:launched=True
                 correction_job=checkpoint.select(root/'jobs'/name)[0]
+            if exact is None:source_proof={'source_output_sha256':base.sha(correction_job/'output.json')}
             if set(value['content'])=={'blocked'}:return {'status':'blocked','stage':name,'reason':value['content']['blocked'],'tokens':tokens}
             canonical,derivation=batch.resolve_correction_hashes(items,value['content'],bound_batch_sha256=metadata['before_sha256'])
             canonical,basis_sources=batch.resolve_basis_citations(items,canonical,bundle)
             items,_=batch.apply(items,canonical,batch.EDITORIAL_VERSION);batch.validate(items,bundle,catalog)
             context.write(root/'decisions'/f'{name}.json',{'before_sha256':base.digest(before),'after_sha256':base.digest(items),'changes':canonical['changes'],
-                'hash_addressing_derivation':derivation,'basis_source_derivation':basis_sources,'source_output_sha256':base.sha(correction_job/'output.json')})
+                'hash_addressing_derivation':derivation,'basis_source_derivation':basis_sources,**source_proof})
         state,pack=batch.validate(items,bundle,catalog);mechanical.check(state,bundle,catalog)
         report=markdown.report(state,bundle,catalog,pack);name='review-'+str(round_no)
         metadata={'round':round_no,'batch_sha256':base.digest(items),'report_sha256':signals.report_digest(state),'signals_sha256':base.digest(pack),'pending_findings':findings}
         deps={'units':items,'state':state,'signals':pack,'qa_grounding':base.read(root/'qa-grounding.json')}
+        if p.get('report_questions'):
+            deps['report_questions']=p['report_questions']
+            from . import earnings_financial_analysis_report as financial_report
+            deps['financial_analysis']=financial_report.handoff(bundle['financial_analysis'])
         if p.get('preparation_path') and base.read(p['preparation_path']).get('version')=='authenticated-exact-retrieval-identity-transport-v1':
             deps['retrieval_transport_provenance']=base.read(p['preparation_path'])['derivation']
         if p.get('analysis_preparation_path') and base.read(p['analysis_preparation_path']).get('version')=='authenticated-source-label-display-continuation-v1':
@@ -491,8 +604,11 @@ def _advance(root,execute):
             if value.get('status') in ('pending','launch_uncertain','budget_exhausted'):return value
             if not existed:launched=True
             review_job=checkpoint.select(root/'jobs'/name)[0]
-        accepted,findings,passed=review_result(value['content'],items,state,pack,catalog,review_job)
-        context.write(root/'decisions'/f'{name}.json',{'accepted':accepted,'findings':findings,'passed':passed,'candidate_sha256':base.digest(items)})
+        accepted,findings,passed=review_result(value['content'],items,state,pack,catalog,review_job,p.get('report_questions'))
+        previous_review=value['content'];previous_review_job=review_job
+        decision={'accepted':accepted,'findings':findings,'passed':passed,'candidate_sha256':base.digest(items)}
+        if p.get('report_questions'):decision['question_assessments']=value['content']['question_assessments']
+        context.write(root/'decisions'/f'{name}.json',decision)
         if passed:
             markdown.write(root/'report.md',state,bundle,catalog,pack,status='accepted')
             result={'version':VERSION,'status':'accepted','report':str(root/'report.html'),'report_sha256':base.sha(root/'report.html'),
@@ -519,11 +635,27 @@ def main():
     import argparse
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='command',required=True)
     init=sub.add_parser('initialize');init.add_argument('--case',type=Path,required=True);init.add_argument('--output',type=Path,required=True);init.add_argument('--writing',type=Path,required=True);init.add_argument('--max-tokens',type=int,default=1200000)
+    init.add_argument('--financial-analysis',choices=('deterministic-financial-analysis-v1',),help='Opt in only for a new deterministic financial analysis request')
+    init.add_argument('--quarter-start');init.add_argument('--quarter-end')
+    init.add_argument('--financial-analysis-config',type=Path,help='Exact version, quarter, as-of, capex convention and accounting basis JSON; requires --financial-analysis')
+    init.add_argument('--execution-profile',choices=(EFFICIENT_PROFILE,),help='New requests only; automatically enabled with --financial-analysis')
     for name in ('advance','verify'):
         item=sub.add_parser(name);item.add_argument('output',type=Path)
         if name=='advance':item.add_argument('--execute',action='store_true',help='Explicitly launch at most one new role; default constructs the handoff only')
     args=parser.parse_args()
-    if args.command=='initialize':initialize(args.case,args.output,args.writing,max_tokens=args.max_tokens);value={'status':'initialized','output':str(args.output.resolve())}
+    if args.command=='initialize':
+        config=None
+        if args.financial_analysis:
+            from . import earnings_financial_analysis_report as financial_report
+            if args.financial_analysis_config:
+                config=financial_report.validate_configuration(base.read(args.financial_analysis_config))
+                if args.quarter_start or args.quarter_end:
+                    require(config['current_period']==['duration',args.quarter_start,args.quarter_end],'Explicit CLI quarter differs from configuration')
+            else:
+                require(args.quarter_start and args.quarter_end,'Financial analysis requires explicit quarter dates')
+                config=financial_report.configuration(args.quarter_start,args.quarter_end)
+        else:require(not any((args.quarter_start,args.quarter_end,args.financial_analysis_config)),'Quarter/config options require explicit financial analysis opt-in')
+        initialize(args.case,args.output,args.writing,max_tokens=args.max_tokens,financial_analysis=config,execution_profile=args.execution_profile);value={'status':'initialized','output':str(args.output.resolve())}
     else:
         result=advance(args.output,args.execute if args.command=='advance' else False)
         value={k:v for k,v in result.items() if k in ('status','stage','tokens','correction_rounds','report','report_sha256','markdown','markdown_sha256','prompt_characters','context_index','reason')}

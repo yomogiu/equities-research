@@ -134,8 +134,9 @@ def render(markdown, *, status='draft', original_exchanges=None):
             if any(len(r)!=len(rows[0]) for r in rows):raise ValueError('Markdown table column mismatch')
             from .earnings_visual_signals import badges, comparison_badges
             sectioned = rows[0][-2:] == ['QoQ','YoY']
+            computed = rows[0][:2] == ['Metric','Unit / basis']
             def cells(row):
-                labels = comparison_badges(rows[0],row) if sectioned else badges(rows[0],row)
+                labels = ['']*len(row) if computed else comparison_badges(rows[0],row) if sectioned else badges(rows[0],row)
                 result = []
                 for n,(x,label) in enumerate(zip(row,labels)):
                     if sectioned and label:

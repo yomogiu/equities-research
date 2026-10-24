@@ -112,7 +112,7 @@ def capture(job):
         draft=last['draft'];pending=last['pending']
     else:
         scopes=context.complete_ranges(observed,'scope','id')
-        scopes.update(x for e in observed if e['method']=='filing_batch' for x in e['ids'])
+        scopes.update(x for e in observed if e['method'] in ('filing_batch','challenge_batch') for x in e['ids'])
         call_scopes,call_files=context.inspected_call(q['context_index'],observed)
         support_scopes,handoff_files,support_rows=context.inspected_role_batches(q['context_index'],observed)
         scopes.update(call_scopes);scopes.update(support_scopes)

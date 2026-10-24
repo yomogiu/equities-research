@@ -8,7 +8,83 @@ from . import earnings_compact_evidence as evidence
 from . import earnings_mixed_runner as base
 
 VERSION = 'earnings-file-context-v1'
+COMPACT_VERSION = 'compact-role-handoff-v1'
+SEQUENTIAL_SUPPORT_VERSION = 'sequential-original-support-v1'
 PAGE_CHARACTERS = 6000
+
+
+def compact_handoff(packet):
+    """Lossless view: refer to long strings already printed in the full report.
+
+    Original artifacts remain immutable. References use Unicode character
+    offsets, not guessed unit locations or an LLM summary. The path list makes
+    decoding unambiguous even if source data happens to contain a marker key.
+    """
+    import copy
+    result=copy.deepcopy(packet);report=packet.get('report_markdown') or ''
+    references=[]
+    def project(value,path):
+        if isinstance(value,str) and len(value)>=96:
+            start=report.find(value)
+            if start>=0:
+                references.append(path)
+                return {'report_text_characters':[start,start+len(value)]}
+        if isinstance(value,dict):return {k:project(v,[*path,k]) for k,v in value.items()}
+        if isinstance(value,list):return [project(v,[*path,i]) for i,v in enumerate(value)]
+        return value
+    result['artifacts']=project(result['artifacts'],['artifacts'])
+    # Pending findings are sometimes present in both the metadata and artifact
+    # catalogue. Retain one complete copy and record the exact alias.
+    aliases=[]
+    if ('pending_findings' in result['metadata'] and 'findings' in packet['artifacts']
+            and packet['metadata']['pending_findings']==packet['artifacts']['findings']):
+        result['metadata']['pending_findings']={'artifact_reference':'findings'}
+        aliases.append(['metadata','pending_findings'])
+    result['projection']={'version':COMPACT_VERSION,'offset_unit':'unicode_character',
+        'report_text_reference_paths':references,'finding_alias_paths':aliases,
+        'original_handoff_sha256':base.digest(packet),
+        'notice':'The full report is printed once. report_text_characters [start,end] refers to its exact substring, with end excluded. All other unit fields, citations and dependencies are retained. ctx.artifact(name) exposes original complete values; references are display addresses, never replacement prose or correction values.'}
+    require(expand_handoff(result)==packet,'Compact handoff changed original content')
+    return result
+
+
+def expand_handoff(packet):
+    """Reconstruct and authenticate a compact packet without model inference."""
+    import copy
+    result=copy.deepcopy(packet);projection=result.pop('projection')
+    require(projection.get('version')==COMPACT_VERSION,'Unknown handoff projection')
+    for path in projection['report_text_reference_paths']:
+        parent=result
+        for key in path[:-1]:parent=parent[key]
+        start,end=parent[path[-1]]['report_text_characters']
+        parent[path[-1]]=result['report_markdown'][start:end]
+    for path in projection['finding_alias_paths']:
+        require(path==['metadata','pending_findings'],'Unknown handoff alias')
+        result['metadata']['pending_findings']=copy.deepcopy(result['artifacts']['findings'])
+    require(base.digest(result)==projection['original_handoff_sha256'],'Compact handoff digest changed')
+    return result
+
+
+def compact_source_map(mapping):
+    """Lossless column encoding of the source map; original blocks stay exact."""
+    columns = ['id','canonical_metric','concept','value','scale','unit_id','context_id',
+               'status','nil','source_document_id']
+    return {'source_map_columns':['id','spans','observation','full_original_row'],
+            'observation_columns':columns,
+            'source_map_rows':[[identifier,row['spans'],
+                [row['observation'].get(key) for key in columns] if 'observation' in row else None,
+                row.get('full_original_row')] for identifier,row in mapping.items()]}
+
+
+def expand_source_map(packet):
+    """Reconstruct the complete original ID map without inference."""
+    result = {}
+    for identifier,spans,observation,full_row in packet['source_map_rows']:
+        row = {'spans':spans}
+        if observation is not None: row['observation'] = dict(zip(packet['observation_columns'],observation))
+        if full_row is not None: row['full_original_row'] = full_row
+        result[identifier] = row
+    return result
 
 
 def financial_inventory(data):
@@ -227,7 +303,7 @@ class Evidence:
                 scope_ids=base.read(self.root/'metadata.json')['source_scope_ids']
                 pipeline.coverage(role,self.root/'index.json',job,{'citations':scope_ids,'passage_ids':[x for r in value['repairs'] for x in r['after_ids']]},self.catalog,{})
             elif role=='review':
-                payload=pipeline.review_payload(value,artifacts['units'],artifacts['state'])
+                payload=pipeline.review_payload(value,artifacts['units'],artifacts['state'],artifacts.get('report_questions'))
                 batch.adjudicate(artifacts['units'],set(artifacts['units']),{},payload,
                                  self.catalog,base.digest(value),batch.EDITORIAL_VERSION)
             else:
@@ -384,19 +460,30 @@ class Evidence:
             if len(found)==limit:break
         return self._record({'method':'search','query':text,'limit':limit},found)
 
-    def _filing_batch(self, query, limit):
+    def _filing_batch(self, query, limit, *, exclude_ids=(), exclude_records=()):
         """Rank short terms locally; return whole original D scopes, not previews."""
         import re
         require(isinstance(query,str) and 2<=len(query)<=500 and type(limit) is int and 1<=limit<=4,'Bounded filing query and one to four excerpts required')
         stop={'the','and','for','with','from','this','that','what','which','how','are','was','were','has','have','its','into'}
         tokens=lambda text:set(re.findall(r'[^\W_]+',text.casefold(),re.UNICODE))-stop
         terms=tokens(query);defaults=tokens('guidance EBITDA cash debt capital expenditure revenue income liquidity commitments')
+        prior_fingerprints=set();prior_intervals={}
+        for record in exclude_records:
+            text='\n'.join(span['text'] for span in record['spans'])
+            prior_fingerprints.add(hashlib.sha256(text.encode()).hexdigest())
+            for span in record['spans']:
+                prior_intervals.setdefault((span['path'],span['sha256']),[]).append((span['start'],span['end']))
         rows=[];excluded=0
         for identifier,record in sorted(self.records.items()):
-            if not re.fullmatch(r'D[0-9]+',identifier):continue
+            if not re.fullmatch(r'D[0-9]+',identifier) or identifier in exclude_ids:continue
             body='\n'.join(span['text'] for span in record['spans'])
             if not body.strip():continue
             if len(body)>PAGE_CHARACTERS:excluded+=1;continue
+            # A new identifier is not new evidence. Filter before ranking so
+            # a matching duplicate cannot displace a genuine unmatched scope.
+            if (hashlib.sha256(body.encode()).hexdigest() in prior_fingerprints or
+                    any(span['start']<end and start<span['end'] for span in record['spans']
+                        for start,end in prior_intervals.get((span['path'],span['sha256']),[]))):continue
             words=tokens(body);matched=sorted(words&terms)
             rows.append({'id':identifier,'text':body,'spans':record['spans'],'matched_terms':matched,
                          'score':len(matched),'fallback_score':len(words&defaults)})
@@ -434,6 +521,36 @@ class Evidence:
         result,ids=self._filing_batch(query,limit)
         return self._record({'method':'filing_batch','query':query,'limit':limit,'ids':ids},result)
 
+    def _challenge_batch(self,query,limit):
+        """Prefer filing scopes beyond the candidate's required source support."""
+        metadata=base.read(self.root/'metadata.json')
+        require(metadata.get('context_projection')==COMPACT_VERSION and metadata.get('role')=='review',
+                'Compact independent review context required')
+        required=set(self._support_body()[1]);call=set(self._call_scopes()[1])
+        # D-prefixed scopes are normally filings. Exclude any that are actually
+        # exact transcript spans too, including in the exhaustion fallback.
+        result,ids=self._filing_batch(query,limit,exclude_ids=required|call,
+            exclude_records=[self.records[i] for i in sorted(required|call)])
+        fresh=bool(ids)
+        if not fresh:result,ids=self._filing_batch(query,limit,exclude_ids=call,
+            exclude_records=[self.records[i] for i in sorted(call)])
+        lines=result.splitlines();selection=json.loads(lines[1])
+        selection.update(challenge_status=('new_source_scopes' if fresh else
+            'exhausted_recheck_required_support' if ids else 'no_eligible_filing_scopes'),
+            challenge_fallback_used=not fresh,
+            excluded_required_scope_ids=sorted(i for i in required if i.startswith('D')),
+            challenge_notice=('Additional eligible original scopes outside the required support. Relevance and contradictory evidence still require independent judgment.' if fresh else
+                'No additional eligible filing scopes remain outside the required support. Recheck the available original support; exhaustion is not evidence of completeness or absence of counterevidence.'))
+        lines[1]=json.dumps(selection,ensure_ascii=False,separators=(',',':'))
+        result='\n'.join(lines)+'\n'
+        require(len(result)<=60000,'Challenge batch exceeds runtime output boundary')
+        return result,ids
+
+    def challenge_batch(self,query='guidance EBITDA cash debt capital expenditure',limit=4):
+        """Deliver a fresh-scope filing challenge, or an explicit exhausted fallback."""
+        result,ids=self._challenge_batch(query,limit)
+        return self._record({'method':'challenge_batch','query':query,'limit':limit,'ids':ids},result)
+
     def _handoff_body(self):
         artifacts={k:v for k,v in self.artifacts.items() if k!='qa_grounding'}
         if 'finding_catalog' in artifacts and 'state' in artifacts:
@@ -446,12 +563,23 @@ class Evidence:
 
             # Unit values already contain the financial, retrieval, author and
             # signal state; avoid printing those same objects a second time.
-            artifacts={k:artifacts[k] for k in ('units','findings') if k in artifacts}
-        return json.dumps({'metadata':base.read(self.root/'metadata.json'),
+            artifacts={k:artifacts[k] for k in ('units','findings','report_questions','financial_analysis') if k in artifacts}
+        packet={'metadata':base.read(self.root/'metadata.json'),
             'report_markdown':(self.root/'report.md').read_text() if 'report.md' in self.index['files'] else None,
-            'artifacts':artifacts},ensure_ascii=False,separators=(',',':'))
+            'artifacts':artifacts}
+        body=json.dumps(packet,ensure_ascii=False,separators=(',',':'))
+        if packet['metadata'].get('context_projection')==COMPACT_VERSION:
+            compact=json.dumps(compact_handoff(packet),ensure_ascii=False,separators=(',',':'))
+            if len(compact)<len(body):return compact
+        return body
 
     def _support_body(self,selected=None):
+        metadata = base.read(self.root/'metadata.json')
+        if selected is None and 'support_scope_ids' in metadata:
+            require(metadata.get('workflow') == 'sequential-earnings-stages-v1', 'Explicit support selection requires sequential workflow')
+            selected = metadata['support_scope_ids']
+            require(isinstance(selected,list) and all(isinstance(i,str) for i in selected)
+                    and len(set(selected)) == len(selected), 'Exact unique support scope IDs required')
         def refs(value):
             result=set()
             if isinstance(value,dict):
@@ -508,7 +636,19 @@ class Evidence:
         packet={'notice':'Complete selected original source scopes; inspection is not analytical acceptance. Passage locators identify up to three longest exact passages per scope; original text is printed once.',
             'passage_columns':['passage_id','scope_id','start','end'],'passages':locators,
             'source_map':mapping,'files':files,'block_columns':['file','start','end','text','extra_provenance'],'unique_original_blocks':packed,'financial_contexts':contexts,'units':units}
-        if selected is None:packet['complete_financial_inventory']=financial_inventory(financial)
+        metadata = base.read(self.root/'metadata.json')
+        sequential = metadata.get('support_projection') == SEQUENTIAL_SUPPORT_VERSION
+        if sequential:
+            require(metadata.get('workflow') == 'sequential-earnings-stages-v1', 'Sequential support projection requires sequential workflow')
+            projected = compact_source_map(mapping)
+            require(expand_source_map(projected) == mapping, 'Source-map projection changed original evidence')
+            packet.pop('source_map'); packet.update(projected)
+            packet['support_projection'] = SEQUENTIAL_SUPPORT_VERSION
+            packet['financial_inventory_reference'] = {
+                'path':'financial.json', 'sha256':self.index['files']['financial.json'],
+                'observation_count':len(financial['observations']),
+                'notice':'Complete concept/gap inventory is file-backed; ctx.financial_facts and ctx.search locate additional evidence. Every selected original source block and its full ID/provenance mapping is printed here.'}
+        elif selected is None:packet['complete_financial_inventory']=financial_inventory(financial)
         body=json.dumps(packet,ensure_ascii=False,separators=(',',':'))
         return body,ids,rows
 
@@ -524,6 +664,62 @@ class Evidence:
     def handoff_batch(self,start=0,limit=59000):
         result=self._role_batch('handoff_batch',start,limit);meta=json.loads(result.splitlines()[1])
         return self._record({'method':'handoff_batch','name':'handoff','limit':limit,**{k:meta[k] for k in ('start','end','total')}},result)
+
+    def role_batch_plan(self):
+        """Pack original typed pages into bounded tool responses, without reads.
+
+        Page boundaries may move; evidence contents and coverage requirements
+        do not. The returned byte counts describe exact UTF-8 tool output for
+        budget preflight. Planning never writes retrieval or delivery receipts.
+        """
+        metadata=base.read(self.root/'metadata.json')
+        require(metadata.get('context_projection')==COMPACT_VERSION and
+                metadata.get('role') in ('analysis','review','correction'),
+                'Compact role context required')
+        pages=[];packets=[];texts=[]
+        def flush():
+            if packets:
+                text=''.join(texts)
+                pages.append({'characters':len(text),'utf8_bytes':len(text.encode('utf-8')),
+                              'packets':packets[:]})
+                packets.clear();texts.clear()
+        methods = ('handoff_batch','call_batch','support_batch')
+        if metadata.get('review_scope') == 'verified_section_revision':
+            require(metadata.get('workflow') == 'sequential-earnings-stages-v1'
+                    and isinstance(metadata.get('revision_proof_sha256'),str), 'Verified sequential revision required')
+            methods = ('handoff_batch','support_batch')
+        for method in methods:
+            start=0
+            while True:
+                room=60000-sum(map(len,texts))
+                if room<2048:
+                    flush();room=60000
+                maximum=48000 if method=='call_batch' else 59000
+                limit=min(maximum,room)
+                while limit>0:
+                    text=(self._call_batch(start,limit) if method=='call_batch'
+                          else self._role_batch(method,start,limit))
+                    excess=len(text)-room
+                    if excess<=0:break
+                    limit-=excess
+                if limit<=0:
+                    require(bool(packets),'One evidence packet exceeds runtime boundary')
+                    flush();continue
+                packets.append({'method':method,'start':start,'limit':limit});texts.append(text)
+                meta=json.loads(text.splitlines()[2 if method=='call_batch' else 1])
+                if meta['next_start'] is None:break
+                start=meta['next_start']
+        flush()
+        return pages
+
+    def role_batch(self,page=0):
+        """Print a planned response; retain each original typed retrieval event."""
+        plan=self.role_batch_plan()
+        require(type(page) is int and 0<=page<len(plan),'Exact planned role page required')
+        result=''.join(getattr(self,p['method'])(p['start'],p['limit']) for p in plan[page]['packets'])
+        require(len(result)==plan[page]['characters'] and len(result.encode('utf-8'))==plan[page]['utf8_bytes'],
+                'Planned role packet changed')
+        return result
 
     def support_batch(self,start=0,limit=59000):
         result=self._role_batch('support_batch',start,limit);meta=json.loads(result.splitlines()[1])
@@ -564,7 +760,7 @@ def audit(index, log, *, count=None):
             if method=='inventory':reader.inventory(e.get('start',0),e.get('limit',40))
             elif method in ('handoff_batch','support_batch'):getattr(reader,method)(e['start'],e['limit'])
             elif method=='source_batch':reader.source_batch(e['ids'],e['start'],e['limit'])
-            elif method=='filing_batch':reader.filing_batch(e['query'],e['limit'])
+            elif method in ('filing_batch','challenge_batch'):getattr(reader,method)(e['query'],e['limit'])
             elif method=='call_batch':reader.call_batch(e['start'],e['limit'])
             elif method=='load_structured':reader.load_structured(e['name'])
             elif method=='financial_metrics':reader.financial_metrics(e['start'],e['limit'])
@@ -636,10 +832,12 @@ def delivered_entries(job, entries):
     for r in records:
         if r['id'] not in resolved:continue
         for e in entries[r['retrieval_start']:r['retrieval_end']]:
-            if e['method'] in ('call_batch','filing_batch','handoff_batch','support_batch','source_batch'):
+            if e['method'] in ('call_batch','filing_batch','challenge_batch','handoff_batch','support_batch','source_batch'):
                 if reader is None:reader=Evidence(base.read(job/'request.json')['context_index'],job/'unused-audit.jsonl')
                 if e['method'] in ('handoff_batch','support_batch','source_batch'):rendered=reader._role_batch(e['method'],e['start'],e['limit'],e.get('ids'))
-                else:rendered=reader._call_batch(e['start'],e['limit']) if e['method']=='call_batch' else reader._filing_batch(e['query'],e['limit'])[0]
+                else:
+                    rendered=(reader._call_batch(e['start'],e['limit']) if e['method']=='call_batch'
+                        else getattr(reader,'_'+e['method'])(e['query'],e['limit'])[0])
                 if rendered not in (job/'tool-output'/(r['id']+'.txt')).read_bytes().decode('utf-8'):continue
             visible.append(e)
     return visible

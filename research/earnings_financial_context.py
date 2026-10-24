@@ -257,7 +257,8 @@ def source_identities(bundle, fact_ids=None):
                     'reason': None if label else identity['reason']}
             identity = rows[key]
         result[obs['id']] = deepcopy(identity)
-    return result
+    from . import earnings_financial_statement_context as statements
+    return statements.apply(bundle, result, cache)
 
 
 def _documents(bundle):

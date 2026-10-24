@@ -23,15 +23,13 @@ API key, run a nested model service, or copy account authentication into this re
 
 ## Agent workflow
 
-The calendar and earnings task prompts are in `tasks/`. They are Codex instructions,
-not model API calls. Use distinct extraction and commentary subagents when delegation
-is supported. The reviewer must have a fresh context containing original sources and
-the two artifacts, without the authors' conversational reasoning. If delegation is
-unavailable, produce explicit separate-task handoffs and mark independent review
-pending; do not present a single agent rereading its own work as independent review.
-Use the role rubric, route material findings back to their author, and allow at most
-two cross-review revision rounds. Persist work and continue independently when public
-evidence can resolve a gap. Ask the user only for material missing authority or inputs.
+For new earnings reports, use the five-stage sequential controller described in
+`docs/operations.md`. Financial extraction and calculations run deterministically.
+The author and reviewer must use distinct signed-in sessions. Review receives the
+original evidence and exact candidate, without the author's conversational reasoning.
+Enforce the eight criteria, five expected questions, at most two revision rounds and
+one cumulative allowance. Do not create legacy handoffs, successor requests or separate
+signal-role jobs. Preserve old pinned artifacts for audit; do not restart them as new jobs.
 
 ## Code checks
 

@@ -72,6 +72,15 @@ def validate(analysis):
         raise ValueError('Every finding requires a supported report section')
 
 
+def instructions(*,financial_analysis=False):
+    if not financial_analysis:return INSTRUCTIONS
+    return INSTRUCTIONS.replace('Preserve a substantive textual summary and material narrative. Tables\nsupport the prose; they do not replace it. Explain drivers, mechanisms, management\ncommentary, qualifications and unresolved details in multiple paragraphs as needed.\nDo not reduce analysis to captions. Source material determines depth; no word or\nparagraph quota. Existing reviewers must flag material narrative omissions.',
+        'The source-computed financial analysis tables are primary. Current values,\nprior-quarter and prior-year values, QoQ/YoY, margins and cash/debt arithmetic\nare immutable compiled data. Do not re-author their numbers, labels, sign conventions\nor formulas. No financial model prose is required to make those tables usable.\nAdd narrative only for source-backed drivers, mechanisms, qualifications or gaps\nthat the tables cannot convey. There is no paragraph or word quota.').replace(
+        'Earnings & Efficiency;', 'Profits & Margins;').replace(
+        'Outlook covers company guidance. Optional valuation requires supplied, cited dated\nprice and forecast estimates, listing/currency/share-or-ADR basis and forecast\nperiod. Otherwise omit it; do not request additional data to fill the template.',
+        'Outlook covers company guidance. Valuation is limited to supplied, cited dated\nprice divided by matching annual/TTM or forward annual diluted EPS. Match issuer,\nsecurity, currency, share/ADR and split basis and show the earnings period. No\nquarterly EPS annualization, invented forecasts, DCF, target price or other valuation.\nIf inputs are missing, name the gap briefly; do not request data to fill the template.')
+
+
 def exchange_ids(finding, index):
     """Resolve explicit exchange or member-turn citations, never topic matching."""
     cited = set(finding['citations'])
@@ -183,6 +192,9 @@ def comparisons(group, row):
 
 
 def financial_sections(financial, bundle, formatting):
+    if 'financial_analysis' in bundle:
+        from . import earnings_financial_analysis_report as computed
+        return computed.sections(computed.verified(bundle))
     from . import earnings_financial_display as display
     from . import earnings_mixed_runner as base
     from . import earnings_report_repair as repair
@@ -240,6 +252,7 @@ def report(state, bundle, catalog, pack=None):
         for signal in pack['signals']:
             by_finding.setdefault(fc[signal['finding_id']]['index'], []).append(signal)
     for key, heading in SECTIONS.items():
+        if 'financial_analysis' in bundle and key=='earnings':heading='Profits & Margins'
         lines.extend(['## ' + heading, '', *tables[key]])
         findings = [(i, f) for i, f in enumerate(out['findings']) if f['section'] == key]
         for i, finding in findings:
