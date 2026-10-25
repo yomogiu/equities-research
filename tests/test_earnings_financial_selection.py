@@ -92,6 +92,19 @@ class SelectionTests(unittest.TestCase):
         self.value['notes']=[]
         with self.assertRaisesRegex(ValueError,'FCF convention'):selection.validate(self.value,self.bundle)
 
+    def test_fcf_definition_in_capex_row_needs_no_duplicate_note(self):
+        before=self.build()
+        self.value['notes']=[]
+        self.value['rows'][2]['definition']='Positive gross PP&E purchases. FCF is same-period operating cash flow minus these gross purchases.'
+        selection.validate(self.value,self.bundle)
+        after=self.build()
+        self.assertEqual(rows(before,'free_cash_flow'),rows(after,'free_cash_flow'))
+
+    def test_unrelated_metric_cannot_supply_the_fcf_convention(self):
+        self.value['notes']=[]
+        self.value['rows'][0]['definition']='FCF uses operating cash flow less gross purchases.'
+        with self.assertRaisesRegex(ValueError,'FCF convention'):selection.validate(self.value,self.bundle)
+
 
 class SelectionStateTests(unittest.TestCase):
     def setUp(self):

@@ -125,7 +125,11 @@ def validate(value,bundle):
     require(not (covered&gaps),'Selected metrics cannot also be marked absent')
     for note in value['notes']:
         require(set(note)=={'text','citations'},'Exact financial definition note required');text(note['text']);citations(note['citations'])
-    require(any(re.search(r'\b(?:free cash flow|fcf)\b',n['text'],re.I) and 'gross' in n['text'].lower() for n in value['notes'])
+    # Row definitions and notes are both validated, source-cited contract fields.
+    # Do not require the author to duplicate a capex definition in a second field.
+    conventions = [n['text'] for n in value['notes']] + [r['definition'] for r in value['rows']
+        if r['metric'] in ('operating_cash_flow', 'capital_expenditure')]
+    require(any(re.search(r'\b(?:free cash flow|fcf)\b',definition,re.I) and 'gross' in definition.lower() for definition in conventions)
             or not {'operating_cash_flow','capital_expenditure'}<=covered,'Explicit gross-capex FCF convention required')
     return value
 
