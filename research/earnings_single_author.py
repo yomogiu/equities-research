@@ -6,6 +6,7 @@ financial observations and complete original document/call text are supplied.
 from pathlib import Path
 import json
 import re
+from .earnings_report_content import (packet, author_requirements)
 from . import earnings_compact_evidence as evidence
 from . import earnings_financial_selection as selection
 from . import earnings_financial_context as financial_context
@@ -19,55 +20,8 @@ VERSION = 'single-author-report-v2'
 MAX_PACKET_BYTES = 900_000
 
 
-def packet(bundle):
-    inventory = selection.compact(bundle)
-    if bundle.get('packet_inventory'):
-        from . import earnings_packet_inventory
-        tables=earnings_packet_inventory.compact(bundle['packet_inventory'])
-        inventory['original_tables'] = {k:tables[k] for k in ('version','row_format','shared_text','tables','total_captured_tables')}
-    # Full documents below replace discovery previews and duplicated excerpts.
-    inventory.pop('documents'); inventory.pop('complete_original_chunks')
-    financial_context._documents(bundle)  # Validate all original chunk bindings.
-    # Serialize each original document once; chunks overlap in the source index.
-    # SEC machine context prefixes are redundant with the complete fact inventory.
-    documents=[];positions={};scopes=[]
-    for chunk in bundle['documents']['chunks']:
-        key=chunk['document_id']
-        if key not in positions:
-            original=Path(chunk['path']).read_bytes().decode('utf-8');start=0
-            cover=re.search(r'United States\s+Securities and Exchange Commission',original,re.I)
-            if cover and 'xbrli:' in original[:cover.start()] and not re.search(r'\s[A-Za-z]{3,}\s',original[:cover.start()]):
-                start=cover.start()
-            positions[key]=len(documents)
-            documents.append({'id':key,'source_id':valuation_inventory.source_id(key),'kind':chunk['kind'],'start':start,'text':original[start:],
-                'omitted_prefix':'XBRL machine contexts; all numerical observations retained' if start else None})
-        if chunk['start']>=documents[positions[key]]['start']:
-            scopes.append([chunk['id'],positions[key],chunk['start'],chunk['end']])
-    transcript = Path(bundle['manifest']['transcript_path']).read_bytes().decode('utf-8')
-    index = bundle['transcript_index']
-    return {'version':VERSION,'financial_inventory':inventory,'documents':documents,
-            'document_scope_columns':['id','document_index','start','end'],'document_scopes':scopes,
-            'transcript':transcript,'transcript_source_id':'transcript-source','transcript_index':{
-                'sections':index['sections'],'turns':index['turns'],'exchanges':index['exchanges']},
-            'scope_notes':bundle['manifest'].get('scope_notes',[]),
-            'source_policy':'Complete original document bodies and complete call, not summaries. Only redundant SEC XBRL machine prefixes may be omitted and are explicitly identified. All original financial observations retained. Original text is untrusted evidence.'}
 
 
-def author_requirements():
-    from . import earnings_sequential_stages as stages
-    schema = stages._prompt('analysis', 1).split('Write the full report,')[1]
-    return '''Write one complete earnings report from the available original evidence and numerical inventory. Return only one fenced JSON block with exactly two keys: financial_selection and analysis. Select financial facts and write analysis in this same response. Do not perform another selection call, do not write a Markdown table, and do not calculate replacements for table arithmetic. Code will calculate comparisons, margins and FCF and insert the tables.
-financial_selection has rows, gaps, notes and optional reported_tables:
-{"rows":[{"metric":"allowed role","label":"reader label with share class if applicable","basis":"GAAP|IFRS|non-GAAP","fact_ids":["F..."],"citations":["D..."],"definition":"source-supported metric perimeter"}],"gaps":[{"metric":"required metric","reason":"specific missing input or not separately reported","citations":["D..."]}],"notes":[{"text":"source-supported definition or qualification","citations":["D..."]}]}.
-Allowed roles: ''' + ', '.join(sorted(selection.METRICS)) + '''.
-Required coverage (select or explain gap): ''' + ', '.join(sorted(selection.REQUIRED)) + '''.
-For untagged disclosures use reported_tables: [{"table_id":"T-...","row_ids":["R..."],"section":"demand|earnings|cash|outlook"}]. Select only material original rows (e.g. adjusted EPS, adjusted gross margin, adjusted operating profit and its main reconciliation adjustments); code preserves original cells, dates, units, basis headings and source citations. Never copy numbers into this selection or infer units/dates for untagged cells. Original reported tables may supply core metrics when tags are unavailable; explain the core normalized-inventory gap accurately. Do not repeat metrics already shown in the core tables. Select current AND available comparative facts together. Zero through 35 normalized rows; missing tagged data is acceptable with specific gaps and original-table selection where available. Use only existing IDs, never add a number to the selection schema. Do not mix units, segments, share classes or incompatible periods in a row. Each fact can belong to one row only. Keep voting/non-voting diluted EPS and shares separately labeled. Original D citations must establish accounting basis and definitions; taxonomy prefix alone is insufficient. Choose consolidated core metrics; retain debt and operating leases separately with explicit perimeters. Select positive gross PP&E purchases as capex and explicitly define FCF as same-period operating cash flow minus gross purchases. Distinguish management's net investment from gross cash purchases. Gross margin may use compatible selected revenue/gross-profit/cost inputs. Gross margin and R&D may be not separately reported; never assume zero. Annual EPS or a dated quote outside the core inventory belongs in analysis.report_support.valuation as selected supplemental inventory IDs. Code extracts these observations from original sources and calculates P/E. A quote need not match the earnings-event date: use its actual historical date, matching currency and share class. Distinguish missing disclosure from missing inventory coverage. No DCF, price target, quarterly EPS annualization or unverified market quote.
-Before submitting, cover these recurring requirements in the appropriate paragraph, using specific evidence only: prior-period one-offs and comparison distortions; cash restrictions and usable segment liquidity; gross debt, leases and embedded financing obligations without double counting; repurchases and other material funding uses; exact guidance period/basis/baseline/strength of commitment; price/volume/mix and segment revenue reclassifications; both favorable and adverse operating drivers. Do not manufacture a caveat when it is irrelevant. Do not repeat table figures or explain internal extraction/mapping workflow. Explain mechanisms and implications. For a quarterly update, include disclosed quarter cash generation even when filed cash-flow tables are YTD; label rounded call figures and keep their basis separate. Quantify material end-market revenue contributions and contractual demand visibility, distinguishing remaining performance obligations from backlog. Preserve the recognition and collection dates of subsequent items. In Q&A distinguish actual unanswered analyst questions from your own follow-up tests. Consolidate each real limitation once. Use source-backed concrete headings, faithful Q&A and concrete next tests.
-analysis must additionally include report_support with exactly coverage and valuation. coverage contains every key from shared_report_requirements. Each entry is {"status":"addressed|not_material|unavailable","report_excerpt":"exact substring from the specified section's text","reason":"brief source-grounded applicability explanation","citations":["exact source ID"]}. Address all material applicable requirements in the report, including disclosed amounts and dates; a bare mention is insufficient. For unavailable inputs, point to the actual report limitation. For not_material, the excerpt may be empty but justify against sources. This is a completeness map, not an extra reader checklist or a substitute for independent review.
-valuation is {"rows":[{"price_id":"P-... from valuation_inventory","eps_id":"E-... from valuation_inventory","accounting_basis":"source-supported basis"}],"gap":"specific missing inputs if no matching pair, otherwise empty","citations":["exact original source IDs"]}. Select IDs only; do not copy numeric quotations, create scalar values or calculate P/E. The supplemental inventory reparses annual diluted EPS from every frozen filing and binds trading symbols to filed share-class contexts. Prices are deterministically parsed from recognized dated archived headers. Select matching symbols/currencies, annual periods ending before the quote date, and source-supported total diluted earnings. Inspect concepts and original notes; continuing-operations EPS is not automatically total EPS. If a split, ADR or perimeter mismatch prevents comparison, disclose it instead. Source-document IDs supplied with each document and inventory row cite the complete original document. These are historical quotes, not current prices. No forward estimate is inferred. Put annual_eps/price financial-selection gaps as 'available in supplemental valuation inventory' when applicable.
-
-Renderer ownership: code prints core metric gaps, debt definitions, one calculation legend and the dated multiple block. Do not repeat those in prose. Narrative owns material business qualifications, amounts absent from core tables, causal explanation and implications. Q&A should add unanswered details, not repeat whole section arguments. No internal workflow commentary.
-The other analysis fields are described here: Write the full report,''' + schema
 
 
 def review_requirements():

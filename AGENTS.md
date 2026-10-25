@@ -23,16 +23,15 @@ API key, run a nested model service, or copy account authentication into this re
 
 ## Agent workflow
 
-For new earnings reports, use the single-author sequential controller described in
-`docs/operations.md`. Financial extraction and calculations run deterministically.
-The author and reviewer must use distinct signed-in sessions. Review receives the
-original evidence and exact candidate, without the author's conversational reasoning.
-Enforce the eight criteria, five expected questions, at most two revision rounds and
-one cumulative allowance. Keep the active path independent of retired controllers;
-shared utilities belong in neutral modules, with legacy compatibility imports pointing
-toward those utilities. Preserve source/table bytes and review/accounting gates when
-refactoring. Do not create legacy handoffs, successor requests or separate
-signal-role jobs. Preserve old pinned artifacts for audit; do not restart them as new jobs.
+The user requested a replacement finite runner: use `docs/simple-runner.md` for new
+validation batches. Reuse deterministic extraction/calculation and neutral report
+utilities; do not import old orchestration into the new path. One independent review,
+one correction maximum and one final check share a fixed allowance. Editorial preferences
+are advisory; material factual errors block publication. Every company ends published
+or failed and the next company advances. Preserve old pinned reports and costs. Never
+migrate or silently rerun a historical paid job. Keep automation paused until explicitly
+resumed, independently of successful tests. Historical sequential procedures remain in
+`docs/operations.md` solely for already pinned jobs.
 
 ## Code checks
 
