@@ -149,3 +149,28 @@ execution never expands the budget. An explicit user request to correct and revi
 an already blocked report may be recorded through `repair_editorial`; an optional
 bounded review allowance is recorded alongside all previous usage. Publication
 still requires acceptance. Scheduling is controlled independently.
+
+
+### Broad financial extraction and model selection
+
+New sequential jobs insert one accountable `financial_selection` stage between
+source preparation and deterministic financial tables. The compact inventory
+retains every raw observation, with shared dictionaries for concepts, labels,
+periods, entities, units and dimensions. Original statement/note excerpts accompany
+it; discovery previews cannot establish source inspection. The selector retrieves
+additional original evidence through the signed-in evidence reader.
+
+The saved mapping selects only existing fact IDs and supplies source-cited metric,
+basis and perimeter interpretations. Code rejects fabricated fields, unknown or
+unqualified facts, mixed classes/segments/units, conflicting values and uncovered
+core metrics. Share classes remain separate. Gross purchase capex defines the
+code-calculated FCF convention; debt/lease definitions remain explicit. Raw facts
+are never rewritten. Model semantic interpretation is not deterministic evidence;
+the independent reviewer still challenges it against original sources.
+
+Table compilation and review reproduce the exact hash-bound mapping. All selection
+usage is charged to the same job. Selection cannot declare replay safety; a failed
+call stops with its receipts. New runs enable this path at code binding. An existing
+zero-token blocked table pass may enter it through the explicit
+`enable_financial_selection` migration, preserving evidence, costs and revision
+limits. Automation does not grant extra budgets or operator recovery actions.

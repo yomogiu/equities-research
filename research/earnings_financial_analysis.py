@@ -184,12 +184,15 @@ def _inventory(bundle, capex_conventions, accounting_bases):
     statement_policy = statements.enabled(bundle)
     facts = bundle['financial']
     observations = facts['observations']
+    from . import earnings_financial_selection as selection
+    selected_map = selection.mapping(bundle)
     if len({o['id'] for o in observations}) != len(observations):
         raise ValueError('Duplicate observation ID')
-    selected = [o for o in observations if usable(o, facts) and not o.get('nil') and o.get('value') is not None]
+    selected = [o for o in observations if (selected_map is None or o['id'] in selected_map) and usable(o, facts) and not o.get('nil') and o.get('value') is not None]
     identities = source_context.source_identities(bundle, [o['id'] for o in selected])
     groups, gaps = {}, deepcopy(facts.get('gaps', []))
     for obs in observations:
+        if selected_map is not None and obs['id'] not in selected_map: continue
         if obs not in selected:
             gaps.append(_gap('Unqualified, nil, or missing observation', [obs['id']]))
             continue
@@ -215,15 +218,26 @@ def _inventory(bundle, capex_conventions, accounting_bases):
             basis = basis or override
             # Undeclared basis remains undeclared, including inline GAAP tags.
             role = CONCEPTS.get(obs['concept']) or (statements.calculation_role(obs['concept'], identity, repair=bundle.get('financial_source_policy') == statements.REPAIR_VERSION) if statement_policy else None)
+            chosen = selected_map.get(obs['id']) if selected_map is not None else None
+            if chosen:
+                if identity.get('basis') and identity['basis'] != chosen['basis']:
+                    raise ValueError('Configured accounting basis contradicts source basis')
+                role, label, basis = chosen['metric'], chosen['label'], chosen['basis']
             convention = capex_conventions.get(obs['id'], 'positive_payment') if role == 'capital_expenditure' else None
             exact_inline_identity = statement_policy and obs.get('method') == 'inline_xbrl' and role and basis
             grouping_label = None if role and (obs.get('method') == 'reviewed_html_table' or exact_inline_identity) else label
             row_label = (label or display.LABELS.get(obs['concept'], role.replace('_', ' ').capitalize())) if exact_inline_identity else (display.LABELS.get(obs['concept'], role.replace('_', ' ').capitalize()) if grouping_label is None else label)
             key = _key([obs['concept'], grouping_label, context['entity'], context['entity_scheme'], dims, unit, basis, convention])
+            if chosen:
+                key = _key(['selected', chosen['selection_group'], context['entity'], dims, unit, basis])
+                row_label = chosen['label']
             if key not in groups:
                 groups[key] = {'metric_id': role or obs['concept'], 'label': row_label, 'concepts': [obs['concept']],
                     'entity': context['entity'], 'entity_scheme': context['entity_scheme'], 'dimensions': dims,
                     'basis': basis, 'unit': unit, 'derived': False, 'capex_convention': convention, 'basis_origin': 'source', '_periods': defaultdict(list)}
+            if chosen:
+                groups[key].update(selected=True, basis_origin='source_interpretation', selection_citations=chosen['citations'], definition=chosen['definition'])
+                if obs['concept'] not in groups[key]['concepts']:groups[key]['concepts'].append(obs['concept'])
             if override and not identity.get('basis'):
                 groups[key]['basis_origin'] = 'caller_declared'
                 gaps.append(_gap('Calculation assumes caller-declared accounting basis; independent source review is not established by this configuration', [obs['id']], accounting_basis=override))
@@ -465,6 +479,8 @@ def build(bundle, *, current_period=None, as_of=None, capex_conventions=None, ac
             'quarter_derivation': 'Only whitelisted additive monetary flows: same-fiscal-start cumulative difference',
             'comparison_policy': 'Filed boundaries; quarter adjacency; bounded 52/53-week year-ago matching; no annualization'}}
 
+    if bundle.get('financial_selection') is not None:
+        result['financial_selection'] = deepcopy(bundle['financial_selection'])
     from . import earnings_financial_statement_context as statements
     if statements.enabled(bundle):
         result['source_policy'] = bundle['financial_source_policy']

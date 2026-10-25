@@ -70,7 +70,14 @@ def build(root):
     expected_policy = statements.REPAIR_VERSION if repair else statements.VERSION
     require(value.get('source_policy') == expected_policy, 'Unsupported financial source policy')
     replayed = _replayed_facts(bundle)
-    reproduced = finance.compile(statements.qualify(bundle, repair=repair), configuration)
+    qualified = statements.qualify(bundle, repair=repair)
+    if job.get('financial_selection_enabled'):
+        from . import earnings_financial_selection as selection
+        name = job.get('financial_selection_artifact')
+        require(name and job['artifacts'].get(name) == storage.sha(root/name), 'Financial selection changed')
+        hashes[name] = storage.sha(root/name)
+        qualified = selection.verify_record(qualified, root/'sources/manifest.json', storage.read(root/name))
+    reproduced = finance.compile(qualified, configuration)
     require(value == reproduced, 'Financial analysis differs from deterministic source recomputation')
     rendered = finance.preview_markdown(reproduced)
     require((root/'financial-tables.md').read_text() == rendered,
@@ -81,6 +88,9 @@ def build(root):
         line for line in rendered.splitlines() if line.startswith('|'))))
     all_references = set(re.findall(r'\[\^([FD][0-9]+)\]', rendered))
     trusted = sorted(displayed & replayed)
+    if value.get('financial_selection'):
+        for row in value['financial_selection']['rows']:
+            all_references.update(row['citations'])
     slices = evidence.source_slices(root/'sources/manifest.json', trusted)
     source_bindings = sorted({(span['document_id'],span['sha256'])
                               for item in slices for span in item['spans']})

@@ -1,6 +1,6 @@
 """Concrete stages for a new, single-record earnings workflow.
 
-Only the two editorial stages call a model. Source preparation and calculation
+Financial selection and the two editorial stages call a model. Source preparation and calculation
 are deterministic; each review has a fresh signed-in session. No legacy report
 controller, handoff protocol, successor request or recovery graph is invoked.
 """
@@ -199,7 +199,13 @@ def financial_tables(root, job):
     config = financial_configuration(bundle, job['specification'].get('financial_analysis'))
     from . import earnings_financial_statement_context as statements
     repair = job.get('financial_repair_policy') == statements.REPAIR_VERSION
-    value = finance.compile(statements.qualify(bundle, repair=repair), config)
+    qualified = statements.qualify(bundle, repair=repair)
+    if job.get('financial_selection_enabled'):
+        from . import earnings_financial_selection as selection
+        name = job.get('financial_selection_artifact')
+        require(name and job['artifacts'].get(name) == storage.sha(root/name), 'Bound financial selection required before tables')
+        qualified = selection.verify_record(qualified, root/'sources/manifest.json', read(root/name))
+    value = finance.compile(qualified, config)
     rendered = finance.preview_markdown(value)
     if job.get('automatic_table_repair'):
         previous = root/f'history/financial-r{job["revision_round"]-1}/financial-tables.md'
@@ -500,7 +506,7 @@ def _closed_local_failure(root, role_dir):
     require(failure.get('stage') == 'local_guard' and failure.get('code') == 'role_budget', 'Only a local budget guard is resumable')
     require(stop.get('stable_metered_prefix') is True, 'Unknown provider usage cannot be resumed')
     require(request.get('job_path') == str(role_dir) and request.get('bindings', {}).get('workflow') == VERSION
-            and request['bindings'].get('role') in ('sequential_analysis','sequential_review'), 'Exact sequential role binding required')
+            and request['bindings'].get('role') in ('sequential_analysis','sequential_review','sequential_financial_selection'), 'Exact sequential role binding required')
     require(execution.get('request_sha256') == storage.digest(request) == launch.get('request_sha256')
             and execution.get('launch_sha256') == storage.sha(role_dir/'launch.json'), 'Failed request or launch changed')
     runner.verify_request(role_dir, request)
@@ -563,7 +569,7 @@ def _closed_auth_failure(root, role_dir):
             and execution.get('request_sha256') == storage.digest(request) == launch.get('request_sha256')
             and execution.get('launch_sha256') == storage.sha(role_dir/'launch.json'), 'Closed bound execution required')
     require(request.get('job_path') == str(role_dir) and request.get('bindings', {}).get('workflow') == VERSION
-            and request['bindings'].get('role') in ('sequential_analysis','sequential_review'), 'Exact sequential role binding required')
+            and request['bindings'].get('role') in ('sequential_analysis','sequential_review','sequential_financial_selection'), 'Exact sequential role binding required')
     require((role_dir/'retrieval.jsonl').stat().st_size == 0 and not any((role_dir/name).exists() for name in
             ('runtime-start.json','runtime-finish.json','sessions','output.json','response.md','delivery.jsonl','transport-lifecycle.jsonl')),
             'Prior model execution cannot be excluded')
@@ -581,7 +587,7 @@ def _closed_auth_failure(root, role_dir):
 def failed_execution(root, job):
     """Read-only reconciliation for an existing blocked attempt; never edit it."""
     attempt = job['attempts'][-1]
-    require(attempt.get('stage') in ('analysis','review'), 'Only failed editorial execution can be reconciled')
+    require(attempt.get('stage') in ('analysis','review','financial_selection'), 'Only failed editorial execution can be reconciled')
     outcome = attempt.get('outcome', {})
     role_dir = Path(outcome['execution_directory']).resolve()
     require(role_dir == Path(root).resolve()/'roles'/_role_label(job, attempt['stage']), 'Failed execution directory differs from the attempted role')
@@ -785,6 +791,11 @@ financial_tables = _safe_stage(financial_tables)
 publication = _safe_stage(publication)
 
 
+def financial_selection(root, job):
+    from .earnings_sequential_selection import run
+    return run(root, job)
+
+
 def handlers():
-    return {name:globals()[name] for name in ('sources', 'financial_tables', 'analysis', 'review', 'publication')}
+    return {name:globals()[name] for name in ('sources', 'financial_selection', 'financial_tables', 'analysis', 'review', 'publication')}
 

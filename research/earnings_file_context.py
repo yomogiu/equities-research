@@ -585,7 +585,7 @@ class Evidence:
         """
         metadata=base.read(self.root/'metadata.json')
         require(metadata.get('context_projection')==COMPACT_VERSION and
-                metadata.get('role') in ('analysis','review','correction'),
+                metadata.get('role') in ('analysis','review','correction','financial_selection'),
                 'Compact role context required')
         pages=[];packets=[];texts=[]
         def flush():
@@ -595,6 +595,9 @@ class Evidence:
                               'packets':packets[:]})
                 packets.clear();texts.clear()
         methods = ('handoff_batch','call_batch','support_batch')
+        if metadata.get('role') == 'financial_selection':
+            require(metadata.get('workflow') == 'sequential-earnings-stages-v1' and metadata.get('financial_selection_version') == 'financial-selection-v1', 'Bound financial selection context required')
+            methods = ('handoff_batch','support_batch')
         if metadata.get('review_scope') == 'verified_section_revision':
             require(metadata.get('workflow') == 'sequential-earnings-stages-v1'
                     and isinstance(metadata.get('revision_proof_sha256'),str), 'Verified sequential revision required')

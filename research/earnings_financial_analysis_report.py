@@ -253,6 +253,17 @@ def front_identity(row):
 
 def front_rows(value,selection=None):
     """Prefer durations only within the same entity, currency and accounting basis."""
+    if value.get('financial_selection') is not None:
+        result={key:[] for key in FRONT_METRICS}
+        for table in value['tables']:
+            for row in table['rows']:
+                role=front_role(row)
+                target = ('demand' if role=='revenue' else 'earnings' if role in EARNINGS or role=='research_and_development' else 'cash')
+                if role=='interest_expense':continue
+                if row['cells']['current']['status']!='available':continue
+                if row.get('selected') or role in ('gross_margin','operating_margin','free_cash_flow','total_debt'):
+                    result[target].append((table['period_family'],row))
+        return result
     inventory=[(table['period_family'],row) for table in value['tables'] for row in table['rows']
                if not row.get('dimensions')]
     result={key:[] for key in FRONT_METRICS}
@@ -382,6 +393,14 @@ def notes(value,selection=None):
         result.append('- Calculated total debt adds compatible current and noncurrent debt observations; it does not estimate unreported obligations.')
         if value.get('source_policy') in ('filed-statement-context-v1', 'filed-statement-repair-v1'):
             result.append('- Debt is the balance-sheet carrying amount. Outstanding principal or management-reported gross debt may differ because of discounts, premiums, issuance costs or scope; those figures are not interchangeable.')
+    if value.get('financial_selection') is not None:
+        for row in value['financial_selection']['rows']:
+            if row['metric'] in ('total_debt','debt_component','operating_leases'):
+                result.append('- '+row['label']+': '+row['definition']+' '+markdown.refs(row['citations']))
+        for item in value['financial_selection']['notes']:
+            result.append('- '+item['text']+' '+markdown.refs(item['citations']))
+        for item in value['financial_selection']['gaps']:
+            result.append('- '+item['metric'].replace('_',' ').capitalize()+': '+item['reason']+' '+markdown.refs(item['citations']))
     if any(row.get('basis_origin')=='caller_declared' for rows in selected.values() for _,row in rows):
         result.append('- A basis marked assumed is caller-declared where the source does not state it; it is not a company assertion.')
     return result

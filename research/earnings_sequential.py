@@ -33,6 +33,8 @@ from contextvars import ContextVar
 from pathlib import Path
 
 STAGES = ("sources", "financial_tables", "analysis", "review", "publication")
+ALL_STAGES = (*STAGES, "financial_selection")
+MODEL_STAGES = ("financial_selection", "analysis", "review")
 MAX_TOKENS = 1_200_000
 _ACTIVE = ContextVar("sequential_stage", default=None)
 
@@ -199,14 +201,17 @@ def _finish(root, job):
             if (prior_review not in job['artifacts'] or proof.get('candidate_after_sha256') != outputs.get(job['candidate_artifact'])
                     or proof.get('baseline_artifacts', {}).get(prior_review) != job['artifacts'].get(prior_review)):
                 raise ValueError('Deterministic revision proof does not bind candidate and independent review')
-        if stage in ("analysis", "review") and not deterministic_revision:
+        if stage in MODEL_STAGES and not deterministic_revision:
             session = outcome.get("session_id")
             if not isinstance(session, str) or not session:
                 raise ValueError("analysis/review requires an attributable session_id")
             prior = [a.get("outcome", {}).get("session_id") for a in job["attempts"][:-1]
-                     if a["stage"] in ("analysis", "review")]
+                     if a["stage"] in MODEL_STAGES]
             if session in prior:
                 raise ValueError("analysis/review must use a fresh independent session")
+        if stage == 'financial_selection':
+            name = f"financial-selection-r{job['revision_round']}.json"
+            if set(outputs) != {name}: raise ValueError('Selection must produce one bound immutable mapping')
         if stage == "analysis" and job["candidate_artifact"] not in outputs:
             raise ValueError("analysis did not produce the candidate artifact")
         if stage in ("review", "publication"):
@@ -275,7 +280,11 @@ def _finish(root, job):
         if stage == "publication":
             job["status"] = "completed"
         else:
-            job.update(stage=STAGES[STAGES.index(stage) + 1], status="ready")
+            next_stage = ('financial_tables' if stage == 'financial_selection' else
+                          'financial_selection' if stage == 'sources' and job.get('financial_selection_enabled') else
+                          STAGES[STAGES.index(stage) + 1])
+            if stage == 'financial_selection':job['financial_selection_artifact'] = name
+            job.update(stage=next_stage, status="ready")
     job.pop("reason", None)
     _write(root, job)
     return job
@@ -318,7 +327,7 @@ def advance(root, handlers, execute=True):
         if job["stage"] == "publication" and (not job["accepted_candidate_sha256"] or
                 job["artifacts"].get(job["candidate_artifact"]) != job["accepted_candidate_sha256"]):
             return _block(root, job, "publication requires exact accepted candidate")
-        if job["tokens_used"] >= job["budget_tokens"] and job["stage"] in ("analysis", "review"):
+        if job["tokens_used"] >= job["budget_tokens"] and job["stage"] in MODEL_STAGES:
             return _block(root, job, "token budget exhausted")
         handler = handlers.get(job["stage"])
         if not callable(handler):
@@ -376,7 +385,7 @@ def _commit(value):
     return value
 
 
-def bind_execution_code(root, code_commit):
+def bind_execution_code(root, code_commit, *, financial_selection=False):
     """Select code for an unstarted job without changing its frozen specification."""
     root = Path(root).resolve()
     code_commit = _commit(code_commit)
@@ -385,6 +394,7 @@ def bind_execution_code(root, code_commit):
         if job["status"] != "ready" or job["attempts"]:
             raise ValueError("only an unstarted ready job can bind execution code")
         job["execution_code_commit"] = code_commit
+        if financial_selection:job["financial_selection_enabled"] = True
         _write(root, job)
         return job
 
@@ -399,7 +409,7 @@ def _model_restart(attempt):
             and attempt["stage"] in ("sources", "financial_tables", "publication")):
         return False
     if (tokens == 0 and outcome.get("execution_certainty") == "not_started"
-            and attempt["stage"] in ("analysis", "review")
+            and attempt["stage"] in MODEL_STAGES
             and not outcome.get("session_id") and not outcome.get("execution_directory")):
         return False
     return True
@@ -423,7 +433,7 @@ def resume(root, reason, code_commit, *, reconcile=None):
         raise ValueError("explicit bounded operator reason required")
     with _lock(root):
         job = _read(root)
-        if job["status"] != "blocked" or job["stage"] not in STAGES:
+        if job["status"] != "blocked" or job["stage"] not in ALL_STAGES:
             raise ValueError("only a blocked stage can resume")
         if job.get("final_review") and job["stage"] != "publication":
             raise ValueError("final review authorization does not permit another model attempt")
@@ -435,7 +445,7 @@ def resume(root, reason, code_commit, *, reconcile=None):
         tokens = _integer(outcome.get("tokens"), "closed outcome tokens")
         deterministic = (job["stage"] in ("sources", "financial_tables", "publication")
                          and attempt.get("replay_safe") is True and tokens == 0)
-        if job["stage"] not in ("analysis", "review") and not deterministic:
+        if job["stage"] not in MODEL_STAGES and not deterministic:
             raise ValueError("deterministic resume requires an accounted zero-token replay-safe stage")
         if not deterministic and job["tokens_used"] >= job["budget_tokens"]:
             raise ValueError("token budget exhausted")
@@ -606,7 +616,7 @@ def _table_revision(root, job, review_outputs, attempt, code_commit, reason, *, 
     for name in names:
         del job["artifacts"][name]
     job["revision_input"] = {job["candidate_artifact"]: job["artifacts"].pop(job["candidate_artifact"])}
-    job.update(stage="financial_tables", status="ready", revision_round=job["revision_round"] + 1,
+    job.update(stage="financial_selection" if job.get("financial_selection_enabled") else "financial_tables", status="ready", revision_round=job["revision_round"] + 1,
                execution_code_commit=code_commit, accepted_candidate_sha256=None)
     job.pop("reason", None)
     if automatic:
@@ -725,3 +735,25 @@ def repair_editorial(root, authorization, code_commit, *, review_cap=None):
         job['execution_code_commit'] = code_commit
         _write(root, job)
         return job
+
+
+def enable_financial_selection(root, authorization, code_commit):
+    """Adopt source selection after a proven zero-token table failure, same budget."""
+    root=Path(root).resolve();code_commit=_commit(code_commit)
+    if not isinstance(authorization,str) or not authorization.strip():raise ValueError('Explicit selection repair authorization required')
+    with _lock(root):
+        job=_read(root)
+        if job.get('financial_selection_enabled') or job.get('final_review') or job.get('editorial_repair'):
+            raise ValueError('Selection migration cannot reset an existing repair')
+        if job['status']!='blocked' or job['stage']!='financial_tables' or not job['attempts']:
+            raise ValueError('Selection migration requires blocked deterministic table calculation')
+        attempt=job['attempts'][-1];outcome=attempt.get('outcome',{})
+        if not attempt.get('replay_safe') or not attempt.get('usage_recorded') or outcome.get('tokens')!=0 or outcome.get('status')!='blocked':
+            raise ValueError('Verified zero-token deterministic failure required')
+        if sum(a['outcome']['tokens'] for a in job['attempts'] if a.get('usage_recorded'))!=job['tokens_used']:
+            raise ValueError('Cumulative usage differs from attempt history')
+        _verify(root,job['artifacts']);_verify(root,job.get('revision_input',{}))
+        job.setdefault('administrative_history',[]).append(dict(action='enable_financial_selection',authorization=authorization,
+            previous_code_commit=job.get('execution_code_commit'),code_commit=code_commit,tokens_used=job['tokens_used'],revision_round=job['revision_round']))
+        job.update(financial_selection_enabled=True,execution_code_commit=code_commit,stage='financial_selection',status='ready')
+        job.pop('reason',None);_write(root,job);return job
