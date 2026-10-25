@@ -215,6 +215,9 @@ def _finish(root, job):
             if set(outputs) != {name}: raise ValueError('Selection must produce one bound immutable mapping')
         if stage == "analysis" and job["candidate_artifact"] not in outputs:
             raise ValueError("analysis did not produce the candidate artifact")
+        if stage == 'analysis' and job.get('single_author_enabled'):
+            required={'financial-selection-r0.json','financial-analysis.json','financial-configuration.json','financial-tables.md','analysis-r0.json'}
+            if not required<=outputs.keys():raise ValueError('Combined author requires selection, computed tables and analysis')
         if stage in ("review", "publication"):
             candidate = job["artifacts"].get(job["candidate_artifact"])
             if not candidate or outcome.get("input_sha256") != candidate:
@@ -243,6 +246,9 @@ def _finish(root, job):
                 if fingerprint(current) and fingerprint(current) == fingerprint(previous):
                     raise ValueError('Repeated unchanged review findings; automatic repair made no progress')
         if status == 'revise' and not job.get('editorial_repair'):
+            if job.get('single_author_enabled'):
+                job['artifacts'].update(outputs)
+                return _block(root,job,'Single-author independent review requires corrections; no automatic full-report replay')
             if _editorial_revision(root, job, outputs, outcome):
                 attempt['status'] = status
                 attempt['outputs'] = outputs
@@ -274,6 +280,8 @@ def _finish(root, job):
         job["artifacts"].update(outputs)
         if stage == "analysis":
             job.pop("revision_input", None)
+            if job.get('single_author_enabled'):
+                job.update(financial_selection_enabled=True,financial_selection_artifact='financial-selection-r0.json')
         if stage == "review":
             job["accepted_candidate_sha256"] = job["artifacts"][job["candidate_artifact"]]
             if job.get("final_review"):
@@ -282,6 +290,7 @@ def _finish(root, job):
             job["status"] = "completed"
         else:
             next_stage = ('financial_tables' if stage == 'financial_selection' else
+                          'analysis' if stage == 'sources' and job.get('single_author_enabled') else
                           'financial_selection' if stage == 'sources' and job.get('financial_selection_enabled') else
                           STAGES[STAGES.index(stage) + 1])
             if stage == 'financial_selection':job['financial_selection_artifact'] = name
@@ -386,7 +395,7 @@ def _commit(value):
     return value
 
 
-def bind_execution_code(root, code_commit, *, financial_selection=False):
+def bind_execution_code(root, code_commit, *, financial_selection=False, single_author=False):
     """Select code for an unstarted job without changing its frozen specification."""
     root = Path(root).resolve()
     code_commit = _commit(code_commit)
@@ -395,6 +404,9 @@ def bind_execution_code(root, code_commit, *, financial_selection=False):
         if job["status"] != "ready" or job["attempts"]:
             raise ValueError("only an unstarted ready job can bind execution code")
         job["execution_code_commit"] = code_commit
+        if single_author:
+            if financial_selection:raise ValueError('Combined author replaces separate financial selection')
+            job['single_author_enabled']=True
         if financial_selection:job["financial_selection_enabled"] = True
         _write(root, job)
         return job

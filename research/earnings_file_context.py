@@ -192,6 +192,18 @@ class Evidence:
                'section_ids':self.index['section_ids'],'artifacts':sorted(self.artifacts),'files':sorted(self.index['files'])}
         return self._record({'method':'inventory','start':start,'limit':limit},value)
 
+    def _report_packet(self):
+        metadata=base.read(self.root/'metadata.json')
+        require(metadata.get('single_report_version')=='single-author-report-v1', 'Single report context required')
+        value=self.artifacts.get('single_report_packet')
+        require(isinstance(value,dict) and value.get('version')=='single-author-report-v1', 'Bound report packet required')
+        body=json.dumps(value,ensure_ascii=False,separators=(',',':'))
+        require(len(body.encode())<=900000,'Report packet exceeds context bound')
+        return body
+
+    def report_packet(self):
+        return self._record({'method':'report_packet'},self._report_packet())
+
     def output(self, identifier, start=0, limit=768):
         """Read a hash-bound overflow page, never the complete unbounded print."""
         import re
@@ -672,6 +684,7 @@ def audit(index, log, *, count=None):
         for e in entries:
             method=e['method']
             if method=='inventory':reader.inventory(e.get('start',0),e.get('limit',40))
+            elif method=='report_packet':reader.report_packet()
             elif method in ('handoff_batch','support_batch'):getattr(reader,method)(e['start'],e['limit'])
             elif method=='source_batch':reader.source_batch(e['ids'],e['start'],e['limit'])
             elif method in ('filing_batch','challenge_batch'):getattr(reader,method)(e['query'],e['limit'])
@@ -746,6 +759,9 @@ def delivered_entries(job, entries):
     for r in records:
         if r['id'] not in resolved:continue
         for e in entries[r['retrieval_start']:r['retrieval_end']]:
+            if e['method']=='report_packet':
+                if reader is None:reader=Evidence(base.read(job/'request.json')['context_index'],job/'unused-audit.jsonl')
+                if reader._report_packet() not in (job/'tool-output'/(r['id']+'.txt')).read_text():continue
             if e['method'] in ('call_batch','filing_batch','challenge_batch','handoff_batch','support_batch','source_batch'):
                 if reader is None:reader=Evidence(base.read(job/'request.json')['context_index'],job/'unused-audit.jsonl')
                 if e['method'] in ('handoff_batch','support_batch','source_batch'):rendered=reader._role_batch(e['method'],e['start'],e['limit'],e.get('ids'))

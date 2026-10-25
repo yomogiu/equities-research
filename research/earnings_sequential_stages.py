@@ -703,6 +703,9 @@ def _model(root, job, role):
 
 
 def analysis(root, job):
+    if job.get('single_author_enabled'):
+        from . import earnings_single_author
+        return earnings_single_author.analysis(root,job)
     root = Path(root)
     from . import earnings_sequential_revisions as revisions
     try:
@@ -739,6 +742,9 @@ def analysis(root, job):
 
 
 def review(root, job):
+    if job.get('single_author_enabled'):
+        from . import earnings_single_author
+        return earnings_single_author.review(root,job)
     root = Path(root); candidate = root/job['candidate_artifact']
     candidate_sha = storage.sha(candidate)
     value, result = _model(root, job, 'review')
