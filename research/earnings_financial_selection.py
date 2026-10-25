@@ -81,9 +81,11 @@ def compact(bundle):
 
 
 def validate(value,bundle):
-    require(isinstance(value,dict) and set(value)=={'rows','gaps','notes'},'Exact selection fields required')
-    require(isinstance(value['rows'],list) and 1<=len(value['rows'])<=35,'One through 35 selected metric rows required')
+    require(isinstance(value,dict) and set(value) in ({'rows','gaps','notes'}, {'rows','gaps','notes','reported_tables'}),'Exact selection fields required')
+    require(isinstance(value['rows'],list) and 0<=len(value['rows'])<=35,'Zero through 35 selected metric rows required')
     require(isinstance(value['gaps'],list) and isinstance(value['notes'],list),'Selection gaps and notes required')
+    from . import earnings_packet_inventory as packet_inventory
+    packet_inventory.validate_selection(value.get('reported_tables',[]),bundle)
     facts=bundle['financial'];byid={o['id']:o for o in facts['observations']};known=set(evidence._scopes(bundle))
     selected=set();covered=set()
     def text(v):require(isinstance(v,str) and bool(v.strip()) and 1<=len(v)<=2400 and not re.search(r'[\n\r|]|\[\^',v),'Bounded plain selection text required')
@@ -105,7 +107,7 @@ def validate(value,bundle):
             if dims and row['metric'] not in ('available_cash','credit_capacity','debt_component'):
                 require(row['metric'] in ('diluted_eps','diluted_shares') and all(d['dimension']=='us-gaap:StatementClassOfStockAxis' for d in dims),
                         'Core consolidated metrics cannot silently use segment observations')
-            signatures.add(storage.digest([c['entity'],c['entity_scheme'],dims,u]))
+            signatures.add(storage.digest([c['entity'],c['entity_scheme'],dims,{k:u[k] for k in ('numerator','denominator')}]))
             if period in period_values:require(analysis._number(period_values[period])==analysis._number(o['value']),'Conflicting same-period facts cannot be silently selected together')
             period_values[period]=o['value']
             if row['metric']=='diluted_eps':require(len(u['numerator'])==1 and u['numerator'][0].startswith('iso4217:') and u['denominator']==['xbrli:shares'],'EPS requires currency/share units')
@@ -143,7 +145,11 @@ def record(bundle,manifest,value):
 def apply(bundle,value):
     """Attach a validated selection without mutating raw facts or contexts."""
     validate(value,bundle)
-    return {**bundle,'financial_selection':deepcopy(value)}
+    from . import earnings_packet_inventory as packet_inventory
+    result={**bundle,'financial_selection':deepcopy(value)}
+    if value.get('reported_tables'):
+        result['reported_tables']=packet_inventory.selected(value['reported_tables'],bundle)
+    return result
 
 
 def mapping(bundle):

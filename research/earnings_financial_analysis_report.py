@@ -334,7 +334,7 @@ def sections(value,selection=None):
             for key,label in (('current','Current'),('prior_quarter','Prior quarter'),('prior_year','Prior year')):
                 found=sorted({tuple(row['cells'][key]['period']) for row in rows if row['cells'][key].get('period')})
                 if found:dates.append(label+': '+', '.join(display.period_label(p) for p in found))
-            family_name={'half':'Six-month cash flow','nine-month':'Nine-month cash flow'}.get(family,FAMILIES[family])
+            family_name=({'half':'Six-month cash flow','nine-month':'Nine-month cash flow'}.get(family,FAMILIES[family]) if target=='cash' else FAMILIES[family])
             headers=HEADERS if family in ('quarter','instant') else [*HEADERS[:3],'Prior year',HEADERS[-1]]
             slots=('current','prior_quarter','prior_year') if family in ('quarter','instant') else ('current','prior_year')
             changes=('qoq','yoy') if family in ('quarter','instant') else ('yoy',)
@@ -370,6 +370,9 @@ def sections(value,selection=None):
         if gap:lines.extend([gap,''])
         if target=='earnings' and earnings_commentary(value):
             lines.extend(['Quarter expense detail: '+' '.join(earnings_commentary(value)),''])
+    from . import earnings_packet_inventory as packet_inventory
+    for table in value.get('reported_tables',[]):
+        result[table['section']].extend(packet_inventory.render(table))
     return result
 
 
@@ -385,7 +388,7 @@ def notes(value,selection=None):
     if derived&{'gross_margin','operating_margin'}:
         result.append('- Calculated margins divide the corresponding profit by revenue. Margin changes are percentage-point differences.')
     if 'free_cash_flow' in derived:
-        result.append('- Free cash flow equals operating cash flow less capital expenditure, using the same period. Gross purchases and management-reported net investment are distinct measures.')
+        result.append('- Free cash flow equals operating cash flow less gross capital expenditure, using the same period.')
     if 'total_debt' in derived:
         result.append('- Calculated total debt adds compatible current and noncurrent debt observations; it does not estimate unreported obligations.')
         if value.get('source_policy') in ('filed-statement-context-v1', 'filed-statement-repair-v1'):

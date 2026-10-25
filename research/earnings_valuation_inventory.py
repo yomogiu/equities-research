@@ -24,6 +24,8 @@ def _identity(context):
 
 
 def build(bundle):
+    if bundle.get('valuation_inventory') is not None:
+        return deepcopy(bundle['valuation_inventory'])
     sources=bundle['manifest']['sources']
     inputs=[s for s in sources if (s['kind']=='filing' and s['representation']=='raw') or (s['kind']=='transcript' and s['representation']=='text')]
     # Recheck bytes even when the parsed result is cached in this process.
@@ -39,9 +41,10 @@ def build(bundle):
             url=urlsplit(s.get('url',''));ticker=re.fullmatch(r'/stocks/([^/]+)/transcripts/[^/]+/?',url.path)
             if url.hostname!='stockanalysis.com' or ticker is None:continue
             header=raw.split('Earnings Call:',1)[0]
-            pattern=r'^([A-Z][A-Z ]*): ([A-Z0-9.\-]+) · Real-Time Price · ([A-Z]{3})\s*\n[^\n]*\n([0-9,]+\.[0-9]+)\s*\n[^\n]*\n([A-Z][a-z]{2} \d{1,2}, \d{4}),[^\n]*Market closed'
+            pattern=r'^([A-Z][A-Z ]*): ([A-Z0-9.\-]+) · Real-Time Price · ([A-Z]{3})\s*\n[^\n]*\n([0-9,]+\.[0-9]+)\s*\n[^\n]*\n(?:At close: )?([A-Z][a-z]{2} \d{1,2}, \d{4}),(?:[^\n]*Market closed|[^\n]*[AP]M [A-Z]{2,5})$'
             for match in re.finditer(pattern,header,re.M):
                 exchange,symbol,currency,value,quoted=match.groups()
+                if 'At close: ' not in match[0] and not match[0].endswith('Market closed'):continue
                 if symbol.lower()!=ticker[1].lower():continue
                 row={'symbol':symbol,'currency':currency,'value':str(financial._decimal(value.replace(',',''))),
                      'date':datetime.strptime(quoted,'%b %d, %Y').date().isoformat(),'source_id':'transcript-source',

@@ -35,8 +35,6 @@ def prepare_selected(root, packet_id, packet, filing, call, output, writing, aut
         old_raw=Path(selection['original_raw_path']).resolve()
         if not old_raw.is_relative_to(root) or old_raw.is_symlink(): raise ValueError('Original reviewed raw must remain private and bound')
         financial_artifacts.append({'path':str(old_raw),'sha256':base.sha(old_raw)})
-    if not facts['observations']:
-        raise ValueError('No structured filing observations; financial preparation needs review')
     text = library.load_bytes(root, call['text_path'], call['text_sha256']).decode('utf-8')
     call_raw = library.load_bytes(root, call['raw_path'], call['raw_sha256'])
     current_catalog = library.catalog(root)
@@ -114,6 +112,8 @@ def prepare_selected(root, packet_id, packet, filing, call, output, writing, aut
         case['financial_adapter'] = {'authorization_path': str(financial_selection),
                                      **{key+'_path': str(library.resolve(root, reviewed_financial[key+'_path'])) for key in ('profile', 'review')}}
         case['scope_notes'].append('Selected ordinary HTML cells were extracted using an independently reviewed, exact-source profile. Profile review does not establish full financial coverage or report acceptance. Unselected cells remain original evidence.')
+    if reviewed_financial is None:
+        case['financial_inventory_version'] = 'packet-financial-inventory-v1'
     case['scope_notes'].extend(scope_notes)
     base.validate_case(case); base.save(output/'case.json', case)
     return output/'case.json'

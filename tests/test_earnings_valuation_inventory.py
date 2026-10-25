@@ -31,3 +31,16 @@ class InventoryTests(unittest.TestCase):
     def test_duplicate_equal_facts_coalesce_with_both_lineages(self):
         node='<ix:nonFraction name="us-gaap:EarningsPerShareDiluted" contextRef="annual" unitRef="u" decimals="2">2.00</ix:nonFraction>'
         self.raw=self.raw.replace(node,node+node);v=inv.build(self.bundle());self.assertEqual(len(v['annual_eps']),1);self.assertEqual(len(v['annual_eps'][0]['observations']),2)
+
+    def test_explicit_at_close_header_preserves_close_not_after_hours(self):
+        self.quote=self.quote.replace('Jan 2, 2041, 4:00 PM EST - Market closed','At close: Jan 2, 2041, 4:00 PM EST\n49.99\n+1.99 (4%)\nAfter-hours: Jan 2, 2041, 7:48 PM EST')
+        v=inv.build(self.bundle());self.assertEqual(len(v['prices']),1)
+        self.assertEqual(v['prices'][0]['value'],'48.00');self.assertEqual(v['prices'][0]['date'],'2041-01-02')
+
+    def test_after_hours_only_header_is_not_accepted_as_close(self):
+        self.quote=self.quote.replace('Jan 2, 2041, 4:00 PM EST - Market closed','After-hours: Jan 2, 2041, 7:48 PM EST')
+        self.assertEqual(inv.build(self.bundle())['prices'],[])
+
+    def test_undesignated_intraday_timestamp_is_not_promoted_to_close(self):
+        self.quote=self.quote.replace('4:00 PM EST - Market closed','2:00 PM EST')
+        self.assertEqual(inv.build(self.bundle())['prices'],[])

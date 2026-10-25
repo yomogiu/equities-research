@@ -214,9 +214,10 @@ class PreparedAdapterTests(unittest.TestCase):
             catalog = {'catalog_id': 'fake-catalog', 'issuers': {source['issuer_id']: {'issuer': 'Fictional Example'}}}
             selection = {'profile_path': 'profile.json', 'review_path': 'review.json', 'authorization': auth}
             with patch.object(flow, 'validate_packet', return_value=packet), patch.object(flow.library, 'catalog', return_value=catalog):
-                with self.assertRaisesRegex(ValueError, 'No structured filing'):
-                    flow.prepare(root, 'fake-packet', root/'without-adapter', writing, 'Explicit fake request')
-                self.assertFalse((root/'without-adapter').exists())
+                untagged = flow.prepare(root, 'fake-packet', root/'without-adapter', writing, 'Explicit fake request')
+                plain_case = base.read(untagged)
+                self.assertEqual(base.read(plain_case['financial_path'])['observations'], [])
+                self.assertEqual(plain_case['financial_inventory_version'], 'packet-financial-inventory-v1')
                 prepared = flow.prepare(root, 'fake-packet', root/'prepared', writing, 'Explicit fake request', reviewed_financial=selection)
             case = base.read(prepared)
             frozen = {x['path']: x['sha256'] for x in case['artifacts']}

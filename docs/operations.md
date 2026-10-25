@@ -1,3 +1,29 @@
+## Upstream financial inventory
+
+New source cases use `packet-financial-inventory-v1`. Before any model call, code
+extracts all numeric inline XBRL observations from every qualified raw financial
+document, captures every HTML table cell with its original row/column spans and
+source hash, and freezes dated quote/annual-EPS observations. The coverage manifest
+lists source kinds, available tagged periods, parser limitations and unsupported
+formats. A missing source or extraction failure is not issuer nondisclosure.
+
+One author selects existing tagged fact IDs for normalized core tables and may
+select original table/row IDs for material untagged disclosures and reconciliations.
+Code preserves original labels, values, dates, units and basis headers for these
+reported tables; it does not infer normalized semantics or calculate changes from
+ambiguous untagged layouts. All source cells remain in the private inventory even
+when the report displays only a few. No extra financial-selection model or
+post-draft source hunt is added. Zero tagged metrics is permitted with accurate
+limitations and available original tables. Independent review still checks material
+omissions and accounting interpretation; it may accept explicit extraction limits.
+
+The inventory covers the qualified archived packet, not every document on the web.
+Binary/PDF tables and absent comparative sources remain explicit coverage gaps;
+source collection/qualification must resolve those upstream for future packets.
+Old pinned cases retain their original extract. An explicitly authorized comparison
+may re-extract the same source bytes into a new version while preserving the stopped
+baseline, its review and all prior token costs.
+
 ## Shared single-author report contract
 
 The single-author path supplies the same material coverage obligations to author and

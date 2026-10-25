@@ -25,6 +25,12 @@ def require(condition, message):
 
 def _replayed_facts(bundle):
     """Reparse each bound original once; never promote manual proposals."""
+    if bundle.get('packet_inventory'):
+        from . import earnings_packet_inventory as inventory, earnings_valuation_inventory as valuation
+        require(inventory.build(bundle['manifest']['sources']) == bundle['packet_inventory'],
+                'Packet table inventory differs from original-source replay')
+        require(valuation.build({'manifest':bundle['manifest']}) == bundle['valuation_inventory'],
+                'Valuation inventory differs from original-source replay')
     facts = bundle['financial']; cache = {}; verified = set()
     for row in facts['observations']:
         if row.get('method') != 'inline_xbrl': continue
@@ -91,6 +97,8 @@ def build(root):
     if value.get('financial_selection'):
         for row in [*value['financial_selection']['rows'],*value['financial_selection']['notes'],*value['financial_selection']['gaps']]:
             all_references.update(row['citations'])
+    for table in value.get('reported_tables',[]):
+        all_references.add(table['source_id'])
     slices = evidence.source_slices(root/'sources/manifest.json', trusted)
     source_bindings = sorted({(span['document_id'],span['sha256'])
                               for item in slices for span in item['spans']})

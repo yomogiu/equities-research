@@ -48,6 +48,12 @@ class SelectionTests(unittest.TestCase):
             else:v['rows'][1]['fact_ids']=['F001']
             with self.assertRaises(ValueError):selection.validate(v,b)
 
+    def test_equivalent_units_from_distinct_documents_do_not_split_comparisons(self):
+        b=copy.deepcopy(self.bundle);o=b['financial']['observations'][1]
+        b['financial']['units']['another-file-unit']={**b['financial']['units'][o['unit_id']],'id':'another-local-id'}
+        o['unit_id']='another-file-unit'
+        selection.validate(self.value,b)
+
     def test_units_class_and_period_conflicts_rejected(self):
         b=copy.deepcopy(self.bundle);obs=b['financial']['observations'];c=b['financial']['contexts'][obs[1]['context_id']]
         c['dimensions']=[{'dimension':'fiction:Segment','member':'fiction:Different'}]

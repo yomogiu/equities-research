@@ -479,6 +479,8 @@ def build(bundle, *, current_period=None, as_of=None, capex_conventions=None, ac
             'quarter_derivation': 'Only whitelisted additive monetary flows: same-fiscal-start cumulative difference',
             'comparison_policy': 'Filed boundaries; quarter adjacency; bounded 52/53-week year-ago matching; no annualization'}}
 
+    if bundle.get('reported_tables'):
+        result['reported_tables'] = deepcopy(bundle['reported_tables'])
     if bundle.get('financial_selection') is not None:
         result['financial_selection'] = deepcopy(bundle['financial_selection'])
     from . import earnings_financial_statement_context as statements
