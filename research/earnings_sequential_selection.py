@@ -34,11 +34,11 @@ Return ONLY a fenced JSON object with exactly:
 {{"rows":[{{"metric":"one allowed role","label":"reader label, including share class or segment where applicable","basis":"GAAP|IFRS|non-GAAP","fact_ids":["F..."],"citations":["D..."],"definition":"source-grounded perimeter/definition"}}],"gaps":[{{"metric":"required metric","reason":"specific unresolved input; distinguish extraction/mapping gaps from unavailable disclosure","citations":["D..."]}}],"notes":[{{"text":"source-supported financial interpretation or definition","citations":["D..."]}}]}}.
 Allowed row roles: {', '.join(sorted(selection.METRICS))}.
 Required completeness coverage: {', '.join(sorted(selection.REQUIRED))}. Each must be selected or have an explicit gap, except gross_margin and total_debt can use selected compatible components. Annual EPS and price belong in gap notes if they are outside this frozen numerical inventory: say what is disclosed and exactly what remains unverified, rather than claiming annual EPS or a quoted price is absent. Do not annualize quarter EPS or calculate P/E. Source-proven values outside this inventory may be identified in notes with citations, never added as new facts. Gross margin and R&D may be inapplicable/not separately reported; explain with original statements. Every row's accounting basis needs original D evidence, never a taxonomy-prefix assumption. At most 35 rows. Do not drop the current or comparative share class. Facts can belong to only one row.
-Read and select once, then return the selection. This step performs no investment analysis, prose report, acceptance or publication. Stop after at most {len(pages)+5} evidence calls and submit the JSON.'''
+After the inventory, collect needed D IDs together and prefer one combined source_batch of up to 32 IDs, paging only if required. Use at most two additional evidence calls. Read and select once, then return the selection. This step performs no investment analysis, prose report, acceptance or publication. Stop after at most {len(pages)+2} evidence calls and submit the JSON.'''
         available=job['budget_tokens']-job['tokens_used']
         response=runner.run_role(role_dir,prompt,*stages.MODELS['analysis'],
             {'role':'sequential_financial_selection','revision':job['revision_round'],'workflow':stages.VERSION},index,
-            max_tokens=available,max_tool_calls=len(pages)+6,timeout=1800)
+            max_tokens=available,max_tool_calls=len(pages)+3,timeout=1800)
         value=response['content'];receipt=response['receipt']['session'];measured=receipt['usage']['totalTokens']
         selection.validate(value,bundle)
         entries=context.delivered_entries(role_dir,context.audit(index,role_dir/'retrieval.jsonl'))
@@ -54,3 +54,32 @@ Read and select once, then return the selection. This step performs no investmen
         return {'status':'blocked','outputs':{},'tokens':measured if measured is not None else stages._measured_failed_usage(role_dir),
                 'reason':str(error),'execution_directory':str(role_dir),
                 'execution_certainty':'completed' if measured is not None else 'unknown'}
+
+
+def verified_result(root,job):
+    """Recover a completed, paid selection after a validator repair; no model call."""
+    from . import earnings_sequential_stages as stages
+    root=Path(root).resolve();outcome=job['attempts'][-1]['outcome']
+    role_dir=Path(outcome['execution_directory']).resolve()
+    selection.require(role_dir.is_relative_to(root/'roles') and outcome.get('execution_certainty')=='completed',
+                      'Conclusive completed selection required')
+    checked=runner.verify_job(role_dir)
+    request=storage.read(role_dir/'request.json')
+    selection.require(request['bindings']['role']=='sequential_financial_selection' and request['bindings']['revision']==job['revision_round'],
+                      'Exact original selection binding required')
+    receipt=checked['receipt']['session'];value=checked['content']
+    selection.require(receipt['usage']['totalTokens']==outcome['tokens'],'Selection recovery cannot discard charged usage')
+    manifest=root/'sources/manifest.json';bundle=evidence.load_bundle(manifest)
+    selection.validate(value,bundle)
+    index=Path(request['context_index']);inventory=storage.read(index.parent/'artifacts.json')['financial_inventory']
+    entries=context.delivered_entries(role_dir,context.audit(index,role_dir/'retrieval.jsonl'))
+    selection.require('handoff' in context.complete_ranges(entries,'handoff_batch','name'),'Complete compact inventory inspection required')
+    inspected,_,_=context.inspected_role_batches(index,entries)
+    inspected.update(context.complete_ranges(entries,'scope','id'))
+    inspected.update(c['id'] for c in inventory['complete_original_chunks'])
+    selection.require(stages.cited(value)<=inspected,'Selection support was not fully inspected')
+    path=root/f"financial-selection-r{job['revision_round']}.json"
+    stages.write(path,selection.record(bundle,manifest,value))
+    proofs=[p for p in role_dir.rglob('*') if p.is_file() and p.suffix not in ('.pyc','.lock','.tmp') and '__pycache__' not in p.parts]
+    return {'outputs':stages.outputs(root,[path]),'proof_outputs':stages.outputs(root,proofs),
+            'session_id':receipt['id'],'tokens':outcome['tokens']}

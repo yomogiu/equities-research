@@ -31,7 +31,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(rows(value,'free_cash_flow')[0]['cells']['current']['value'],'20')
         self.assertEqual(value['observations'],original['financial']['observations'])
         self.assertIn('20%',report.preview_markdown(value))
-        self.assertIn('gross PP&E', '\n'.join(report.notes(value)))
+        self.assertIn('Free cash flow equals', '\n'.join(report.notes(value)))
 
     def test_missing_core_metric_or_fabricated_value_is_rejected(self):
         self.value['gaps']=[]
@@ -84,6 +84,10 @@ class SelectionTests(unittest.TestCase):
         manifest.write_text('{"changed":true}')
         with self.assertRaises(ValueError):selection.verify_record(self.bundle,manifest,record)
 
+    def test_fcf_acronym_is_the_same_explicit_convention(self):
+        self.value['notes'][0]['text']='FCF equals operating cash flow less gross purchases.'
+        selection.validate(self.value,self.bundle)
+
     def test_fcf_requires_explicit_convention(self):
         self.value['notes']=[]
         with self.assertRaisesRegex(ValueError,'FCF convention'):selection.validate(self.value,self.bundle)
@@ -114,6 +118,23 @@ class SelectionStateTests(unittest.TestCase):
         core.advance(self.root,{'sources':self.handler('sources')})
         job=core.advance(self.root,{'financial_selection':lambda root,job:{'status':'blocked','tokens':25,'outputs':{},'reason':'fictional invalid mapping'}})
         self.assertEqual(job['status'],'blocked');self.assertEqual(job['tokens_used'],25)
+    def test_saved_selection_recovery_preserves_charged_usage(self):
+        core.advance(self.root,{'sources':self.handler('sources')})
+        core.advance(self.root,{'financial_selection':lambda root,job:{'status':'blocked','tokens':25,'outputs':{},'execution_certainty':'completed','reason':'Fictional validator bug'}})
+        def recover(root,job):
+            name='financial-selection-r0.json';(root/name).write_text('{}');(root/'receipt.json').write_text('{}')
+            return {'outputs':{name:storage.sha(root/name)},'proof_outputs':{'receipt.json':storage.sha(root/'receipt.json')},'tokens':25,'session_id':'original-fake-session'}
+        job=core.adopt_financial_selection(self.root,'Fix validator without rerunning model','b'*40,recover)
+        self.assertEqual((job['tokens_used'],job['budget_tokens'],job['revision_round']),(25,1000,0))
+        self.assertEqual(job['stage'],'financial_tables');self.assertEqual(len(job['attempts']),2)
+        self.assertEqual(job['administrative_history'][-1]['additional_tokens'],0)
+        with self.assertRaises(ValueError):core.adopt_financial_selection(self.root,'again','b'*40,recover)
+
+    def test_unknown_selection_cannot_be_recovered(self):
+        core.advance(self.root,{'sources':self.handler('sources')})
+        core.advance(self.root,{'financial_selection':lambda root,job:{'status':'blocked','tokens':25,'outputs':{},'execution_certainty':'unknown'}})
+        with self.assertRaises(ValueError):core.adopt_financial_selection(self.root,'unsafe','b'*40,lambda root,job:{})
+
 
 class SelectionIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -139,7 +160,7 @@ class SelectionIntegrationTests(unittest.TestCase):
     def test_broad_inventory_selection_contract_and_zero_token_tables(self):
         from research import earnings_compact_evidence as e,earnings_sequential_financial_contract as contract
         b=e.load_bundle(self.job/'sources/manifest.json');packet=selection.compact(b)
-        self.assertEqual([r[0] for r in packet['facts']],[o['id'] for o in b['financial']['observations']])
+        self.assertEqual([fid for r in packet['facts'] for fid in r[0]],[o['id'] for o in b['financial']['observations']])
         self.assertEqual(packet['omitted_observations'],0)
         raw=(self.job/'sources/financial.json').read_bytes()
         job=core.advance(self.job,self.stages.handlers());self.assertEqual(job['stage'],'financial_tables',job.get('reason'))

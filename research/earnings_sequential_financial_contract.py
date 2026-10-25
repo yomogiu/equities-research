@@ -89,7 +89,7 @@ def build(root):
     all_references = set(re.findall(r'\[\^([FD][0-9]+)\]', rendered))
     trusted = sorted(displayed & replayed)
     if value.get('financial_selection'):
-        for row in value['financial_selection']['rows']:
+        for row in [*value['financial_selection']['rows'],*value['financial_selection']['notes'],*value['financial_selection']['gaps']]:
             all_references.update(row['citations'])
     slices = evidence.source_slices(root/'sources/manifest.json', trusted)
     source_bindings = sorted({(span['document_id'],span['sha256'])

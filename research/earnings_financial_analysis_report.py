@@ -397,10 +397,6 @@ def notes(value,selection=None):
         for row in value['financial_selection']['rows']:
             if row['metric'] in ('total_debt','debt_component','operating_leases'):
                 result.append('- '+row['label']+': '+row['definition']+' '+markdown.refs(row['citations']))
-        for item in value['financial_selection']['notes']:
-            result.append('- '+item['text']+' '+markdown.refs(item['citations']))
-        for item in value['financial_selection']['gaps']:
-            result.append('- '+item['metric'].replace('_',' ').capitalize()+': '+item['reason']+' '+markdown.refs(item['citations']))
     if any(row.get('basis_origin')=='caller_declared' for rows in selected.values() for _,row in rows):
         result.append('- A basis marked assumed is caller-declared where the source does not state it; it is not a company assertion.')
     return result

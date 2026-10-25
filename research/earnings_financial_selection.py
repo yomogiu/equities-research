@@ -48,12 +48,36 @@ def compact(bundle):
         for identifier in matches[:2]:
             if identifier not in selected:selected.append(identifier)
     chunks=[{'id':i,'text':full[i]} for i in selected]
-    return {'version':VERSION,'fact_columns':['id','concept_index','value','context','unit','label_index','status','nil'],
-            'facts':rows,'concepts':concepts,'label_columns':['source_label','source_basis','origin'],'labels':labels,
-            'context_columns':['entity_index','period','dimension_index'],'contexts':contexts,'entities':entities,
-            'dimensions':dimensions,'units':facts['units'],'extraction_gaps':facts.get('gaps',[]),
-            'document_columns':['id','kind','discovery_cues','preview_not_evidence'],'documents':inventory,
-            'complete_original_chunks':chunks,'total_observations':len(rows),'omitted_observations':0}
+    # Losslessly coalesce equivalent context/unit definitions and duplicate facts.
+    # All original IDs survive in each group's ids list; no value is averaged.
+    shared_contexts=[];context_refs={}
+    for key,c in contexts.items():context_refs[key]=intern(shared_contexts,c)
+    shared_units=[];unit_refs={}
+    for key,u in facts['units'].items():unit_refs[key]=intern(shared_units,{k:u[k] for k in ('numerator','denominator')})
+    grouped={}
+    for fid,concept,value,cid,uid,label,status,nil in rows:
+        key=json.dumps([concept,value,context_refs[cid],unit_refs[uid],label,status,nil],separators=(',',':'))
+        grouped.setdefault(key,[]).append(fid)
+    compact_rows=[];exceptions={}
+    for key,ids in grouped.items():
+        concept,value,cid,uid,label,status,nil=json.loads(key)
+        compact_rows.append([ids,concept,value,cid,uid,label])
+        if status!='extracted' or nil or value is None:
+            for fid in ids:exceptions[fid]={'status':status,'nil':nil}
+    axes=[];members=[];dimension_rows=[]
+    for dims in dimensions:
+        dimension_rows.append([[intern(axes,d['dimension']),intern(members,{k:v for k,v in d.items() if k!='dimension'})] for d in dims])
+    return {'version':VERSION,'fact_columns':['ids','concept_index','value','context_index','unit_index','label_index'],
+            'facts':compact_rows,'concepts':concepts,'label_columns':['source_label','source_basis','origin'],'labels':labels,
+            'context_columns':['entity_index','period','dimension_index'],'contexts':shared_contexts,'entities':entities,
+            'dimension_columns':['axis_index','member_index'],'dimension_axes':axes,'dimension_members':members,
+            'dimensions':dimension_rows,'units':shared_units,'exceptional_fact_status':exceptions,
+            'default_fact_status':'extracted, non-nil','extraction_gaps':facts.get('gaps',[]),
+            'document_columns':['id','kind','preview_not_evidence'],
+            'documents':[[d['id'],d['kind'],d['preview'][:80]] for d in docs],
+            'complete_original_chunks':chunks,'total_observations':len(rows),'omitted_observations':0,
+            'grouping_rule':'Identical concept, value, period/entity/dimensions, unit, label and status share a row. Every original fact ID is retained.'}
+
 
 
 def validate(value,bundle):
@@ -101,7 +125,7 @@ def validate(value,bundle):
     require(not (covered&gaps),'Selected metrics cannot also be marked absent')
     for note in value['notes']:
         require(set(note)=={'text','citations'},'Exact financial definition note required');text(note['text']);citations(note['citations'])
-    require(any('free cash flow' in n['text'].lower() and 'gross' in n['text'].lower() for n in value['notes'])
+    require(any(re.search(r'\b(?:free cash flow|fcf)\b',n['text'],re.I) and 'gross' in n['text'].lower() for n in value['notes'])
             or not {'operating_cash_flow','capital_expenditure'}<=covered,'Explicit gross-capex FCF convention required')
     return value
 

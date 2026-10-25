@@ -382,6 +382,11 @@ def _role_context(root, job, role):
     validation['complete_audit'] = {'path':'financial-contract.json','sha256':storage.sha(directory/'financial-contract.json')}
     artifacts = {'financial_tables_markdown':(root/'financial-tables.md').read_text(),
                  'financial_validation':validation}
+    financial_value = read(root/'financial-analysis.json')
+    if financial_value.get('financial_selection'):
+        picked = financial_value['financial_selection']
+        artifacts['financial_selection_context'] = {'notes':picked['notes'],'gaps':picked['gaps'],
+            'definitions':[{k:row[k] for k in ('metric','label','definition','citations')} for row in picked['rows']]}
     from . import earnings_financial_statement_context as statements
     basis_sources = statements.source_support(read(root/'financial-analysis.json'), evidence.load_bundle(manifest))
     if basis_sources: artifacts['original_statement_basis_sources'] = basis_sources

@@ -207,6 +207,7 @@ def _finish(root, job):
                 raise ValueError("analysis/review requires an attributable session_id")
             prior = [a.get("outcome", {}).get("session_id") for a in job["attempts"][:-1]
                      if a["stage"] in MODEL_STAGES]
+            prior.extend(item.get('session_id') for item in job.get('administrative_history',[]) if item.get('action')=='adopt_financial_selection')
             if session in prior:
                 raise ValueError("analysis/review must use a fresh independent session")
         if stage == 'financial_selection':
@@ -756,4 +757,28 @@ def enable_financial_selection(root, authorization, code_commit):
         job.setdefault('administrative_history',[]).append(dict(action='enable_financial_selection',authorization=authorization,
             previous_code_commit=job.get('execution_code_commit'),code_commit=code_commit,tokens_used=job['tokens_used'],revision_round=job['revision_round']))
         job.update(financial_selection_enabled=True,execution_code_commit=code_commit,stage='financial_selection',status='ready')
+        job.pop('reason',None);_write(root,job);return job
+
+
+def adopt_financial_selection(root, authorization, code_commit, recover):
+    """Revalidate a saved completed selection after a code fix, without paid replay."""
+    root=Path(root).resolve();code_commit=_commit(code_commit)
+    if not isinstance(authorization,str) or not authorization.strip() or not callable(recover):raise ValueError('Explicit verified recovery required')
+    with _lock(root):
+        job=_read(root)
+        if job['status']!='blocked' or job['stage']!='financial_selection' or not job.get('financial_selection_enabled'):
+            raise ValueError('Blocked selection required')
+        attempt=job['attempts'][-1];outcome=attempt.get('outcome',{})
+        if not attempt.get('usage_recorded') or outcome.get('execution_certainty')!='completed':raise ValueError('Completed accounted selection required')
+        if sum(a['outcome']['tokens'] for a in job['attempts'] if a.get('usage_recorded'))!=job['tokens_used']:raise ValueError('Selection usage differs from history')
+        _verify(root,job['artifacts']);_verify(root,job.get('revision_input',{}))
+        result=recover(root,copy.deepcopy(job));name=f"financial-selection-r{job['revision_round']}.json"
+        if set(result['outputs'])!={name} or result['tokens']!=outcome['tokens'] or not result.get('session_id') or not result.get('proof_outputs'):
+            raise ValueError('Recovery must bind original usage, session and saved selection')
+        _verify(root,result['outputs']);_verify(root,result['proof_outputs'])
+        job['artifacts'].update(result['outputs']);job['artifacts'].update(result['proof_outputs'])
+        job.setdefault('administrative_history',[]).append(dict(action='adopt_financial_selection',authorization=authorization,
+            attempt_id=attempt['id'],session_id=result['session_id'],tokens_used=job['tokens_used'],additional_tokens=0,
+            proof_outputs=result['proof_outputs'],previous_code_commit=job.get('execution_code_commit'),code_commit=code_commit))
+        job.update(financial_selection_artifact=name,execution_code_commit=code_commit,stage='financial_tables',status='ready')
         job.pop('reason',None);_write(root,job);return job
