@@ -174,3 +174,9 @@ call stops with its receipts. New runs enable this path at code binding. An exis
 zero-token blocked table pass may enter it through the explicit
 `enable_financial_selection` migration, preserving evidence, costs and revision
 limits. Automation does not grant extra budgets or operator recovery actions.
+
+A completed, charged selection rejected by a repaired validator can use
+`adopt_financial_selection` with the authenticated `verified_result` recovery.
+This revalidates the original response, source-inspection receipts and frozen
+inputs without another model call. Original costs and failed attempts remain
+recorded; recovery grants neither report acceptance nor additional budget.

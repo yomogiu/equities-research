@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from research import earnings_sequential_revisions as revisions
 
@@ -54,6 +55,21 @@ class SequentialRevisionTests(unittest.TestCase):
     @staticmethod
     def sha(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def test_table_change_context_order_is_stable_across_sections(self):
+        self.review['findings'][0]['location'] = 'financial_tables'
+        review_outputs = self.save_many({'review-r0.json': self.review})
+        self.job['artifacts'].update(review_outputs)
+        self.job['attempts'][-1]['outcome']['outputs'].update(review_outputs)
+        for name in revisions.FINANCIAL_FILES:
+            self.job['artifacts'].update(self.save_many({
+                'history/financial-r0/'+name: (self.root/name).read_text()}))
+        self.job['artifacts'].update(self.save_many({'financial-analysis.json': {'fictional_revenue': 20}}))
+        sections = {'outlook': ['old'], 'earnings': ['old'], 'demand': ['old'], 'cash': ['old']}
+        with patch('research.earnings_financial_analysis_report.sections', side_effect=[
+                sections, {name: ['new'] for name in reversed(sections)}]):
+            result = revisions.plan(self.root, self.job, self.render)
+        self.assertEqual(list(result['table_changes']), sorted(sections))
 
     def save_many(self, values):
         outputs = {}

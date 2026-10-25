@@ -130,7 +130,7 @@ def plan(root, job, render_candidate):
         from . import earnings_financial_analysis_report as finance
         before_sections = finance.sections(financial_before)
         after_sections = finance.sections(_read(root/'financial-analysis.json'))
-        for name in set(before_sections) | set(after_sections):
+        for name in sorted(set(before_sections) | set(after_sections)):
             before_text = '\n'.join(before_sections.get(name, []))
             after_text = '\n'.join(after_sections.get(name, []))
             if before_text != after_text:
