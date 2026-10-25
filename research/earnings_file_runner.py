@@ -141,17 +141,20 @@ def receipt(job,request):
             results.add(m['toolCallId'])
         else:raise ValueError('Unexpected session message')
     verify_delivery(job,messages)
-    if set(calls)!=results or not calls or len(calls)>request['max_tool_calls']:raise ValueError('Complete bounded IPython interaction required')
+    if set(calls)!=results or (not calls and not request.get('direct_input')) or (request.get('direct_input') and (calls or turns!=1)) or len(calls)>request['max_tool_calls']:raise ValueError('Complete bounded IPython interaction required')
     if usage['totalTokens']>request['max_tokens']:raise ValueError('Job token cap exceeded')
     return {'id':heads[0]['id'],'path':str(journal.relative_to(job)),'sha256':runtime.sha(journal),'model':request['model'],
         'effort':request['effort'],'provider':runtime.PROVIDER,'usage':usage,'model_turns':turns,'tool_calls':len(calls)}
 
 
-def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,*,yield_checkpoint=False,resume=None,execution_plan=None):
+def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,*,yield_checkpoint=False,resume=None,execution_plan=None,direct_input=False):
     runtime._validate_selection(model,effort)
     if not prompt.strip() or type(max_tokens) is not int or not 1<=max_tokens<=1200000 or type(max_tool_calls) is not int or not 1<=max_tool_calls<=64 or timeout<=0:raise ValueError('Explicit bounded role settings required')
     index=Path(index).resolve();context.Evidence(index,job/'retrieval.jsonl')
-    plan=work_plan(bindings.get('role'),index) if max_tool_calls>1 else None
+    if direct_input:
+        if yield_checkpoint or resume or execution_plan:raise ValueError('Direct input cannot use retrieval or resume plans')
+        _direct_packet(prompt,index,bindings)
+    plan=work_plan(bindings.get('role'),index) if max_tool_calls>1 and not direct_input else None
     # The worker already reserves the registered full model output maximum
     # before EVERY turn. A second fixed reserve can close evidence tools while
     # ample output budget remains, producing an inevitably unreviewable draft.
@@ -167,7 +170,17 @@ def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,tim
     return {'execution_policy':policy,'checkpoint_python':sys.executable,'version':VERSION,'job_path':str(job),'model':model,'effort':effort,'provider':runtime.PROVIDER,'bindings':bindings,
         'context_index':str(index),'context_sha256':runtime.sha(index),'max_tokens':max_tokens,'max_tool_calls':max_tool_calls,
         'timeout_seconds':timeout,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest(),'helper_sha256':runtime.sha(HELPER),'runner_sha256':runtime.sha(__file__),
-        'delivery_sha256':runtime.sha(DELIVERY),'checkpoint_api_sha256':runtime.sha(Path(__file__).with_name('earnings_file_checkpoint.py')),'max_tool_response_bytes':None,'yield_checkpoint':yield_checkpoint,'resume':resume,'context_api_sha256':runtime.sha(context.__file__),'code_root':str(Path(__file__).resolve().parent.parent),'tool_names':['ipython']}
+        'delivery_sha256':runtime.sha(DELIVERY),'checkpoint_api_sha256':runtime.sha(Path(__file__).with_name('earnings_file_checkpoint.py')),'max_tool_response_bytes':None,'yield_checkpoint':yield_checkpoint,'resume':resume,'context_api_sha256':runtime.sha(context.__file__),'code_root':str(Path(__file__).resolve().parent.parent),'tool_names':[] if direct_input else ['ipython'],**({'direct_input':True} if direct_input else {})}
+
+
+def _direct_packet(prompt,index,bindings):
+    if bindings.get('workflow')!='single-author-report-v1' or bindings.get('role') not in ('single_report_analysis','single_report_review'):
+        raise ValueError('Direct input requires the single-report contract')
+    reader=context.Evidence(index,Path(index).parent/'unused-direct.jsonl',_replay=True)
+    if runtime.read(reader.root/'metadata.json').get('role')!=bindings['role'].removeprefix('single_report_'):raise ValueError('Direct packet role differs')
+    body=reader._report_packet()
+    if not prompt.endswith(body):raise ValueError('Complete fixed packet must be embedded in direct prompt')
+    return body
 
 
 def verify_delivery(job,messages):
@@ -179,6 +192,10 @@ def verify_delivery(job,messages):
         raw=json.dumps(value,ensure_ascii=False,separators=(',',':')).encode()
         if r['tool_call_id']!=m['toolCallId'] or r['delivered_bytes']!=len(raw) or r['delivered_sha256']!=hashlib.sha256(raw).hexdigest():raise ValueError('Tool delivery exceeded limit or changed')
     q=runtime.read(job/'request.json')
+    if q.get('direct_input'):
+        if records or results or context.audit(q['context_index'],job/'retrieval.jsonl'):raise ValueError('Direct role cannot retrieve evidence')
+        _direct_packet((job/'prompt.md').read_text(),q['context_index'],q['bindings'])
+        return
     if q.get('execution_policy',{} ) and q['execution_policy']['automatic_checkpoints']:
         from . import earnings_file_checkpoint as checkpoint
         saved=runtime.read(job/'automatic-checkpoints.json')
@@ -200,7 +217,8 @@ def verify_request(job,q):
     if q['version']!=VERSION or q['job_path']!=str(job) or q['helper_sha256']!=runtime.sha(HELPER) or q['runner_sha256']!=runtime.sha(__file__) or q['context_api_sha256']!=runtime.sha(context.__file__):raise ValueError('Runner/code binding changed')
     if q.get('delivery_sha256')!=runtime.sha(DELIVERY) or q.get('checkpoint_api_sha256')!=runtime.sha(Path(__file__).with_name('earnings_file_checkpoint.py')) or ('max_tool_response_bytes' not in q or q['max_tool_response_bytes'] is not None):raise ValueError('Delivery/checkpoint code binding changed')
     runtime._validate_selection(q['model'],q['effort'])
-    if q['prompt_sha256']!=runtime.sha(job/'prompt.md') or q['context_sha256']!=runtime.sha(q['context_index']) or q['tool_names']!=['ipython']:raise ValueError('Instruction/evidence/tool binding changed')
+    if q['prompt_sha256']!=runtime.sha(job/'prompt.md') or q['context_sha256']!=runtime.sha(q['context_index']) or q['tool_names']!=([] if q.get('direct_input') else ['ipython']):raise ValueError('Instruction/evidence/tool binding changed')
+    if q.get('direct_input'):_direct_packet((job/'prompt.md').read_text(),q['context_index'],q['bindings'])
     if q.get('resume') is not None:
         if runtime.read(job/'resume.json')!=q['resume']:raise ValueError('Resume binding changed')
         from . import earnings_file_checkpoint
@@ -212,7 +230,7 @@ def verify_wire(q,wire,messages):
     if len(wire)!=len(turns):raise ValueError('Exact metered wire turns required')
     calls=0;finalizing=False
     for item,m in zip(wire,turns):
-        expected={'model':q['model'],'effort':q['effort'],'tools':['ipython']}
+        expected={'model':q['model'],'effort':q['effort'],'tools':q['tool_names']}
         policy=q.get('execution_policy')
         if policy:
             choice=item.get('tool_choice')
@@ -252,8 +270,8 @@ def verify_job(job_path):
     return {'content':content,'receipt':execution,'output_path':str(job/'output.json')}
 
 
-def run_role(job_path,prompt,model,effort,bindings,index,*,max_tokens,max_tool_calls=48,timeout=1200,yield_checkpoint=False,resume=None,execution_plan=None):
-    job=Path(job_path).resolve();q=request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,yield_checkpoint=yield_checkpoint,resume=resume,execution_plan=execution_plan)
+def run_role(job_path,prompt,model,effort,bindings,index,*,max_tokens,max_tool_calls=48,timeout=1200,yield_checkpoint=False,resume=None,execution_plan=None,direct_input=False):
+    job=Path(job_path).resolve();q=request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,timeout,yield_checkpoint=yield_checkpoint,resume=resume,execution_plan=execution_plan,direct_input=direct_input)
     if (job/'request.json').exists():
         if runtime.read(job/'request.json')!=q:raise ValueError('Immutable role request differs')
         if (job/'output.json').exists():return verify_job(job)
@@ -262,6 +280,7 @@ def run_role(job_path,prompt,model,effort,bindings,index,*,max_tokens,max_tool_c
     job.mkdir(parents=True,exist_ok=True);runtime.save(job/'request.json',q);(job/'prompt.md').write_text(prompt)
     # Every fresh attempt owns an explicit empty audit, including restore-only calls.
     (job/'retrieval.jsonl').touch(exist_ok=False)
+    if direct_input:(job/'delivery.jsonl').touch(exist_ok=False)
     if resume is not None:
         runtime.save(job/'resume.json',resume)
         verify_request(job,q)

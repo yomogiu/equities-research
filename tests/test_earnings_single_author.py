@@ -21,9 +21,9 @@ class SingleAuthorTests(unittest.TestCase):
     def fake(self,directory,prompt,model,effort,bindings,index,**settings):
         self.calls.append(bindings['role']);directory.mkdir(parents=True)
         reader=context.Evidence(index,directory/'retrieval.jsonl')
-        if not self.skip:reader.report_packet()
+        self.assertTrue(prompt.endswith(reader._report_packet()))
         packet=reader.artifacts['single_report_packet']
-        self.assertNotIn('review_findings',packet);self.assertEqual(settings['max_tool_calls'],2)
+        self.assertNotIn('review_findings',packet);self.assertEqual(settings['max_tool_calls'],1);self.assertTrue(settings['direct_input'])
         exchange=reader.index['exchange_ids'][0];ref=[exchange]
         if bindings['role']=='single_report_analysis':
             self.assertNotIn('candidate',packet)
@@ -42,7 +42,7 @@ class SingleAuthorTests(unittest.TestCase):
             if self.revise:
                 value['verdict']='revise';value['criteria']['reasoning']['status']='fail'
                 value['findings']=[{'location':'cash','problem':'Fictional omission.','fix':'Explain the fictional constraint.','citations':ref}]
-        return {'content':value,'receipt':{'session':{'id':'fake-'+str(1 if self.same_session else len(self.calls)),'tool_calls':1,'usage':{'totalTokens':100}}}}
+        return {'content':value,'receipt':{'session':{'id':'fake-'+str(1 if self.same_session else len(self.calls)),'tool_calls':0,'model_turns':2 if self.skip else 1,'usage':{'totalTokens':100}}}}
     def advance(self):return core.advance(self.job,stages.handlers())
     def test_combined_author_reproduces_tables_then_fresh_review_and_publication(self):
         self.assertEqual(self.advance()['stage'],'analysis')
@@ -65,9 +65,9 @@ class SingleAuthorTests(unittest.TestCase):
         self.fabricate=True;self.advance();result=self.advance()
         self.assertEqual(result['status'],'blocked');self.assertEqual(result['tokens_used'],100)
         self.assertEqual(len(self.calls),1)
-    def test_unread_packet_cannot_be_accepted(self):
+    def test_multiturn_response_cannot_be_accepted(self):
         self.skip=True;self.advance();result=self.advance()
-        self.assertEqual(result['status'],'blocked');self.assertIn('complete delivered',result['reason'])
+        self.assertEqual(result['status'],'blocked');self.assertIn('one direct model output',result['reason'])
     def test_reviewer_cannot_reuse_author_session(self):
         self.same_session=True
         for _ in range(3):result=self.advance()
@@ -82,3 +82,14 @@ class SingleAuthorTests(unittest.TestCase):
             record=p['documents'][doc]
             self.assertEqual(record['text'][start-record['start']:end-record['start']],text[start:end])
         self.assertEqual(p['transcript'],Path(bundle['manifest']['transcript_path']).read_bytes().decode())
+
+    def test_direct_request_binds_full_prompt_and_disables_tools(self):
+        self.advance();job=stages.read(self.job/'job.json')
+        index,body=single._context(self.job,job,'analysis')
+        bindings={'workflow':single.VERSION,'role':'single_report_analysis'}
+        request=stages.runner.request(self.root/'role','Instructions\n'+body,'gpt-6.1-sol','medium',bindings,index,1200000,1,1800,direct_input=True)
+        self.assertEqual(request['tool_names'],[]);self.assertIsNone(request['execution_policy'])
+        with self.assertRaisesRegex(ValueError,'Complete fixed packet'):
+            stages.runner.request(self.root/'role','truncated','gpt-6.1-sol','medium',bindings,index,1200000,1,1800,direct_input=True)
+        with self.assertRaisesRegex(ValueError,'single-report contract'):
+            stages.runner.request(self.root/'role',body,'gpt-6.1-sol','medium',{'role':'other'},index,1200000,1,1800,direct_input=True)
