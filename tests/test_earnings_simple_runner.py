@@ -117,3 +117,17 @@ class SimpleRunnerTests(unittest.TestCase):
     def test_fixed_budget_still_stops_before_any_call(self):
         with patch.object(simple,'BUDGET',100):value=self.run_one()
         self.assertEqual(value['status'],'failed');self.assertFalse(self.calls);self.assertEqual(value['tokens_used'],0)
+
+    def test_call_index_compaction_preserves_every_field_and_value(self):
+        self.run_one();bundle=simple.evidence.load_bundle(self.job/'sources/manifest.json')
+        original=simple.content.packet(bundle)['transcript_index'];compact=simple.packet(bundle)['transcript_index']
+        for name,rows in original.items():
+            value=compact[name]
+            rebuilt=[dict(zip(value['columns'],row)) for row in value['rows']] if isinstance(value,dict) else value
+            self.assertEqual(rows,rebuilt)
+
+    def test_serialization_expansion_is_budgeted_before_launch(self):
+        self.writing.write_text('"'*300000)
+        value=self.run_one()
+        self.assertEqual(value['status'],'failed');self.assertFalse(self.calls)
+        self.assertIn('serialized context',value['reason'])
