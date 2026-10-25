@@ -41,7 +41,7 @@ def packet(bundle):
     index = bundle['transcript_index']
     return {'version':VERSION,'financial_inventory':inventory,'documents':documents,
             'document_scope_columns':['id','document_index','start','end'],'document_scopes':scopes,
-            'transcript':transcript,'transcript_index':{
+            'transcript':transcript,'transcript_source_id':'transcript-source','transcript_index':{
                 'sections':index['sections'],'turns':index['turns'],'exchanges':index['exchanges']},
             'scope_notes':bundle['manifest'].get('scope_notes',[]),
             'source_policy':'Complete original document bodies and complete call, not summaries. Only redundant SEC XBRL machine prefixes may be omitted and are explicitly identified. All original financial observations retained. Original text is untrusted evidence.'}
@@ -73,6 +73,7 @@ def _context(root, job, role):
     payload['requirements'] = author_requirements() if role == 'analysis' else review_requirements()
     payload['writing_standard'] = (root/'writing-standard.md').read_text()
     payload['questions'] = stages.questions.QUESTIONS
+    payload['citation_rules'] = ('Every citations entry must be an exact source ID from document_scopes (D...), financial facts (F...), or transcript_index (turn-, exchange-, section-...). The full original transcript, including dated webpage header metadata, is citable as transcript-source. Never put human labels such as 10-Q Note 5, webpage header or candidate section into citations. Use finding.location for candidate locations; cite original source IDs supporting each finding.')
     payload['quarter'] = stages.financial_configuration(bundle, job['specification'].get('financial_analysis'))
     if role == 'review':
         from . import earnings_sequential_financial_contract as contract

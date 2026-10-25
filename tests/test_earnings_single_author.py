@@ -93,3 +93,11 @@ class SingleAuthorTests(unittest.TestCase):
             stages.runner.request(self.root/'role','truncated','gpt-6.1-sol','medium',bindings,index,1200000,1,1800,direct_input=True)
         with self.assertRaisesRegex(ValueError,'single-report contract'):
             stages.runner.request(self.root/'role',body,'gpt-6.1-sol','medium',{'role':'other'},index,1200000,1,1800,direct_input=True)
+
+    def test_full_transcript_scope_covers_header_outside_call_boundaries(self):
+        self.advance();bundle=evidence.load_bundle(self.job/'sources/manifest.json')
+        text=Path(bundle['manifest']['transcript_path']).read_bytes().decode()
+        record=evidence.source_slices(self.job/'sources/manifest.json',['transcript-source'])[0]
+        self.assertEqual(record['spans'][0]['text'],text)
+        index,body=single._context(self.job,stages.read(self.job/'job.json'),'analysis')
+        self.assertIn('Never put human labels',json.loads(body)['citation_rules'])

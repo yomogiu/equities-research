@@ -277,6 +277,9 @@ def _scopes(bundle):
     for chunk in bundle['documents']['chunks']:
         scopes[chunk['id']] = [{k: chunk[k] for k in ('path', 'sha256', 'document_id', 'start', 'end')}]
     index = bundle['transcript_index']
+    scopes['transcript-source'] = [{'path':manifest['transcript_path'],'sha256':manifest['transcript_sha256'],
+        'document_id':index['source']['document_id'],'start':0,
+        'end':len(Path(manifest['transcript_path']).read_bytes().decode('utf-8'))}]
     turns = {t['id']: t for t in index['turns']}
     def span(item):
         return {'path': manifest['transcript_path'], 'sha256': manifest['transcript_sha256'],
