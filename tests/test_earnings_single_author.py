@@ -7,6 +7,7 @@ from research import earnings_sequential_stages as stages,earnings_file_context 
 from research import earnings_financial_selection as selection,earnings_financial_analysis_report as finance
 from research import earnings_compact_evidence as evidence,earnings_sequential_financial_contract as contract
 from test_earnings_compact_evidence import fixture
+from research import earnings_report_contract as report_contract
 
 class SingleAuthorTests(unittest.TestCase):
     def setUp(self):
@@ -34,6 +35,7 @@ class SingleAuthorTests(unittest.TestCase):
             paragraph={'text':'Fictional evidence has limitations.','citations':ref}
             narrative={'title':'Fictional report','opening':paragraph,'sections':{k:copy.deepcopy(paragraph) for k in stages.SECTIONS},
                        'qa':[{'exchange_id':exchange,'question':'Fictional question?','answer':'Fictional answer.','assessment':'Fictional uncertainty.','citations':ref}], 'next_tests':[paragraph]}
+            narrative['report_support']={'coverage':{k:{'status':'unavailable','report_excerpt':paragraph['text'],'reason':'Fictional missing disclosure.','citations':ref} for k in report_contract.COVERAGE},'valuation':{'rows':[],'gap':'Fictional dated price unavailable.','citations':ref}}
             value={'financial_selection':picked,'analysis':narrative}
         else:
             self.assertIn('candidate',packet);self.assertEqual(packet['financial_verification']['verification'],'reproduced')
@@ -101,3 +103,22 @@ class SingleAuthorTests(unittest.TestCase):
         self.assertEqual(record['spans'][0]['text'],text)
         index,body=single._context(self.job,stages.read(self.job/'job.json'),'analysis')
         self.assertIn('Never put human labels',json.loads(body)['citation_rules'])
+
+    def test_shared_contract_is_the_same_for_author_and_reviewer(self):
+        self.advance();self.advance()
+        job=stages.read(self.job/'job.json')
+        packets=[json.loads(single._context(self.job,job,role)[1]) for role in ('analysis','review')]
+        self.assertEqual(packets[0]['shared_report_requirements'],packets[1]['shared_report_requirements'])
+        self.assertIn('coverage_map',packets[1])
+
+    def test_coverage_must_exist_in_reader_report(self):
+        self.advance();self.advance();a=stages.read(self.job/'analysis-r0.json')
+        a['report_support']['coverage']['funding_needs']['report_excerpt']='An assertion absent from the reader report'
+        with self.assertRaisesRegex(ValueError,'actual report text'):
+            report_contract.validate(a['report_support'],a,self.job/'sources/manifest.json')
+
+    def test_renderer_owns_one_legend_without_internal_artifact_notes(self):
+        self.advance();self.advance();text=(self.job/'report.md').read_text()
+        self.assertEqual(text.count('Δ / change: absolute change'),1)
+        self.assertNotIn('financial-analysis.json',text)
+        self.assertNotIn('No substitute period or zero',text)

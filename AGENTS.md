@@ -23,7 +23,7 @@ API key, run a nested model service, or copy account authentication into this re
 
 ## Agent workflow
 
-For new earnings reports, use the five-stage sequential controller described in
+For new earnings reports, use the single-author sequential controller described in
 `docs/operations.md`. Financial extraction and calculations run deterministically.
 The author and reviewer must use distinct signed-in sessions. Review receives the
 original evidence and exact candidate, without the author's conversational reasoning.

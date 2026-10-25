@@ -44,13 +44,13 @@ class FinancialTableTests(unittest.TestCase):
   self.assertIn('Calculated · GAAP (unaudited) inputs',text)
   self.assertNotIn('class="direction',page)
   self.assertIn('<table>',page)
- def test_shared_renderer_extraction_preserves_frozen_financial_preview_bytes(self):
-  # Captured before the renderer extraction from these same fictional inputs.
+ def test_concise_renderer_has_stable_financial_preview_bytes(self):
+  # Stable output after removing duplicate legends and internal artifact notes.
   text=report.preview_markdown(self.value)
   self.assertEqual(hashlib.sha256(text.encode()).hexdigest(),
-                   'fdf9df22f4c4118beeb04b0b3e1c1aeee83da20819e6fb0f81f66bf6873dfab8')
+                   '7248e33f41343e3a1bc558559ba6d31c267f66b4a3ab454909d01c3ca085d6eb')
   self.assertEqual(hashlib.sha256(report.preview_html(text).encode()).hexdigest(),
-                   '686247d51e315aae081207f9f28d8cefc9bea816202912730c75361d776fef6f')
+                   '2a313e92d1bc8621fb9cf0c9abe5810f972f5be7ea2faf067ee9477dce676c9c')
  def test_income_expense_routing_and_neutral_unknown_concepts(self):
   rendered=report.sections(self.value)
   self.assertIn('Research and development','\n'.join(rendered['earnings']))
@@ -140,7 +140,7 @@ class FinancialTableTests(unittest.TestCase):
   self.assertIn('Current debt and finance lease obligations · selected disclosure',text)
   self.assertIn('Noncurrent debt and finance lease obligations · selected disclosure',text)
   self.assertIn('11 [^F001]',text);self.assertIn('25 [^F002]',text)
-  self.assertNotIn('36 [^',text);self.assertIn('Debt total unavailable',text)
+  self.assertNotIn('36 [^',text);self.assertIn('Current consolidated metrics unavailable:',text);self.assertIn('Total debt.',text)
   self.assertIn('| Metric | Unit / basis | Current |',text)
   self.assertNotIn('QoQ Δ / change',text)
   with patch('research.earnings_visual_signals.badges',side_effect=AssertionError('No heuristic badge on computed balances')):

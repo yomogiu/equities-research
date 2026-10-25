@@ -174,10 +174,11 @@ def request(job,prompt,model,effort,bindings,index,max_tokens,max_tool_calls,tim
 
 
 def _direct_packet(prompt,index,bindings):
-    if bindings.get('workflow')!='single-author-report-v1' or bindings.get('role') not in ('single_report_analysis','single_report_review'):
+    if bindings.get('workflow') not in ('single-author-report-v1','single-author-report-v2') or bindings.get('role') not in ('single_report_analysis','single_report_review'):
         raise ValueError('Direct input requires the single-report contract')
     reader=context.Evidence(index,Path(index).parent/'unused-direct.jsonl',_replay=True)
     if runtime.read(reader.root/'metadata.json').get('role')!=bindings['role'].removeprefix('single_report_'):raise ValueError('Direct packet role differs')
+    if runtime.read(reader.root/'metadata.json').get('single_report_version')!=bindings['workflow']:raise ValueError('Direct packet version differs')
     body=reader._report_packet()
     if not prompt.endswith(body):raise ValueError('Complete fixed packet must be embedded in direct prompt')
     return body

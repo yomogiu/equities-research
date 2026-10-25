@@ -1,3 +1,24 @@
+## Shared single-author report contract
+
+The single-author path supplies the same material coverage obligations to author and
+reviewer: comparison distortions, usable liquidity and reporting dates, funding needs,
+cash-flow quality, and guidance basis. The author returns a source-cited coverage map
+pointing to actual report paragraphs. Code checks the wiring; independent review still
+judges applicability, completeness, materiality and source interpretation.
+
+Annual EPS and dated price inputs outside the core fact inventory may be selected as
+exact original-source quotations and numeric tokens. Code verifies those quotations,
+requires matching currency/security/share basis and a full annual earnings period,
+and calculates the multiple using Decimal arithmetic. The report displays the actual
+historical quote date. No quarterly annualization, target price or DCF is permitted.
+These source selections remain separate from the immutable core financial extraction.
+The author and renderer have distinct ownership: code prints table gaps, debt definitions,
+one calculation legend and the multiple block; prose explains business implications.
+
+A new explicitly authorized versioned comparison preserves previous comparison records,
+code pins and costs. A quality failure still blocks publication and does not resume
+schedules. Passing unit tests alone is not evidence that a live report passed review.
+
 # Sequential earnings reports
 
 ## Single-author path for new jobs

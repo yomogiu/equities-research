@@ -302,7 +302,7 @@ def front_gaps(selected,target):
               'cash':('free_cash_flow','operating_cash_flow','total_debt')}[target]
     missing=[FRONT_NAMES[role] for role in required if role not in present]
     return ('Current consolidated metrics unavailable: '+', '.join(missing)+
-            '. No substitute period or zero is assumed.') if missing else ''
+            '.') if missing else ''
 
 
 def earnings_commentary(value):
@@ -357,7 +357,7 @@ def sections(value,selection=None):
                         *(value_cell(row['cells'][key],divisor) for key in slots),
                         *(change_cell(row['changes'][key],divisor,unit) for key in changes)]
                 lines.append('| '+' | '.join(markdown.cell(v) for v in values)+' |')
-            lines.extend(['',('Δ / change: absolute change / relative %. Margins: percentage points (pp). — unavailable; N/M nonpositive base.' if changes else 'Comparable quarter-end and prior-year balances unavailable.'),''])
+            lines.append('')
         conflicts=[]
         for table in value['tables']:
             if target!='cash' and table['period_family']!='quarter':continue
@@ -368,8 +368,6 @@ def sections(value,selection=None):
         if conflicts:lines.extend(['Conflicting current observations: '+'; '.join(dict.fromkeys(conflicts))+'. See supporting evidence.',''])
         gap=front_gaps(selected,target)
         if gap:lines.extend([gap,''])
-        if target=='cash' and not any(front_role(row)=='total_debt' for _,row in selected['cash']):
-            lines.extend(['Debt total unavailable; see supporting evidence for any separately reported debt and lease obligations.',''])
         if target=='earnings' and earnings_commentary(value):
             lines.extend(['Quarter expense detail: '+' '.join(earnings_commentary(value)),''])
     return result
@@ -379,8 +377,7 @@ def notes(value,selection=None):
     """Readable overview; complete source observations and traces stay in JSON."""
     selected=front_rows(value,selection)
     derived={front_role(row) for rows in selected.values() for _,row in rows if row.get('derived')}
-    result=['- The main tables select consolidated core metrics. Other reported dates, segments and line items remain in financial-analysis.json; they are not silently substituted for quarter comparisons.',
-            '- Source references identify the observations used. Exact values, source labels, accounting bases, missing-comparison reasons and calculation lineage remain in financial-analysis.json.']
+    result=['- Δ / change: absolute change / relative %. Margin changes are percentage points (pp). — unavailable; N/M nonpositive earnings or comparison base.']
     if any(front_role(row) in DEBT_COMPONENT_NAMES for _, row in selected['cash']):
         result.append('- Debt and capital-lease components and short-term borrowings are shown as filed. No combined total is inferred because component overlap and scope have not been established.')
     if selection is not None:
@@ -388,7 +385,7 @@ def notes(value,selection=None):
     if derived&{'gross_margin','operating_margin'}:
         result.append('- Calculated margins divide the corresponding profit by revenue. Margin changes are percentage-point differences.')
     if 'free_cash_flow' in derived:
-        result.append('- Free cash flow equals operating cash flow less capital expenditure, using the same period and the declared source sign convention.')
+        result.append('- Free cash flow equals operating cash flow less capital expenditure, using the same period. Gross purchases and management-reported net investment are distinct measures.')
     if 'total_debt' in derived:
         result.append('- Calculated total debt adds compatible current and noncurrent debt observations; it does not estimate unreported obligations.')
         if value.get('source_policy') in ('filed-statement-context-v1', 'filed-statement-repair-v1'):

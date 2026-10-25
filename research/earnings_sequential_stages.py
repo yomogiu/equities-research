@@ -253,7 +253,7 @@ def cited(value):
 
 
 def validate_analysis(value, known, exchange_ids):
-    require(isinstance(value, dict) and set(value) == {'title', 'opening', 'sections', 'qa', 'next_tests'}, 'Exact analysis fields required')
+    require(isinstance(value, dict) and set(value) in ({'title', 'opening', 'sections', 'qa', 'next_tests'}, {'title', 'opening', 'sections', 'qa', 'next_tests', 'report_support'}), 'Exact analysis fields required')
     _text(value['title'], 240)
     def paragraph(row, section=False):
         require(isinstance(row, dict) and (set(row) == {'text', 'citations'} or
@@ -341,6 +341,9 @@ def render_candidate(value, financial, manifest):
              '## Source snapshot and scope', '', *snapshot, '']
     for name, title in SECTIONS.items():
         lines.extend(['## '+value['sections'][name].get('heading', title), '', *tables.get(name, []), prose(value['sections'][name]), ''])
+    if 'report_support' in value:
+        from . import earnings_report_contract
+        lines.extend(earnings_report_contract.render(value['report_support'],value,manifest))
     lines.extend(['## Earnings-call questions', ''])
     for row in value['qa']:
         lines.extend(['### '+row['question'], '', 'Management answer: '+row['answer'], '',

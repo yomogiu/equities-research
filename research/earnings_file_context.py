@@ -194,9 +194,9 @@ class Evidence:
 
     def _report_packet(self):
         metadata=base.read(self.root/'metadata.json')
-        require(metadata.get('single_report_version')=='single-author-report-v1', 'Single report context required')
+        require(metadata.get('single_report_version') in ('single-author-report-v1','single-author-report-v2'), 'Single report context required')
         value=self.artifacts.get('single_report_packet')
-        require(isinstance(value,dict) and value.get('version')=='single-author-report-v1', 'Bound report packet required')
+        require(isinstance(value,dict) and value.get('version')==metadata.get('single_report_version'), 'Bound report packet required')
         body=json.dumps(value,ensure_ascii=False,separators=(',',':'))
         require(len(body.encode())<=900000,'Report packet exceeds context bound')
         return body

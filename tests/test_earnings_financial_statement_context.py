@@ -130,7 +130,7 @@ class FinancialStatementContextTests(unittest.TestCase):
         text='\n'.join(report.sections(value)['cash']+report.notes(value))
         self.assertIn('capital leases',text)
         self.assertIn('No combined total is inferred',text)
-        self.assertIn('Debt total unavailable',text)
+        self.assertIn('Current consolidated metrics unavailable:',text);self.assertIn('Total debt.',text)
         self.assertTrue(all('[^'+row['cells']['current']['fact_ids'][0]+']' in text for _,row in selected))
         self.assertFalse(report.front_rows(report.compile(bundle,report.configuration(*Q)))['cash'])
 
