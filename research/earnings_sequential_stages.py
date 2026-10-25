@@ -576,10 +576,13 @@ def _closed_auth_failure(root, role_dir):
     require(execution.get('status') == 'execution_failed' and execution.get('exit_code') == 1
             and execution.get('request_sha256') == storage.digest(request) == launch.get('request_sha256')
             and execution.get('launch_sha256') == storage.sha(role_dir/'launch.json'), 'Closed bound execution required')
-    require(request.get('job_path') == str(role_dir) and request.get('bindings', {}).get('workflow') == VERSION
-            and request['bindings'].get('role') in ('sequential_analysis','sequential_review','sequential_financial_selection'), 'Exact sequential role binding required')
+    binding=request.get('bindings',{});direct=request.get('direct_input') is True
+    valid=(binding.get('workflow') in ('single-author-report-v1','single-author-report-v2') and binding.get('role') in ('single_report_analysis','single_report_review')) if direct else (binding.get('workflow')==VERSION and binding.get('role') in ('sequential_analysis','sequential_review','sequential_financial_selection'))
+    require(request.get('job_path')==str(role_dir) and valid,'Exact sequential role binding required')
+    delivery=role_dir/'delivery.jsonl'
+    require((delivery.is_file() and delivery.stat().st_size==0) if direct else not delivery.exists(), 'Pre-model delivery must be empty for direct input and absent otherwise')
     require((role_dir/'retrieval.jsonl').stat().st_size == 0 and not any((role_dir/name).exists() for name in
-            ('runtime-start.json','runtime-finish.json','sessions','output.json','response.md','delivery.jsonl','transport-lifecycle.jsonl')),
+            ('runtime-start.json','runtime-finish.json','sessions','output.json','response.md','transport-lifecycle.jsonl')),
             'Prior model execution cannot be excluded')
     runner.verify_request(role_dir, request)
     helper = Path(request['code_root'])/'research/earnings_file_prime.mjs'
@@ -589,7 +592,7 @@ def _closed_auth_failure(root, role_dir):
             'Auth stage ordering changed')
     return {'execution_certainty':'closed', 'tokens':0,
             'outputs':outputs(root, [role_dir/name for name in
-                ('request.json','execution.json','launch.json','runtime-failure.json','wire.json','retrieval.jsonl','prompt.md')])}
+                ('request.json','execution.json','launch.json','runtime-failure.json','wire.json','retrieval.jsonl','prompt.md',*(['delivery.jsonl'] if direct else []))])}
 
 
 def failed_execution(root, job):
@@ -598,7 +601,8 @@ def failed_execution(root, job):
     require(attempt.get('stage') in ('analysis','review','financial_selection'), 'Only failed editorial execution can be reconciled')
     outcome = attempt.get('outcome', {})
     role_dir = Path(outcome['execution_directory']).resolve()
-    require(role_dir == Path(root).resolve()/'roles'/_role_label(job, attempt['stage']), 'Failed execution directory differs from the attempted role')
+    label=('single-' if job.get('single_author_enabled') else '')+_role_label(job,attempt['stage'])
+    require(role_dir == Path(root).resolve()/'roles'/label, 'Failed execution directory differs from the attempted role')
     verified = (_closed_auth_failure(root, role_dir) if read(role_dir/'runtime-failure.json').get('stage') == 'auth_storage'
                 else _closed_local_failure(root, role_dir))
     require(verified['tokens'] == outcome.get('tokens'), 'Reconciliation cannot discard previously charged tokens')

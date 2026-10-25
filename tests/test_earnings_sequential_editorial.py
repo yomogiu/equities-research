@@ -207,3 +207,13 @@ class AuthStopTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.verify_stop()
         self.save('execution.json',{'status':'execution_failed','exit_code':1})
         with self.assertRaises(ValueError):self.verify_stop()
+
+    def test_direct_auth_stop_accepts_only_empty_precreated_delivery(self):
+        self.request.update(direct_input=True,bindings={'workflow':'single-author-report-v2','role':'single_report_review'})
+        self.save('request.json',self.request)
+        self.save('launch.json',{'request_sha256':self.stages.storage.digest(self.request)})
+        self.save('execution.json',{'status':'execution_failed','exit_code':1,'request_sha256':self.stages.storage.digest(self.request),'launch_sha256':self.stages.storage.sha(self.role/'launch.json')})
+        (self.role/'delivery.jsonl').write_text('')
+        proof=self.verify_stop();self.assertEqual(proof['tokens'],0);self.assertEqual(len(proof['outputs']),8)
+        (self.role/'delivery.jsonl').write_text('provider output')
+        with self.assertRaisesRegex(ValueError,'delivery must be empty'):self.verify_stop()
