@@ -276,6 +276,10 @@ def _scopes(bundle):
             'document_id': obs['source_document_id'], 'start': obs['support']['start'], 'end': obs['support']['end']}]
     for chunk in bundle['documents']['chunks']:
         scopes[chunk['id']] = [{k: chunk[k] for k in ('path', 'sha256', 'document_id', 'start', 'end')}]
+    from .earnings_valuation_inventory import source_id
+    for item in manifest['sources']:
+        if item['kind'] in ('filing','release') and item['representation']=='text':
+            scopes[source_id(item['document_id'])]=[{k:item[k] for k in ('path','sha256','document_id')} | {'start':0,'end':len(Path(item['path']).read_bytes().decode('utf-8'))}]
     index = bundle['transcript_index']
     scopes['transcript-source'] = [{'path':manifest['transcript_path'],'sha256':manifest['transcript_sha256'],
         'document_id':index['source']['document_id'],'start':0,

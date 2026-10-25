@@ -6,12 +6,16 @@ cash-flow quality, and guidance basis. The author returns a source-cited coverag
 pointing to actual report paragraphs. Code checks the wiring; independent review still
 judges applicability, completeness, materiality and source interpretation.
 
-Annual EPS and dated price inputs outside the core fact inventory may be selected as
-exact original-source quotations and numeric tokens. Code verifies those quotations,
-requires matching currency/security/share basis and a full annual earnings period,
+Annual EPS is reparsed from all frozen filings and bound to listed share classes via
+filed trading-symbol contexts. Recognized archived quote headers retain their actual
+dates and currencies. The author selects inventory IDs; code requires matching
+currency/security and a full annual earnings period,
 and calculates the multiple using Decimal arithmetic. The report displays the actual
 historical quote date. No quarterly annualization, target price or DCF is permitted.
 These source selections remain separate from the immutable core financial extraction.
+After a compiler fix, authenticated completed author output can be recompiled without
+another model call; original response, session, source hashes and all costs are retained.
+Ambiguous observations fail closed. This is not permission to rewrite the narrative.
 The author and renderer have distinct ownership: code prints table gaps, debt definitions,
 one calculation legend and the multiple block; prose explains business implications.
 

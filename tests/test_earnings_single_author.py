@@ -44,7 +44,9 @@ class SingleAuthorTests(unittest.TestCase):
             if self.revise:
                 value['verdict']='revise';value['criteria']['reasoning']['status']='fail'
                 value['findings']=[{'location':'cash','problem':'Fictional omission.','fix':'Explain the fictional constraint.','citations':ref}]
-        return {'content':value,'receipt':{'session':{'id':'fake-'+str(1 if self.same_session else len(self.calls)),'tool_calls':0,'model_turns':2 if self.skip else 1,'usage':{'totalTokens':100}}}}
+        self.last_response = {'content':value,'receipt':{'session':{'id':'fake-'+str(1 if self.same_session else len(self.calls)),'tool_calls':0,'model_turns':2 if self.skip else 1,'usage':{'totalTokens':100}}}}
+        stages.write(directory/'output.json',value)
+        return self.last_response
     def advance(self):return core.advance(self.job,stages.handlers())
     def test_combined_author_reproduces_tables_then_fresh_review_and_publication(self):
         self.assertEqual(self.advance()['stage'],'analysis')
@@ -122,3 +124,16 @@ class SingleAuthorTests(unittest.TestCase):
         self.assertEqual(text.count('Δ / change: absolute change'),1)
         self.assertNotIn('financial-analysis.json',text)
         self.assertNotIn('No substitute period or zero',text)
+
+    def test_recompile_saved_author_preserves_tokens_and_uses_no_new_author(self):
+        self.advance()
+        with patch.object(report_contract,'validate',side_effect=ValueError('Fictional compiler failure')):
+            stopped=self.advance()
+        self.assertEqual(stopped['tokens_used'],100)
+        old_attempt=copy.deepcopy(stopped['attempts'][-1])
+        with patch.object(single.runner,'verify_job',return_value=self.last_response):
+            recovered=core.adopt_single_author(self.job,'Fix the fictional compiler','b'*40,single.recover)
+        self.assertEqual(recovered['tokens_used'],100);self.assertEqual(recovered['stage'],'review')
+        self.assertEqual(recovered['attempts'][-2],old_attempt)
+        self.assertEqual(self.calls,['single_report_analysis'])
+        final=self.advance();self.assertEqual(final['stage'],'publication');self.assertEqual(final['tokens_used'],200)

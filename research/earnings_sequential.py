@@ -794,3 +794,27 @@ def adopt_financial_selection(root, authorization, code_commit, recover):
             proof_outputs=result['proof_outputs'],previous_code_commit=job.get('execution_code_commit'),code_commit=code_commit))
         job.update(financial_selection_artifact=name,execution_code_commit=code_commit,stage='financial_tables',status='ready')
         job.pop('reason',None);_write(root,job);return job
+
+
+def adopt_single_author(root, authorization, code_commit, recover):
+    """Recompile a saved author under a fixed compiler; no new model or budget."""
+    root=Path(root).resolve();code_commit=_commit(code_commit)
+    if not isinstance(authorization,str) or not authorization.strip() or not callable(recover):raise ValueError('Explicit verified recovery required')
+    with _lock(root):
+        job=_read(root)
+        if job['status']!='blocked' or job['stage']!='analysis' or not job.get('single_author_enabled'):raise ValueError('Blocked single author required')
+        previous=job['attempts'][-1];outcome=previous.get('outcome',{})
+        if not previous.get('usage_recorded') or outcome.get('execution_certainty')!='completed':raise ValueError('Completed accounted author required')
+        if sum(a['outcome']['tokens'] for a in job['attempts'] if a.get('usage_recorded'))!=job['tokens_used']:raise ValueError('Author usage differs from history')
+        _verify(root,job['artifacts']);_verify(root,job.get('revision_input',{}))
+        result=recover(root,copy.deepcopy(job))
+        required={'financial-selection-r0.json','financial-analysis.json','financial-configuration.json','financial-tables.md','analysis-r0.json',job['candidate_artifact']}
+        if result.get('status')!='completed' or not required<=set(result['outputs']) or result['tokens']!=outcome['tokens'] or not result.get('session_id') or not result.get('proof_outputs'):raise ValueError('Recovery must bind original author, usage and compiled outputs')
+        _verify(root,result['outputs']);_verify(root,result['proof_outputs'])
+        job.setdefault('administrative_history',[]).append(dict(action='adopt_single_author',authorization=authorization,attempt_id=previous['id'],tokens_used=job['tokens_used'],additional_tokens=0,previous_code_commit=job.get('execution_code_commit'),code_commit=code_commit,proof_outputs=result['proof_outputs']))
+        result={k:v for k,v in result.items() if k!='proof_outputs'}|{'tokens':0}
+        job['artifacts'].update(job['administrative_history'][-1]['proof_outputs'])
+        job['attempts'].append(dict(id=uuid.uuid4().hex,stage='analysis',revision_round=job['revision_round'],status='running',replay_safe=False,outcome=result,recovered_from=previous['id']))
+        job.update(status='running',execution_code_commit=code_commit);job.pop('reason',None)
+        _write(root,job)
+        return _finish(root,job)
