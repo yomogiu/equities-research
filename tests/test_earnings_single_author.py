@@ -39,7 +39,7 @@ class SingleAuthorTests(unittest.TestCase):
                 table=stages.read(self.job/'sources/packet_inventory.json')['tables'][0]
                 picked['reported_tables']=[{'table_id':table['id'],'row_ids':['R1'],'section':'earnings'}]
             if self.fabricate:picked['rows'][0]['value']='999'
-            paragraph={'text':'Fictional evidence has limitations.','citations':ref}
+            paragraph={'text':'Fictional evidence has limitations.'+(' Redundant fictional sentence.' if getattr(self,'editorial',False) else ''),'citations':ref}
             narrative={'title':'Fictional report','opening':paragraph,'sections':{k:copy.deepcopy(paragraph) for k in stages.SECTIONS},
                        'qa':[{'exchange_id':exchange,'question':'Fictional question?','answer':'Fictional answer.','assessment':'Fictional uncertainty.','citations':ref}], 'next_tests':[paragraph]}
             narrative['report_support']={'coverage':{k:{'status':'unavailable','report_excerpt':paragraph['text'],'reason':'Fictional missing disclosure.','citations':ref} for k in report_contract.COVERAGE},'valuation':{'rows':[],'gap':'Fictional dated price unavailable.','citations':ref}}
@@ -51,6 +51,10 @@ class SingleAuthorTests(unittest.TestCase):
             if self.revise:
                 value['verdict']='revise';value['criteria']['reasoning']['status']='fail'
                 value['findings']=[{'location':'cash','problem':'Fictional omission.','fix':'Explain the fictional constraint.','citations':ref}]
+            if self.revise and getattr(self,'editorial',False):
+                value['criteria']['reasoning']['status']='pass';value['criteria']['concise_writing']['status']='fail'
+                value['findings']=[{'location':'cash','problem':"'Redundant fictional sentence' repeats the qualification.",'fix':'Delete this sentence; retain the source-based limitation.','citations':ref},
+                    {'location':'qa','problem':"'Assessment: Fictional uncertainty' repeats the answer.",'fix':"Shorten the assessment to: 'Uncertain.' Retain the answer.",'citations':ref}]
             if self.revise and getattr(self,'table_finding',False):
                 value['findings'].append({'location':'financial_tables','problem':'Original grid has empty columns.','fix':'Compact the original source columns.','citations':['D001']})
         self.last_response = {'content':value,'receipt':{'session':{'id':'fake-'+str(1 if self.same_session else len(self.calls)),'tool_calls':0,'model_turns':2 if self.skip else 1,'usage':{'totalTokens':100}}}}
@@ -199,11 +203,50 @@ class SingleAuthorTests(unittest.TestCase):
         after=stages.read(self.job/'financial-analysis.json');after.pop('reported_table_layout')
         self.assertEqual(after,financial_before)
         self.assertEqual(self.advance()['stage'],'review')
+        self.table_finding=False
+        second=self.advance();self.assertEqual(second['stage'],'analysis',second.get('reason'))
+        self.assertEqual(self.advance()['stage'],'review')
         self.revise=False;self.assertEqual(self.advance()['stage'],'publication')
         self.assertEqual(self.advance()['status'],'completed')
         self.assertEqual((self.job/'sources/financial.json').read_bytes(),raw)
         self.assertEqual((self.job/'financial-selection-r0.json').read_bytes(),picked)
-        self.assertEqual(self.calls,['single_report_analysis','single_report_review','single_report_analysis','single_report_review'])
+        self.assertEqual(self.calls,['single_report_analysis','single_report_review']*3)
+
+    def test_exact_editorial_requests_use_no_correction_model(self):
+        self.editorial=True;self.revise=True
+        for _ in range(3):job=self.advance()
+        self.assertEqual(job['stage'],'analysis')
+        job=self.advance();self.assertEqual(job['stage'],'review',job.get('reason'))
+        self.assertEqual(job['tokens_used'],200);self.assertEqual(len(self.calls),2)
+        self.assertEqual(job['attempts'][-1]['outcome']['execution_kind'],'deterministic_revision')
+        self.revise=False;self.advance();self.assertEqual(self.advance()['status'],'completed')
+        a=stages.read(self.job/'analysis-r1.json')
+        self.assertEqual(a['qa'][0]['assessment'],'Uncertain.')
+        self.assertNotIn('Redundant fictional sentence.',a['sections']['cash']['text'])
+
+    def test_exact_editorial_with_table_upgrade_preserves_unflagged_prose(self):
+        case_path=self.root/'case.json';case=stages.read(case_path)
+        case['financial_inventory_version']='packet-financial-inventory-v1';case_path.write_text(json.dumps(case))
+        job=stages.read(self.job/'job.json');job['max_revision_rounds']=0;core._write(self.job,job)
+        self.pick_table=True;self.table_finding=True;self.editorial=True;self.revise=True
+        original_build=finance.analysis.build
+        def old_layout(*args,**kwargs):
+            value=original_build(*args,**kwargs);value.pop('reported_table_layout',None);return value
+        with patch.object(finance.analysis,'build',side_effect=old_layout):
+            for _ in range(3):job=self.advance()
+        before=stages.read(self.job/'analysis-r0.json')
+        job=core.repair_single_author(self.job,'Upgrade presentation with exact reviewed edits','b'*40)
+        from research import earnings_sequential_revisions as revisions
+        plan=revisions.plan(self.job,job,stages.render_candidate)
+        self.assertIsNotNone(single.exact_editorial_response(plan))
+        plan['presentation_only_tables']=False
+        self.assertIsNone(single.exact_editorial_response(plan))
+        job=self.advance();self.assertEqual(job['stage'],'review',job.get('reason'))
+        self.assertEqual(job['tokens_used'],200)
+        after=stages.read(self.job/'analysis-r1.json')
+        self.assertEqual(before['sections']['earnings'],after['sections']['earnings'])
+        self.revise=False;self.advance();self.assertEqual(self.advance()['status'],'completed')
+        self.assertEqual(self.calls,['single_report_analysis','single_report_review','single_report_review'])
 
     def test_correction_cannot_change_frozen_valuation_or_unlisted_coverage(self):
         from research import earnings_sequential_revisions as revisions

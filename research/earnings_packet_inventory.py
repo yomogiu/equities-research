@@ -258,3 +258,49 @@ def render_compact(table):
             values.append(value)
         lines.append('| '+' | '.join(markdown.cell(s) for s in [label,*values])+' |')
     return lines+['']
+
+
+def render_comparison(tables):
+    """Combine compatible source-reported GAAP/non-GAAP rows; no recalculation."""
+    from . import earnings_markdown_render as markdown
+    combined=[];fallback=[];sources=[]
+    def split(line):return [s.strip() for s in re.split(r'(?<!\\)\|',line)[1:-1]]
+    for table in tables:
+        lines=render_compact(table);grid=[split(s) for s in lines if s.startswith('|')]
+        if len(grid)<3:fallback.extend(lines);continue
+        heads=grid[0];normalized=[re.sub(r'\W','',s.casefold()) for s in heads]
+        if normalized.count('gaap')!=1 or normalized.count('nongaap')!=1:
+            fallback.extend(lines);continue
+        gaap,adjusted=normalized.index('gaap'),normalized.index('nongaap')
+        title=lines[0][4:] if lines[0].startswith('### ') else 'Reported metric'
+        period=re.search(r'\(([^)]*\b\d{4}\b[^)]*)\)',title)
+        period=period[1] if period else next((s for s in lines if re.search(r'\b(?:ended|ending|as of)\b',s,re.I)),title)
+        units=next((c['text'] for c in reversed(table.get('context',[])) if c['text'].startswith('(')),'Source-reported units')
+        clean=lambda s:re.sub(r'[\^†*]+$','',s)
+        for row in grid[2:]:
+            if len(row)!=len(heads):raise ValueError('Source table column count changed')
+            label=row[0]
+            if label.casefold() in ('basic','diluted','total'):
+                label=re.sub(r'\s*\([^)]*\b\d{4}\b[^)]*\)','',title)+' · '+label
+            values=[clean(row[gaap]),clean(row[adjusted])]
+            scale='%' if all(v.endswith('%') for v in values if v) else units
+            adjustments=[]
+            for i,heading in enumerate(heads[1:],1):
+                if i not in (gaap,adjusted) and row[i]:
+                    name=re.sub(r'^Non-GAAP Adjustments\s*/\s*','',heading,flags=re.I)
+                    adjustments.append(name+': '+clean(row[i]))
+            combined.append([label,markdown.cell(period),markdown.cell(scale),*values,'; '.join(adjustments)])
+        sources.append(table['source_id'])
+    if not combined:return fallback
+    # Keep each metric's reported periods together without deriving a date order.
+    labels=list(dict.fromkeys(row[0] for row in combined))
+    combined.sort(key=lambda row:labels.index(row[0]))
+    lines=['### Reported GAAP and non-GAAP comparison','',markdown.refs(list(dict.fromkeys(sources))),'',
+           '| Metric | Reported period | Unit / scale | GAAP | Non-GAAP | Reconciliation adjustments |',
+           '| --- | --- | --- | --- | --- | --- |']
+    lines.extend('| '+' | '.join(row)+' |' for row in combined)
+    return lines+['',*fallback]
+
+
+COMPACT_LAYOUT = LAYOUT
+LAYOUT = 'original-table-comparison-v3'

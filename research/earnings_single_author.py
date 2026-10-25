@@ -263,6 +263,13 @@ def _revision_context(root,job,role):
         needed.update(stages.cited({k:v for k,v in current.items() if k!='report_support'}))
         needed.update(stages.cited(current['report_support']['coverage']))
         needed.update(stages.cited(plan['previous_review']))
+        exact=exact_editorial_response(plan)
+        if exact is not None and revisions.apply(plan,exact)==current:
+            # The earlier independent review passed every substantive criterion.
+            # Reproduce the exact deletion/shortening and retain the full report;
+            # re-send all prior-review sources, not every unchanged author citation.
+            needed=stages.cited(plan['previous_review'])
+            payload['review_scope']='Verified presentation-only correction. The previous independent review passed every substantive criterion and all five questions. Exact code-owned edits and unchanged-data proofs are reproduced. Evaluate the full report and every criterion, using the supplied original prior-review sources and full call; unchanged claims also retain their prior original-source review. No new financial values or source selections are permitted. This is not a fresh full-document research pass.'
         # Frozen financial selection already received full original-document review.
         # Reproduce its arithmetic; do not resend every raw XBRL row for prose edits.
     # Full call replaces overlapping turn/exchange/section reads without loss.
@@ -281,10 +288,19 @@ def _revision_context(root,job,role):
 
 def correct(root,job):
     from . import earnings_sequential_stages as stages, earnings_sequential_revisions as revisions
-    value,result=_run(root,job,'analysis')
-    if value is None:return result
+    result={'tokens':0,'execution_certainty':'not_started'}
     try:
-        plan=revisions.plan(root,job,stages.render_candidate);merged=revisions.apply(plan,correction_response(plan,value))
+        plan=revisions.plan(root,job,stages.render_candidate)
+        response=exact_editorial_response(plan)
+        if response is None:
+            value,result=_run(root,job,'analysis')
+            if value is None:return result
+            response=correction_response(plan,value)
+        else:result={'tokens':0,'execution_kind':'deterministic_revision','execution_certainty':'completed'}
+        merged=revisions.apply(plan,response)
+        bundle=evidence.load_bundle(root/'sources/manifest.json')
+        stages.validate_analysis(merged,set(evidence._scopes(bundle)),{x['id'] for x in bundle['transcript_index']['exchanges']})
+        report_contract.validate(merged.get('report_support'),merged,root/'sources/manifest.json')
         rendered=stages.render_candidate(merged,stages.read(root/'financial-analysis.json'),root/'sources/manifest.json')
         proof=revisions.audit(root,job,plan,merged,rendered,stages.render_candidate)
         revision=job['revision_round'];analysis_path=root/f'analysis-r{revision}.json';proof_path=root/f'correction-r{revision}.json'
@@ -364,7 +380,7 @@ def upgrade_table_layout(root, job):
     from . import earnings_sequential_stages as stages, earnings_financial_analysis_report as finance
     from . import earnings_financial_statement_context as statements, earnings_packet_inventory as inventory
     root=Path(root);before=stages.read(root/'financial-analysis.json')
-    stages.require(before.get('reported_tables') and 'reported_table_layout' not in before,
+    stages.require(before.get('reported_tables') and before.get('reported_table_layout') in (None,inventory.COMPACT_LAYOUT),
                    'Only the original captured-table grid can receive this layout upgrade')
     bundle=evidence.load_bundle(root/'sources/manifest.json')
     qualified=statements.qualify(bundle,repair=job.get('financial_repair_policy')==statements.REPAIR_VERSION)
@@ -373,7 +389,7 @@ def upgrade_table_layout(root, job):
     config=stages.read(root/'financial-configuration.json')
     after=finance.compile(qualified,config)
     stages.require(after.get('reported_table_layout')==inventory.LAYOUT and
-                   {k:v for k,v in after.items() if k!='reported_table_layout'}==before,
+                   {k:v for k,v in after.items() if k!='reported_table_layout'}=={k:v for k,v in before.items() if k!='reported_table_layout'},
                    'Presentation upgrade cannot alter financial facts, selection, units, periods or calculations')
     stages.require((root/'financial-tables.md').read_text()==finance.preview_markdown(before),
                    'Original table grid does not reproduce')
@@ -390,3 +406,52 @@ def upgrade_table_layout(root, job):
     (root/'financial-tables.md').write_text(rendered)
     outputs.update({name:storage.sha(root/name) for name in files})
     return outputs
+
+
+def exact_editorial_response(plan):
+    """Apply exact deletion/shortening instructions after substantive review passes.
+
+    No new numbers, citations or independent claims; unsupported wording falls
+    back to the bounded correction model. Acceptance always needs fresh review.
+    """
+    from copy import deepcopy
+    from . import earnings_sequential_revisions as revisions
+    review=plan['previous_review']
+    if plan['table_changes'] and not plan.get('presentation_only_tables'):return None
+    if any(row['status']!='pass' for key,row in review['criteria'].items() if key!='concise_writing'):return None
+    if any(row['status'] not in ('answered','disclosed_gap') for row in review['questions'].values()):return None
+    replacements={k:deepcopy(v) for k,v in revisions._components(plan['previous_analysis']).items() if k in plan['allowed_locations']}
+    count=0
+    for finding in review['findings']:
+        location=finding['location']
+        if location=='financial_tables':
+            if not plan['table_changes']:return None
+            continue
+        original=replacements.get(location);quoted=re.match(r"^['‘]([^'’]+)['’]",finding['problem'])
+        if quoted is None:return None
+        old=quoted[1];fix=finding['fix']
+        if isinstance(original,dict) and 'text' in original and fix.startswith('Delete this sentence;'):
+            sentences=re.split(r'(?<=[.!?])\s+(?=[A-Z])',original['text'])
+            matches=[s for s in sentences if s.rstrip('.!?')==old.rstrip('.!?')]
+            if len(matches)!=1 or original['text'].count(matches[0])!=1:return None
+            original['text']=original['text'].replace(matches[0],'',1).strip()
+            if not original['text']:return None
+        elif location=='qa' and isinstance(original,list):
+            if old.startswith('Assessment: '):old=old[len('Assessment: '):]
+            new=re.match(r"Shorten the assessment to: ['‘]([^'’]+)['’]",fix)
+            matches=[row for row in original if row['assessment'].rstrip('.!?')==old.rstrip('.!?')]
+            if not new or len(matches)!=1 or len(new[1])>=len(old):return None
+            if not set(re.findall(r'\d+(?:\.\d+)?',new[1]))<=set(re.findall(r'\d+(?:\.\d+)?',old)):return None
+            matches[0]['assessment']=new[1]
+        else:return None
+        count+=1
+    if not count and not plan['table_changes']:return None
+    result={'replacements':replacements}
+    if plan.get('coverage_keys'):
+        result['coverage_replacements']={}
+        for key in plan['coverage_keys']:
+            row=deepcopy(plan['previous_analysis']['report_support']['coverage'][key])
+            row['report_excerpt']=replacements[report_contract.COVERAGE[key][0]]['text']
+            result['coverage_replacements'][key]=row
+    revisions.apply(plan,result)
+    return result

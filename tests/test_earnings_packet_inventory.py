@@ -123,4 +123,14 @@ class PacketTests(unittest.TestCase):
         self.assertNotIn('Reported column',text)
         self.assertNotIn('23,139',text)
 
+    def test_compatible_gaap_rows_combine_without_changing_values(self):
+        raw='<p>Fictional results (Q2 2040)</p><p>(USD thousands)</p><table><tr><td>Metric</td><td>GAAP</td><td>Non-GAAP</td></tr><tr><td>Income</td><td>10</td><td>15</td><td>^</td></tr></table>'
+        a=inventory.tables(raw,{'document_id':'fake','sha256':'a'*64})[0]
+        b=inventory.tables(raw.replace('2040','2039').replace('>10<','>9<'),{'document_id':'fake2','sha256':'b'*64})[0]
+        for table in (a,b):table['selected_row_ids']=['R2']
+        result='\n'.join(inventory.render_comparison([a,b]))
+        self.assertEqual(result.count('### '),1)
+        for value in ('Q2 2040','Q2 2039','10','9','15','USD thousands'):self.assertIn(value,result)
+        self.assertNotIn('15^',result)
+
 if __name__=='__main__':unittest.main()

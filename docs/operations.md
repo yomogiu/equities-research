@@ -263,3 +263,13 @@ findings remain an explicit source-bound repair boundary rather than a prose fix
 The operator `repair_single_author` core API can migrate a closed narrative review
 from a historical zero-revision comparison with explicit user authorization; it
 preserves all paid attempts, artifacts and the original token ceiling.
+
+Compatible original GAAP/non-GAAP selections render in one period-labeled comparison,
+with source units and reconciliation labels. Dangling presentation markers are
+omitted while the complete original cells remain archived. After all substantive
+criteria pass, unambiguous reviewer-quoted sentence deletions and assessment
+shortenings can be applied in code with zero correction-model tokens. A fresh
+review still assesses the full candidate and every criterion against the prior
+review's original sources, complete call, exact edit proof and unchanged-data
+proof. Unchanged claims retain their previous independent original-source review;
+this bounded presentation check is not a new full-document research pass.

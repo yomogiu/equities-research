@@ -114,6 +114,12 @@ def plan(root, job, render_candidate):
                             for attempt in reversed(job["attempts"][:author_positions[-1]+1])
                             if attempt.get("status") == "completed" and (attempt["stage"] == "financial_tables" or
                                 job.get("single_author_enabled") and all(n in attempt.get("outcome", {}).get("outputs", {}) for n in FINANCIAL_FILES))), None)
+    correction_name=f'correction-r{revision-1}.json'
+    prior_author=job['attempts'][author_positions[-1]]
+    if correction_name in prior_author.get('outcome',{}).get('outputs',{}):
+        _require(job['artifacts'].get(correction_name)==prior_author['outcome']['outputs'][correction_name],
+                 'Prior correction proof binding changed')
+        previous_tables=_read(root/correction_name)['frozen_artifacts']
     _require(previous_tables is not None and all(name in previous_tables for name in FINANCIAL_FILES),
              "Prior financial calculation binding required")
     financial_before = _read(root / 'financial-analysis.json')
@@ -163,7 +169,9 @@ def plan(root, job, render_candidate):
     from . import earnings_report_contract as report_contract
     coverage_keys = [k for k,(location,_) in report_contract.COVERAGE.items()
                      if location in allowed and 'report_support' in analysis]
-    return {"coverage_keys": coverage_keys, "version": VERSION, "revision_round": revision, "previous_analysis": analysis, "previous_review": review,
+    after_financial=_read(root/'financial-analysis.json')
+    presentation_only_tables=bool(table_changes) and ({k:v for k,v in financial_before.items() if k!='reported_table_layout'}=={k:v for k,v in after_financial.items() if k!='reported_table_layout'})
+    return {"presentation_only_tables":presentation_only_tables,"coverage_keys": coverage_keys, "version": VERSION, "revision_round": revision, "previous_analysis": analysis, "previous_review": review,
             "allowed_locations": allowed, "citations": sorted(citations),
             "table_changes": table_changes, "prior_financial_artifacts": prior_financial_artifacts,
             "baseline_artifacts": {analysis_name: job["artifacts"][analysis_name], review_name: job["artifacts"][review_name]},
@@ -199,7 +207,10 @@ def apply(revision_plan, response):
     merged = copy.deepcopy(revision_plan["previous_analysis"])
     for location, replacement in replacements.items():
         _shape(location, replacement)
-        _require(replacement != _components(merged)[location], "A reviewed replacement must change its component")
+        _require(replacement != _components(merged)[location] or
+                 (revision_plan.get('presentation_only_tables') and location in revision_plan['table_changes']
+                  and not any(f['location']==location for f in revision_plan['previous_review']['findings'])),
+                 "A reviewed replacement must change its component")
         if location in SECTIONS:
             merged["sections"][location] = copy.deepcopy(replacement)
         else:
