@@ -10,7 +10,11 @@ formats. A missing source or extraction failure is not issuer nondisclosure.
 One author selects existing tagged fact IDs for normalized core tables and may
 select original table/row IDs for material untagged disclosures and reconciliations.
 Code preserves original labels, values, dates, units and basis headers for these
-reported tables; it does not infer normalized semantics or calculate changes from
+reported tables; compact presentation folds original multi-row headers into named
+columns and removes empty layout scaffolding. It retains the original source grid
+for replay. An explicitly authorized layout upgrade archives reviewed table files
+and proves identical financial values, selection and arithmetic before the existing
+bounded prose correction and fresh review. It adds no new author call or budget; it does not infer normalized semantics or calculate changes from
 ambiguous untagged layouts. All source cells remain in the private inventory even
 when the report displays only a few. No extra financial-selection model or
 post-draft source hunt is added. Zero tagged metrics is permitted with accurate

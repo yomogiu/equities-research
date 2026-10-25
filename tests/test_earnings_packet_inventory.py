@@ -115,4 +115,12 @@ class PacketTests(unittest.TestCase):
             actual={(int(row[0][1:])-1,c[0]):text(c[1]) for row in table['rows'] for c in row[1]}
             self.assertEqual(actual,expected)
 
+    def test_compact_render_folds_headers_and_keeps_periods_and_values(self):
+        b=self.bundle();t=inventory.selected([self.pick(b)],b)[0]
+        text='\n'.join(inventory.render_compact(t))
+        for token in ('0.33','0.36','2040','2039','Three months ended March 31'):
+            self.assertIn(token,text)
+        self.assertNotIn('Reported column',text)
+        self.assertNotIn('23,139',text)
+
 if __name__=='__main__':unittest.main()

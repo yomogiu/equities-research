@@ -372,7 +372,8 @@ def sections(value,selection=None):
             lines.extend(['Quarter expense detail: '+' '.join(earnings_commentary(value)),''])
     from . import earnings_packet_inventory as packet_inventory
     for table in value.get('reported_tables',[]):
-        result[table['section']].extend(packet_inventory.render(table))
+        renderer=packet_inventory.render_compact if value.get('reported_table_layout')==packet_inventory.LAYOUT else packet_inventory.render
+        result[table['section']].extend(renderer(table))
     return result
 
 

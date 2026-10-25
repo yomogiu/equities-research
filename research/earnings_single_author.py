@@ -62,7 +62,7 @@ financial_selection has rows, gaps, notes and optional reported_tables:
 Allowed roles: ''' + ', '.join(sorted(selection.METRICS)) + '''.
 Required coverage (select or explain gap): ''' + ', '.join(sorted(selection.REQUIRED)) + '''.
 For untagged disclosures use reported_tables: [{"table_id":"T-...","row_ids":["R..."],"section":"demand|earnings|cash|outlook"}]. Select only material original rows (e.g. adjusted EPS, adjusted gross margin, adjusted operating profit and its main reconciliation adjustments); code preserves original cells, dates, units, basis headings and source citations. Never copy numbers into this selection or infer units/dates for untagged cells. Original reported tables may supply core metrics when tags are unavailable; explain the core normalized-inventory gap accurately. Do not repeat metrics already shown in the core tables. Select current AND available comparative facts together. Zero through 35 normalized rows; missing tagged data is acceptable with specific gaps and original-table selection where available. Use only existing IDs, never add a number to the selection schema. Do not mix units, segments, share classes or incompatible periods in a row. Each fact can belong to one row only. Keep voting/non-voting diluted EPS and shares separately labeled. Original D citations must establish accounting basis and definitions; taxonomy prefix alone is insufficient. Choose consolidated core metrics; retain debt and operating leases separately with explicit perimeters. Select positive gross PP&E purchases as capex and explicitly define FCF as same-period operating cash flow minus gross purchases. Distinguish management's net investment from gross cash purchases. Gross margin may use compatible selected revenue/gross-profit/cost inputs. Gross margin and R&D may be not separately reported; never assume zero. Annual EPS or a dated quote outside the core inventory belongs in analysis.report_support.valuation as selected supplemental inventory IDs. Code extracts these observations from original sources and calculates P/E. A quote need not match the earnings-event date: use its actual historical date, matching currency and share class. Distinguish missing disclosure from missing inventory coverage. No DCF, price target, quarterly EPS annualization or unverified market quote.
-Before submitting, cover these recurring requirements in the appropriate paragraph, using specific evidence only: prior-period one-offs and comparison distortions; cash restrictions and usable segment liquidity; gross debt, leases and embedded financing obligations without double counting; repurchases and other material funding uses; exact guidance period/basis/baseline/strength of commitment; price/volume/mix and segment revenue reclassifications; both favorable and adverse operating drivers. Do not manufacture a caveat when it is irrelevant. Do not repeat table figures or explain internal extraction/mapping workflow. Explain mechanisms and implications. Consolidate each real limitation once. Use source-backed concrete headings, faithful Q&A and concrete next tests.
+Before submitting, cover these recurring requirements in the appropriate paragraph, using specific evidence only: prior-period one-offs and comparison distortions; cash restrictions and usable segment liquidity; gross debt, leases and embedded financing obligations without double counting; repurchases and other material funding uses; exact guidance period/basis/baseline/strength of commitment; price/volume/mix and segment revenue reclassifications; both favorable and adverse operating drivers. Do not manufacture a caveat when it is irrelevant. Do not repeat table figures or explain internal extraction/mapping workflow. Explain mechanisms and implications. For a quarterly update, include disclosed quarter cash generation even when filed cash-flow tables are YTD; label rounded call figures and keep their basis separate. Quantify material end-market revenue contributions and contractual demand visibility, distinguishing remaining performance obligations from backlog. Preserve the recognition and collection dates of subsequent items. In Q&A distinguish actual unanswered analyst questions from your own follow-up tests. Consolidate each real limitation once. Use source-backed concrete headings, faithful Q&A and concrete next tests.
 analysis must additionally include report_support with exactly coverage and valuation. coverage contains every key from shared_report_requirements. Each entry is {"status":"addressed|not_material|unavailable","report_excerpt":"exact substring from the specified section's text","reason":"brief source-grounded applicability explanation","citations":["exact source ID"]}. Address all material applicable requirements in the report, including disclosed amounts and dates; a bare mention is insufficient. For unavailable inputs, point to the actual report limitation. For not_material, the excerpt may be empty but justify against sources. This is a completeness map, not an extra reader checklist or a substitute for independent review.
 valuation is {"rows":[{"price_id":"P-... from valuation_inventory","eps_id":"E-... from valuation_inventory","accounting_basis":"source-supported basis"}],"gap":"specific missing inputs if no matching pair, otherwise empty","citations":["exact original source IDs"]}. Select IDs only; do not copy numeric quotations, create scalar values or calculate P/E. The supplemental inventory reparses annual diluted EPS from every frozen filing and binds trading symbols to filed share-class contexts. Prices are deterministically parsed from recognized dated archived headers. Select matching symbols/currencies, annual periods ending before the quote date, and source-supported total diluted earnings. Inspect concepts and original notes; continuing-operations EPS is not automatically total EPS. If a split, ADR or perimeter mismatch prevents comparison, disclose it instead. Source-document IDs supplied with each document and inventory row cite the complete original document. These are historical quotes, not current prices. No forward estimate is inferred. Put annual_eps/price financial-selection gaps as 'available in supplemental valuation inventory' when applicable.
 
@@ -353,3 +353,40 @@ def correction_response(plan,value):
             old['citations']=sorted(set(old['citations'])|set(section['citations']))
             response['coverage_replacements'][key]=old
     return response
+
+
+def upgrade_table_layout(root, job):
+    """Re-render a closed reviewed grid without changing any financial selection.
+
+    Returns immutable archive bindings plus the new deterministic file bindings.
+    The sole allowed computation difference is the explicit presentation version.
+    """
+    from . import earnings_sequential_stages as stages, earnings_financial_analysis_report as finance
+    from . import earnings_financial_statement_context as statements, earnings_packet_inventory as inventory
+    root=Path(root);before=stages.read(root/'financial-analysis.json')
+    stages.require(before.get('reported_tables') and 'reported_table_layout' not in before,
+                   'Only the original captured-table grid can receive this layout upgrade')
+    bundle=evidence.load_bundle(root/'sources/manifest.json')
+    qualified=statements.qualify(bundle,repair=job.get('financial_repair_policy')==statements.REPAIR_VERSION)
+    name=job['financial_selection_artifact']
+    qualified=selection.verify_record(qualified,root/'sources/manifest.json',stages.read(root/name))
+    config=stages.read(root/'financial-configuration.json')
+    after=finance.compile(qualified,config)
+    stages.require(after.get('reported_table_layout')==inventory.LAYOUT and
+                   {k:v for k,v in after.items() if k!='reported_table_layout'}==before,
+                   'Presentation upgrade cannot alter financial facts, selection, units, periods or calculations')
+    stages.require((root/'financial-tables.md').read_text()==finance.preview_markdown(before),
+                   'Original table grid does not reproduce')
+    rendered=finance.preview_markdown(after)
+    stages.require(rendered!=(root/'financial-tables.md').read_text(),'Presentation upgrade made no change')
+    files=('financial-configuration.json','financial-analysis.json','financial-tables.md');outputs={}
+    for name in files:
+        path=root/name;stages.require(storage.sha(path)==job['artifacts'][name],'Financial artifact changed')
+        archive=root/f"history/financial-r{job['revision_round']}"/name;archive.parent.mkdir(parents=True,exist_ok=True)
+        if archive.exists():stages.require(archive.read_bytes()==path.read_bytes(),'Prior financial archive changed')
+        else:archive.write_bytes(path.read_bytes())
+        outputs[str(archive.relative_to(root))]=storage.sha(archive)
+    (root/'financial-analysis.json').write_text(json.dumps(after,indent=2,ensure_ascii=False)+'\n')
+    (root/'financial-tables.md').write_text(rendered)
+    outputs.update({name:storage.sha(root/name) for name in files})
+    return outputs

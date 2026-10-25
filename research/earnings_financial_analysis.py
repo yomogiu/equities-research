@@ -481,6 +481,8 @@ def build(bundle, *, current_period=None, as_of=None, capex_conventions=None, ac
 
     if bundle.get('reported_tables'):
         result['reported_tables'] = deepcopy(bundle['reported_tables'])
+        from .earnings_packet_inventory import LAYOUT
+        result['reported_table_layout'] = LAYOUT
     if bundle.get('financial_selection') is not None:
         result['financial_selection'] = deepcopy(bundle['financial_selection'])
     from . import earnings_financial_statement_context as statements

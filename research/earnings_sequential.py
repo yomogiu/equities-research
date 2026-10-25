@@ -825,7 +825,7 @@ def adopt_single_author(root, authorization, code_commit, recover):
 
 
 def repair_single_author(root, authorization, code_commit):
-    """Adopt a closed narrative review into bounded repair, without replay or new budget.
+    """Adopt a closed review into bounded repair, without author replay or new budget.
 
     Explicit operator migration for earlier comparison jobs configured with no
     revisions. New jobs already permit the normal two-round correction loop.
@@ -850,8 +850,13 @@ def repair_single_author(root, authorization, code_commit):
         from . import earnings_sequential_stages as stages, earnings_compact_evidence as evidence
         decision=json.loads(_artifact(root,name).read_text())
         stages.validate_review(decision,set(evidence._scopes(evidence.load_bundle(root/'sources/manifest.json'))))
-        if not decision['findings'] or any(f['location']=='financial_tables' for f in decision['findings']):raise ValueError('Narrative findings required')
+        if not decision['findings']:raise ValueError('Actionable findings required')
         previous=copy.deepcopy(job)
+        if any(f['location']=='financial_tables' for f in decision['findings']):
+            # Only a versioned layout upgrade of identical financial data is
+            # supported. Missing inputs or changed selections still stop.
+            from . import earnings_single_author
+            job['artifacts'].update(earnings_single_author.upgrade_table_layout(root,job))
         job['revision_round']+=1;job['max_revision_rounds']=2
         job['revision_input']={job['candidate_artifact']:job['artifacts'].pop(job['candidate_artifact'])}
         from . import earnings_sequential_revisions as revisions

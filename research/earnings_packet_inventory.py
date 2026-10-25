@@ -198,3 +198,63 @@ def render(table):
            '| '+' | '.join('---' for _ in columns)+' |']
     lines.extend('| '+' | '.join(markdown.cell(r[c]) for c in columns)+' |' for r in matrix)
     return lines+['']
+
+
+LAYOUT = 'original-table-columns-v2'
+
+
+def render_compact(table):
+    """Project selected numeric columns, folding source headers and number affixes.
+
+    This is layout only: no semantic period/unit classification or arithmetic.
+    The original row grid, exact cell text and hashes remain in the artifact.
+    """
+    from . import earnings_markdown_render as markdown
+    cells={c['id']:c for c in table['cells']}; chosen=set(table['selected_row_ids'])
+    rows=[row for row in table['rows'] if row['id'] in chosen]
+    numeric=lambda text:bool(re.fullmatch(r'[($€£+\-−]?\s*[\d,.]+\s*[%)]?',text))
+    def data(row):
+        populated=[cells[i] for i in row['cells'] if cells[i]['text']]
+        return len(populated)>1 and bool(re.search('[A-Za-z]',populated[0]['text'])) and any(numeric(c['text']) for c in populated[1:])
+    first_data=next((int(row['id'][1:])-1 for row in table['rows'] if data(row)),len(table['rows']))
+    columns=sorted({cells[i]['column'] for row in rows for i in row['cells']
+                    if cells[i]['column']>0 and numeric(cells[i]['text'])})
+    if not columns:return render(table)
+    headers={col:[] for col in columns}
+    for c in table['cells']:
+        if c['row']>=first_data or not c['text'] or c['text'] in ('$', '%', '(', ')'):continue
+        for col in columns:
+            if c['column']<=col<c['column']+c['colspan'] and c['text'] not in headers[col]:headers[col].append(c['text'])
+    common=[s for s in headers[columns[0]] if all(s in headers[col] for col in columns)] if len(columns)>1 else []
+    column_labels=[' / '.join(s for s in headers[col] if s not in common) for col in columns]
+    if any(not label for label in column_labels):
+        # One shared date header can itself be the column name.
+        column_labels=[' / '.join(headers[col]) or 'Reported value' for col in columns]
+        common=[]
+    contexts=[c['text'] for c in table.get('context',[]) if c['text'] and not re.fullmatch(r'\d+',c['text'])]
+    # The nearest preceding title and its trailing unit declaration apply to
+    # this table; earlier paragraphs/page furniture do not become report prose.
+    title_index=next((i for i in reversed(range(len(contexts))) if not contexts[i].startswith('(')),None)
+    if title_index is not None:contexts=contexts[title_index:]
+    title=contexts[0] if contexts and not contexts[0].startswith('(') else 'Reported financial detail'
+    context=contexts[1:] if contexts and title==contexts[0] else contexts
+    lines=['### '+markdown.cell(title),'',*dict.fromkeys([*context,*common]),'',markdown.refs([table['source_id']]),'',
+           '| '+' | '.join(markdown.cell(s) for s in ['Metric',*column_labels])+' |',
+           '| '+' | '.join('---' for _ in range(len(columns)+1))+' |']
+    for row in rows:
+        actual=sorted([cells[i] for i in row['cells'] if cells[i]['text']],key=lambda c:c['column'])
+        label=' '.join(c['text'] for c in actual if c['column']<columns[0] and c['text'] not in ('$','€','£','('))
+        values=[]
+        for col in columns:
+            matches=[(i,c) for i,c in enumerate(actual) if c['column']==col and numeric(c['text'])]
+            if not matches:values.append('');continue
+            i,c=matches[0];value=c['text']
+            left=i-1
+            while left>=0 and actual[left]['text'] in ('$', '€', '£', '(', '-', '−', '+'):
+                value=actual[left]['text']+value;left-=1
+            right=i+1
+            while right<len(actual) and actual[right]['text'] in ('%',')','^','†','*'):
+                value+=actual[right]['text'];right+=1
+            values.append(value)
+        lines.append('| '+' | '.join(markdown.cell(s) for s in [label,*values])+' |')
+    return lines+['']
