@@ -29,10 +29,7 @@ class SingleAuthorTests(unittest.TestCase):
         if bindings['role']=='single_report_analysis' and bindings['revision']:
             self.assertEqual((model,effort),('gpt-6-luna','max'))
             self.assertNotIn('financial_inventory',packet)
-            replacements=copy.deepcopy(packet['current_components'])
-            for row in replacements.values():row['text']='Corrected fictional constraint. '+row['text']
-            value={'replacements':replacements}
-            if packet['coverage_keys']:value['coverage_replacements']=packet['current_coverage']
+            value={'patches':{k:{'edits':[{'old_text':row['text'][:20],'new_text':'Corrected fictional constraint. '+row['text'][:20]}],'citations':ref} for k,row in packet['current_components'].items()}}
         elif bindings['role']=='single_report_analysis':
             self.assertNotIn('candidate',packet)
             fid=next(o['id'] for o in stages.read(self.job/'sources/financial.json')['observations'] if o['concept']=='us-gaap:Revenues')
@@ -190,3 +187,27 @@ class SingleAuthorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Only affected coverage'):revisions.apply(plan,response)
         (self.job/'financial-tables.md').write_text('Tampered fictional tables')
         job=self.advance();self.assertEqual(job['status'],'blocked');self.assertEqual(len(self.calls),2)
+
+    def test_surgical_edits_preserve_all_text_outside_anchor(self):
+        from research import earnings_sequential_revisions as revisions
+        self.revise=True
+        for _ in range(3):job=self.advance()
+        plan=revisions.plan(self.job,job,stages.render_candidate)
+        old=plan['previous_analysis']['sections']['cash']['text'];anchor=old[:15]
+        value={'patches':{'cash':{'edits':[{'old_text':anchor,'new_text':anchor+' Added fictional qualification.'}],'citations':plan['citations']}}}
+        response=single.correction_response(plan,value);merged=revisions.apply(plan,response)
+        self.assertEqual(merged['sections']['cash']['text'].replace(' Added fictional qualification.',''),old)
+        report_contract.validate(merged['report_support'],merged,self.job/'sources/manifest.json')
+        value['patches']['cash']['edits'].append(value['patches']['cash']['edits'][0])
+        with self.assertRaisesRegex(ValueError,'not overlap'):single.correction_response(plan,value)
+
+    def test_interning_reconstructs_complete_original_sources(self):
+        self.advance();original=evidence.source_slices(self.job/'sources/manifest.json',['D001','D001'])
+        scopes,records=single.intern_sources(original)
+        def expand(value):
+            if isinstance(value,dict):
+                if set(value)=={'original_record'}:return expand(records[value['original_record']])
+                return {k:expand(v) for k,v in value.items()}
+            if isinstance(value,list):return [expand(v) for v in value]
+            return value
+        self.assertEqual(expand(scopes),original);self.assertEqual(len(records),1)

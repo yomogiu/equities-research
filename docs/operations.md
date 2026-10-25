@@ -29,7 +29,7 @@ schedules. Passing unit tests alone is not evidence that a live report passed re
 
 The `single_author` code binding replaces separate financial selection and table-first authoring with **Sources → combined author → independent review → publication**. Extraction is deterministic. One author session receives one fixed packet directly in its prompt and returns source fact selections plus the full structured write-up. Code validates the selections, computes tables, and renders the candidate. The author receives every extracted observation, complete original filing/release bodies and the complete call. Overlapping source chunks are represented by offsets into one copy of each document; redundant SEC machine prefixes are identified explicitly. There is no retrieval loop or prior-review coaching in the initial author input.
 
-A fresh reviewer receives the exact candidate, every original document body and call, the selected definitions, and deterministic numerical verification. It evaluates the same eight criteria and five expected questions. The dictionary fact inventory is not reprinted to the reviewer because original financial statements and the computed tables are already supplied. Each session has one provider request, zero tools and one final output. Complete-prompt hashes establish packet delivery; a tool-output character limit cannot truncate it. Acceptance still requires a passing exact-candidate independent review; a failed review stops without automatically launching another full report run. Schedule state is separate.
+A fresh reviewer receives the exact candidate, every original document body and call, the selected definitions, and deterministic numerical verification. It evaluates the same eight criteria and five expected questions. The dictionary fact inventory is not reprinted to the reviewer because original financial statements and the computed tables are already supplied. Each session has one provider request, zero tools and one final output. Complete-prompt hashes establish packet delivery; a tool-output character limit cannot truncate it. Acceptance still requires a passing exact-candidate independent review; narrative findings enter bounded corrections without another full report run. Schedule state is separate.
 
 A newly authorized architecture comparison must retain its stopped baseline and cumulative accounting. The private adapter stores it under the original job, uses identical source bytes and a separate explicit test allowance, and reports both incremental and combined costs. It cannot reset or silently replay an existing comparison.
 
@@ -218,8 +218,11 @@ recorded; recovery grants neither report acceptance nor additional budget.
 
 
 Single-author narrative review failures now enter the existing two-round bounded
-correction loop in the same job. GPT-6 Luna at max effort replaces only the sections
-named by review and their coverage-map entries. Selection, tables, valuation and
+correction loop in the same job. GPT-6 Luna at max effort proposes small exact-anchor edits within the sections
+named by review. Code preserves text outside those edits, unions original citations
+and rebinds affected coverage entries mechanically. A correction cannot rewrite a
+whole paragraph or claim disclosures are absent merely because a selective packet
+does not repeat them. Original source rows and contexts are losslessly shared once. Selection, tables, valuation and
 unaffected prose remain frozen. A fresh GPT-6.1 Sol medium session verifies the
 whole revised candidate, all criteria/questions and every change using complete
 original cited scopes and the full call, plus reproduced table arithmetic. This
