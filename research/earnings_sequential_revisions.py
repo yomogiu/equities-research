@@ -92,7 +92,7 @@ def plan(root, job, render_candidate):
     _verify(root, job["artifacts"])
     _verify(root, job.get("revision_input", {}))
     frozen = {name: digest for name, digest in job["artifacts"].items()
-              if name in (*FINANCIAL_FILES, "writing-standard.md", "passages.json") or name.startswith("sources/")}
+              if name in (*FINANCIAL_FILES, "writing-standard.md", "passages.json") or name.startswith(("sources/", "financial-selection-"))}
     _require(set((*FINANCIAL_FILES, "sources/manifest.json", "writing-standard.md")) <= frozen.keys(),
              "Frozen financial/source/writing artifacts required")
     sources = _source_bindings(root)
@@ -111,8 +111,9 @@ def plan(root, job, render_candidate):
                         and attempt.get("outcome", {}).get("outputs", {}).get(analysis_name) == job["artifacts"][analysis_name]]
     _require(author_positions, "Prior author artifact lacks an attempt binding")
     previous_tables = next((attempt.get("outcome", {}).get("outputs", {})
-                            for attempt in reversed(job["attempts"][:author_positions[-1]])
-                            if attempt["stage"] == "financial_tables" and attempt.get("status") == "completed"), None)
+                            for attempt in reversed(job["attempts"][:author_positions[-1]+1])
+                            if attempt.get("status") == "completed" and (attempt["stage"] == "financial_tables" or
+                                job.get("single_author_enabled") and all(n in attempt.get("outcome", {}).get("outputs", {}) for n in FINANCIAL_FILES))), None)
     _require(previous_tables is not None and all(name in previous_tables for name in FINANCIAL_FILES),
              "Prior financial calculation binding required")
     financial_before = _read(root / 'financial-analysis.json')
@@ -159,7 +160,10 @@ def plan(root, job, render_candidate):
     allowed = [location for location in LOCATIONS if location in locations]
     components = _components(analysis)
     citations = set().union(*(_citations(components[name]) for name in allowed), _citations(review["findings"]), added_table_citations)
-    return {"version": VERSION, "revision_round": revision, "previous_analysis": analysis, "previous_review": review,
+    from . import earnings_report_contract as report_contract
+    coverage_keys = [k for k,(location,_) in report_contract.COVERAGE.items()
+                     if location in allowed and 'report_support' in analysis]
+    return {"coverage_keys": coverage_keys, "version": VERSION, "revision_round": revision, "previous_analysis": analysis, "previous_review": review,
             "allowed_locations": allowed, "citations": sorted(citations),
             "table_changes": table_changes, "prior_financial_artifacts": prior_financial_artifacts,
             "baseline_artifacts": {analysis_name: job["artifacts"][analysis_name], review_name: job["artifacts"][review_name]},
@@ -187,7 +191,8 @@ def _shape(location, value):
 
 def apply(revision_plan, response):
     """Apply exactly the affected components; the caller validates the full result."""
-    _require(isinstance(response, dict) and set(response) == {"replacements"}, "Exact replacements response required")
+    fields = {'replacements'} | ({'coverage_replacements'} if revision_plan.get('coverage_keys') else set())
+    _require(isinstance(response, dict) and set(response) == fields, "Exact replacements response required")
     replacements = response["replacements"]
     _require(isinstance(replacements, dict) and set(replacements) == set(revision_plan["allowed_locations"]),
              "Replacements must contain exactly the reviewed locations")
@@ -199,6 +204,10 @@ def apply(revision_plan, response):
             merged["sections"][location] = copy.deepcopy(replacement)
         else:
             merged[location] = copy.deepcopy(replacement)
+    if revision_plan.get('coverage_keys'):
+        coverage = response['coverage_replacements']
+        _require(isinstance(coverage,dict) and set(coverage)==set(revision_plan['coverage_keys']), 'Only affected coverage entries may change')
+        merged['report_support']['coverage'].update(copy.deepcopy(coverage))
     _require(all(_digest(_components(merged)[name]) == digest for name, digest in revision_plan["unchanged_components"].items()),
              "Unreviewed component changed")
     return merged
@@ -211,7 +220,7 @@ def exact_deletions(revision_plan):
     an explicit deletion finding; other repairs still go to the correction model.
     A fresh reviewer, not this syntax recognizer, decides whether all fixes suffice.
     """
-    if revision_plan is None: return None
+    if revision_plan is None or revision_plan.get('coverage_keys'): return None
     replacements = {}
     for location in revision_plan['allowed_locations']:
         original = _components(revision_plan['previous_analysis'])[location]
@@ -249,7 +258,10 @@ def audit(root, job, revision_plan, merged, candidate_text, render_candidate):
     fresh = plan(root, job, render_candidate)
     _require(fresh is not None and fresh == revision_plan, "Revision plan or frozen inputs changed")
     replacements = {name: _components(merged)[name] for name in fresh["allowed_locations"]}
-    _require(apply(fresh, {"replacements": replacements}) == merged, "Merged analysis changed an unreviewed component")
+    response = {'replacements':replacements}
+    if fresh.get('coverage_keys'):
+        response['coverage_replacements'] = {k:merged['report_support']['coverage'][k] for k in fresh['coverage_keys']}
+    _require(apply(fresh, response) == merged, "Merged analysis changed an unreviewed component")
     root = Path(root).resolve()
     _require(render_candidate(merged, _read(root / "financial-analysis.json"), root / "sources/manifest.json") == candidate_text,
              "Replacement candidate does not match the merged analysis")

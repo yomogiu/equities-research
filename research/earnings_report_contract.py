@@ -8,9 +8,9 @@ from . import earnings_compact_evidence as evidence
 from . import earnings_markdown_render as markdown
 
 COVERAGE = {
-    'comparison_basis': ('earnings', 'Identify material prior-period charges, gains, reclassifications and other distortions; quantify them when disclosed and explain how they affect the comparison.'),
+    'comparison_basis': ('earnings', 'Identify material prior-period charges, gains, reclassifications and other distortions; quantify them when disclosed and explain how they affect the comparison. Include disclosed segment profit or adjusted EBITDA and margin changes when central to the operating thesis; label segment and non-GAAP basis. Distinguish source-reported changes from differences of rounded totals.'),
     'liquidity_perimeter': ('cash', 'Distinguish consolidated cash from usable operating/parent cash, restricted or regulated balances, and undrawn credit. Give separate disclosed amounts and any subsidiary reporting-date lag.'),
-    'funding_needs': ('cash', 'Compare funding resources with near-term maturities, investment and shareholder distributions. Quantify material embedded financing separately from the selected debt/lease perimeter; do not double count.'),
+    'funding_needs': ('cash', 'Compare funding resources with near-term maturities, investment and shareholder distributions. Quantify material embedded financing separately from the selected debt/lease perimeter; do not double count. Reconcile updates across filings and the call using the latest supplied cutoff for each measure. Keep share counts, cash costs and remaining authorizations attached to their own dates; never combine later counts with earlier costs.'),
     'cash_flow_quality': ('cash', 'Explain material tax receipts/payments, working-capital or other temporary cash drivers. Compare the relevant operating cash flow with investment on the same segment, period and gross/net basis, quantifying disclosed scale.'),
     'guidance_basis': ('outlook', 'State the exact period, accounting basis, prior baseline, commitment strength and material financing progress behind the outlook. Separate guidance, aspiration and analyst inference.'),
 }

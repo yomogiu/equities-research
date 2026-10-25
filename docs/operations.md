@@ -215,3 +215,18 @@ A completed, charged selection rejected by a repaired validator can use
 This revalidates the original response, source-inspection receipts and frozen
 inputs without another model call. Original costs and failed attempts remain
 recorded; recovery grants neither report acceptance nor additional budget.
+
+
+Single-author narrative review failures now enter the existing two-round bounded
+correction loop in the same job. GPT-6 Luna at max effort replaces only the sections
+named by review and their coverage-map entries. Selection, tables, valuation and
+unaffected prose remain frozen. A fresh GPT-6.1 Sol medium session verifies the
+whole revised candidate, all criteria/questions and every change using complete
+original cited scopes and the full call, plus reproduced table arithmetic. This
+revision packet avoids resending the author fact inventory and unrelated filing
+pages. No findings means publication; repeated identical findings, missing support,
+exhausted rounds or insufficient cumulative budget stop the job. Table-selection
+findings remain an explicit source-bound repair boundary rather than a prose fix.
+The operator `repair_single_author` core API can migrate a closed narrative review
+from a historical zero-revision comparison with explicit user authorization; it
+preserves all paid attempts, artifacts and the original token ceiling.

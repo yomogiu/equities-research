@@ -26,7 +26,14 @@ class SingleAuthorTests(unittest.TestCase):
         packet=reader.artifacts['single_report_packet']
         self.assertNotIn('review_findings',packet);self.assertEqual(settings['max_tool_calls'],1);self.assertTrue(settings['direct_input'])
         exchange=reader.index['exchange_ids'][0];ref=[exchange]
-        if bindings['role']=='single_report_analysis':
+        if bindings['role']=='single_report_analysis' and bindings['revision']:
+            self.assertEqual((model,effort),('gpt-6-luna','max'))
+            self.assertNotIn('financial_inventory',packet)
+            replacements=copy.deepcopy(packet['current_components'])
+            for row in replacements.values():row['text']='Corrected fictional constraint. '+row['text']
+            value={'replacements':replacements}
+            if packet['coverage_keys']:value['coverage_replacements']=packet['current_coverage']
+        elif bindings['role']=='single_report_analysis':
             self.assertNotIn('candidate',packet)
             fid=next(o['id'] for o in stages.read(self.job/'sources/financial.json')['observations'] if o['concept']=='us-gaap:Revenues')
             picked={'rows':[{'metric':'revenue','label':'Fictional revenue','basis':'GAAP','fact_ids':[fid],'citations':['D001'],'definition':'Fictional consolidated revenue.'}],
@@ -59,7 +66,8 @@ class SingleAuthorTests(unittest.TestCase):
         self.assertEqual(result['tokens_used'],200)
         self.assertEqual([a['stage'] for a in result['attempts']],['sources','analysis','review','publication'])
         self.assertEqual(self.calls,['single_report_analysis','single_report_review'])
-    def test_review_failure_stops_without_extra_author_or_review(self):
+    def test_review_failure_stops_without_allowance(self):
+        job=stages.read(self.job/'job.json');job['max_revision_rounds']=0;core._write(self.job,job)
         self.revise=True
         for _ in range(3):result=self.advance()
         self.assertEqual(result['status'],'blocked');self.assertEqual(result['tokens_used'],200)
@@ -137,3 +145,48 @@ class SingleAuthorTests(unittest.TestCase):
         self.assertEqual(recovered['attempts'][-2],old_attempt)
         self.assertEqual(self.calls,['single_report_analysis'])
         final=self.advance();self.assertEqual(final['stage'],'publication');self.assertEqual(final['tokens_used'],200)
+
+    def test_automatic_correction_reuses_tables_and_reaches_publication(self):
+        self.revise=True
+        self.advance();self.advance()
+        frozen={n:(self.job/n).read_bytes() for n in ('sources/financial.json','financial-selection-r0.json','financial-analysis.json','financial-tables.md')}
+        original=stages.read(self.job/'analysis-r0.json')
+        job=self.advance();self.assertEqual((job['stage'],job['revision_round']),('analysis',1))
+        job=self.advance();self.assertEqual(job['stage'],'review',job.get('reason'))
+        corrected=stages.read(self.job/'analysis-r1.json')
+        self.assertEqual(corrected['sections']['earnings'],original['sections']['earnings'])
+        self.assertEqual(corrected['report_support']['valuation'],original['report_support']['valuation'])
+        self.revise=False;job=self.advance();self.assertEqual(job['stage'],'publication',job.get('reason'))
+        job=self.advance();self.assertEqual(job['status'],'completed',job.get('reason'));self.assertEqual(job['tokens_used'],400)
+        for name,data in frozen.items():self.assertEqual((self.job/name).read_bytes(),data)
+        self.assertEqual(self.calls,['single_report_analysis','single_report_review','single_report_analysis','single_report_review'])
+
+    def test_repeated_finding_stops_automatic_loop(self):
+        self.revise=True
+        for _ in range(5):job=self.advance()
+        self.assertEqual(job['status'],'blocked',job.get('reason'))
+        self.assertIn('Repeated unchanged',job['reason']);self.assertEqual(job['tokens_used'],400)
+        self.assertFalse((self.job/'publication.json').exists())
+
+    def test_migration_keeps_old_attempt_cost_and_budget(self):
+        job=stages.read(self.job/'job.json');job['max_revision_rounds']=0;core._write(self.job,job)
+        self.revise=True
+        for _ in range(3):job=self.advance()
+        before=copy.deepcopy(job)
+        job=core.repair_single_author(self.job,'Authorized fictional repair','b'*40)
+        self.assertEqual(job['attempts'],before['attempts']);self.assertEqual(job['budget_tokens'],before['budget_tokens'])
+        self.assertEqual(job['tokens_used'],200);self.assertEqual(job['revision_round'],1)
+        job=self.advance();self.assertEqual(job['stage'],'review',job.get('reason'))
+        self.revise=False;self.advance();self.assertEqual(self.advance()['status'],'completed')
+
+    def test_correction_cannot_change_frozen_valuation_or_unlisted_coverage(self):
+        from research import earnings_sequential_revisions as revisions
+        self.revise=True
+        for _ in range(3):job=self.advance()
+        plan=revisions.plan(self.job,job,stages.render_candidate)
+        response={'replacements':{'cash':{'text':'Corrected fictional constraint.','citations':plan['citations']}},
+                  'coverage_replacements':{k:plan['previous_analysis']['report_support']['coverage'][k] for k in plan['coverage_keys']}}
+        response['coverage_replacements']['comparison_basis']=copy.deepcopy(next(iter(response['coverage_replacements'].values())))
+        with self.assertRaisesRegex(ValueError,'Only affected coverage'):revisions.apply(plan,response)
+        (self.job/'financial-tables.md').write_text('Tampered fictional tables')
+        job=self.advance();self.assertEqual(job['status'],'blocked');self.assertEqual(len(self.calls),2)

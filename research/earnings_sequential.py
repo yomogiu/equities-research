@@ -215,9 +215,12 @@ def _finish(root, job):
             if set(outputs) != {name}: raise ValueError('Selection must produce one bound immutable mapping')
         if stage == "analysis" and job["candidate_artifact"] not in outputs:
             raise ValueError("analysis did not produce the candidate artifact")
-        if stage == 'analysis' and job.get('single_author_enabled'):
+        if stage == 'analysis' and job.get('single_author_enabled') and not job['revision_round']:
             required={'financial-selection-r0.json','financial-analysis.json','financial-configuration.json','financial-tables.md','analysis-r0.json'}
             if not required<=outputs.keys():raise ValueError('Combined author requires selection, computed tables and analysis')
+        if stage == 'analysis' and job.get('single_author_enabled') and job['revision_round']:
+            if not {f"analysis-r{job['revision_round']}.json",f"correction-r{job['revision_round']}.json"}<=outputs.keys():
+                raise ValueError('Single-author correction requires merged analysis and immutable delta proof')
         if stage in ("review", "publication"):
             candidate = job["artifacts"].get(job["candidate_artifact"])
             if not candidate or outcome.get("input_sha256") != candidate:
@@ -246,10 +249,10 @@ def _finish(root, job):
                 if fingerprint(current) and fingerprint(current) == fingerprint(previous):
                     raise ValueError('Repeated unchanged review findings; automatic repair made no progress')
         if status == 'revise' and not job.get('editorial_repair'):
-            if job.get('single_author_enabled'):
+            if job.get('single_author_enabled') and target == 'financial_tables':
                 job['artifacts'].update(outputs)
-                return _block(root,job,'Single-author independent review requires corrections; no automatic full-report replay')
-            if _editorial_revision(root, job, outputs, outcome):
+                return _block(root,job,'Single-author financial selection repair requires explicit source-bound migration')
+            if not job.get('single_author_enabled') and _editorial_revision(root, job, outputs, outcome):
                 attempt['status'] = status
                 attempt['outputs'] = outputs
                 _write(root, job)
@@ -257,6 +260,7 @@ def _finish(root, job):
         if status == 'revise' and job.get('editorial_repair'):
             raise ValueError('Editorial review still requires corrections; bounded repair exhausted')
         if status == "revise" and job["revision_round"] >= job["max_revision_rounds"]:
+            job["artifacts"].update(outputs)
             raise ValueError("revision limit reached")
     except (ValueError, OSError) as exc:
         return _block(root, job, str(exc))
@@ -818,3 +822,43 @@ def adopt_single_author(root, authorization, code_commit, recover):
         job.update(status='running',execution_code_commit=code_commit);job.pop('reason',None)
         _write(root,job)
         return _finish(root,job)
+
+
+def repair_single_author(root, authorization, code_commit):
+    """Adopt a closed narrative review into bounded repair, without replay or new budget.
+
+    Explicit operator migration for earlier comparison jobs configured with no
+    revisions. New jobs already permit the normal two-round correction loop.
+    """
+    root=Path(root).resolve();code_commit=_commit(code_commit)
+    if not isinstance(authorization,str) or not authorization.strip():raise ValueError('Explicit repair authorization required')
+    with _lock(root):
+        job=_read(root)
+        if job['status']!='blocked' or job['stage']!='review' or not job.get('single_author_enabled') or job.get('final_review') or job.get('editorial_repair'):
+            raise ValueError('Closed single-author narrative review required')
+        if job['revision_round']>=2 or job['tokens_used']>=job['budget_tokens']:raise ValueError('Repair allowance exhausted')
+        _verify(root,job['artifacts']);_verify(root,job.get('revision_input',{}))
+        attempt=job['attempts'][-1];outcome=attempt.get('outcome',{})
+        name=f"review-r{job['revision_round']}.json"
+        if (attempt['stage']!='review' or not attempt.get('usage_recorded') or outcome.get('status')!='revise'
+            or outcome.get('execution_certainty')!='completed' or not outcome.get('session_id')
+            or outcome.get('input_sha256')!=job['artifacts'].get(job['candidate_artifact'])
+            or outcome.get('outputs',{}).get(name)!=job['artifacts'].get(name)):
+            raise ValueError('Accounted exact-candidate review required')
+        if sum(a.get('outcome',{}).get('tokens',0) for a in job['attempts'] if a.get('usage_recorded'))!=job['tokens_used']:
+            raise ValueError('Cumulative review accounting changed')
+        from . import earnings_sequential_stages as stages, earnings_compact_evidence as evidence
+        decision=json.loads(_artifact(root,name).read_text())
+        stages.validate_review(decision,set(evidence._scopes(evidence.load_bundle(root/'sources/manifest.json'))))
+        if not decision['findings'] or any(f['location']=='financial_tables' for f in decision['findings']):raise ValueError('Narrative findings required')
+        previous=copy.deepcopy(job)
+        job['revision_round']+=1;job['max_revision_rounds']=2
+        job['revision_input']={job['candidate_artifact']:job['artifacts'].pop(job['candidate_artifact'])}
+        from . import earnings_sequential_revisions as revisions
+        revisions.plan(root,job,stages.render_candidate)
+        job.setdefault('administrative_history',[]).append(dict(action='repair_single_author',authorization=authorization,
+            previous_code_commit=previous.get('execution_code_commit'),code_commit=code_commit,
+            previous_max_revision_rounds=previous['max_revision_rounds'],max_revision_rounds=2,
+            tokens_used=job['tokens_used'],budget_tokens=job['budget_tokens'],review_sha256=job['artifacts'][name]))
+        job.update(execution_code_commit=code_commit,status='ready',stage='analysis',accepted_candidate_sha256=None)
+        job.pop('reason',None);_write(root,job);return job
