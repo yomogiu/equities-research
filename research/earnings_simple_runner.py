@@ -122,7 +122,15 @@ def correction_scope(before, after, review):
 
 def revision_packet(bundle, original, value, review, include_inventory=False):
     """Full call plus complete original scopes for claims and findings, interned once."""
-    ids=content.cited(value)|content.cited(review)
+    findings=[f for f in review['findings'] if f['severity']=='blocking']
+    locations={f['location'] for f in findings}
+    if 'financial_tables' in locations:
+        claims=value
+    else:
+        analysis=value['analysis']
+        claims={k:analysis.get(k,analysis['sections'].get(k)) for k in locations}
+        if 'valuation' in locations:claims['valuation']=analysis['report_support']['valuation']
+    ids=content.cited(claims)|content.cited(findings)
     # Complete transcript already supplies all exchanges, sections and turns.
     ids={i for i in ids if i.startswith(('D','F','document-source-'))}
     records={};support=[]
@@ -135,10 +143,30 @@ def revision_packet(bundle, original, value, review, include_inventory=False):
         support.append(bound)
     result={k:deepcopy(original[k]) for k in ('transcript','transcript_source_id','transcript_index','scope_notes')}
     result.update(original_support=support,original_records=records,
-        source_policy='Complete original cited scopes and full call. Unchanged content retains its initial independent full-packet review. No external retrieval or new source material.',
+        source_policy='Complete original scopes for blocking findings and changed components, plus full call. All other components must remain identical and retain their initial independent full-packet review. Final checking covers the full report and every criterion. No external retrieval or new source material.',
         supplied_scope_ids=sorted(ids|{i for i in evidence._scopes(bundle) if not i.startswith(('D','F','document-source-'))}))
     if include_inventory:result['financial_inventory']=original['financial_inventory']
     return result
+
+
+def validation_packet(original):
+    """Mapping correction needs the full inventory, not repeated annual prose."""
+    result=deepcopy(original)
+    retained=[];remap={}
+    for index,doc in enumerate(result['documents']):
+        if str(doc.get('omitted_prefix','')).startswith('Annual business/'):continue
+        remap[index]=len(retained);retained.append(doc)
+    result['documents']=retained
+    result['document_scopes']=[[i,remap[d],a,b] for i,d,a,b in result['document_scopes'] if d in remap]
+    result['source_policy']='Compiler correction: complete fact inventory and captured original tables from every document; complete current materials and call. Annual narrative was supplied to the author and is omitted here; preserve its existing claims. Final independent review receives the original financial-statement context.'
+    return result
+
+
+def known_sources(payload,bundle):
+    if 'supplied_scope_ids' in payload:return set(payload['supplied_scope_ids'])
+    # IDs already occur in the fact dictionary, document scopes and call index.
+    # Do not repeat thousands of them as another prompt field.
+    return {i for i in evidence._scopes(bundle) if not i.startswith('D')}|{r[0] for r in payload['document_scopes']}
 
 
 def model_call(root, state, bundle, role, payload, invoke, checkpoint):
@@ -164,7 +192,10 @@ def model_call(root, state, bundle, role, payload, invoke, checkpoint):
         content.require(session['model_turns']==1 and session['tool_calls']==0,'One tool-free model output required')
         content.require(session['id'] not in [a.get('session_id') for a in state['attempts'][:-1]],'Fresh independent sessions required')
         value=response['content'];save(root/f'{role}.json',value)
-        known=set(payload.get('supplied_scope_ids',evidence._scopes(bundle)))
+        known=known_sources(payload,bundle)
+        # Full replacement output retains source IDs on immutable components;
+        # final checking may cite the authenticated earlier review for those.
+        known|=content.cited(payload.get('current_output',{}))|content.cited(payload.get('prior_review',{}))
         content.require(content.cited(value)<=known,'Citations must refer to supplied original evidence')
         return value
     except Exception:
@@ -205,15 +236,15 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
         content.require(inventory.build(bundle['manifest']['sources'])==bundle['packet_inventory'],'Original extraction differs')
         config=content.financial_configuration(bundle,spec.get('financial_analysis'));save(root/'financial-configuration.json',config)
         save(root/'passages.json',passages.catalog(root/'sources/manifest.json'))
-        original=packet(bundle);known=set(evidence._scopes(bundle))
-        original['supplied_scope_ids']=sorted({i for i in known if not i.startswith('D')}|{r[0] for r in original['document_scopes']})
+        original=packet(bundle)
         shared={'questions':questions.QUESTIONS,'shared_report_requirements':report_contract.requirements(),
                 'writing_standard':Path(spec['writing_standard']).read_text(),'financial_configuration':config,
                 'valuation_inventory':bundle['valuation_inventory'],
                 'upstream_coverage':{k:bundle['packet_inventory'][k] for k in ('source_set','periods','policy','coverage')},
                 'citation_rules':'Cite only exact supplied D/F/document-source/turn/exchange/section IDs or transcript-source. Do not use human labels or candidate locations as citations. Financial row fact_ids select existing F IDs; they are not invented numeric values.'}
         state['stage']='author';checkpoint()
-        value=model_call(root,state,bundle,'author',{**original,**shared,'instructions':content.author_requirements()},invoke,checkpoint)
+        author_instructions=content.author_requirements()+'\nSelection consistency: cite original D chunk IDs or document-source IDs for basis. A selected metric cannot also be listed as a gap. Gross margin is computed when compatible revenue and gross-profit/cost inputs are selected; lack of a separately reported percentage is NOT a gap. A net-capex disclosure is not gross capex: select its original reported-table row instead and leave gross capex unavailable. Never label net spending as gross for FCF.'
+        value=model_call(root,state,bundle,'author',{**original,**shared,'instructions':author_instructions},invoke,checkpoint)
         validation_error=None
         try:candidate,financial=compile_report(root,bundle,config,value,0)
         except (ValueError,KeyError,TypeError) as exc:validation_error=str(exc)
@@ -224,16 +255,16 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
             review=model_call(root,state,bundle,'review',{**review_input,**shared,'instructions':review_requirements(),
                 'candidate':candidate,'financial_verification':{'status':'reproduced','financial_sha256':storage.digest(financial)},
                 'financial_selection':value['financial_selection']},invoke,checkpoint)
-            validate_review(review,set(review_input['supplied_scope_ids']))
+            validate_review(review,known_sources(review_input,bundle))
         if validation_error is not None or review['verdict']=='revise':
             state.update(stage='correction',corrections=1);checkpoint()
             if validation_error:
-                correction_input=original;fault={'validation_error':validation_error}
+                correction_input=validation_packet(original);fault={'validation_error':validation_error}
             else:
                 needs_tables=any(f['severity']=='blocking' and f['location']=='financial_tables' for f in review['findings'])
                 correction_input=revision_packet(bundle,original,value,review,needs_tables);fault={'review':review}
             corrected=model_call(root,state,bundle,'correction',{**correction_input,**shared,**fault,'current_output':value,
-                'instructions':content.author_requirements()+'\nCORRECTION: This is the sole correction allowance. Return the complete two-key output, correcting blocking findings or the compiler error. Preserve every unflagged component exactly, including title, section text, Q&A and selection. Financial-table errors permit selection and affected prose changes against the SAME inventory. Do not change sources, invent numbers, or act on advisory preferences. Keep the report-support excerpts synchronized.'},invoke,checkpoint)
+                'instructions':author_instructions+'\nCORRECTION: This is the sole correction allowance. Return the complete two-key output, correcting blocking findings or the compiler error. Preserve every unflagged component exactly, including title, section text, Q&A and selection. Financial-table errors permit selection and affected prose changes against the SAME inventory. Do not change sources, invent numbers, or act on advisory preferences. Keep the report-support excerpts synchronized.'},invoke,checkpoint)
             if not validation_error:correction_scope(value,corrected,review)
             candidate,financial=compile_report(root,bundle,config,corrected,1)
             state['stage']='check';checkpoint()
@@ -243,7 +274,7 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
             final=model_call(root,state,bundle,'check',{**check_input,**shared,'instructions':review_requirements(),
                 'candidate':candidate,'prior_review':review,'financial_selection':corrected['financial_selection'],
                 'financial_verification':{'status':'reproduced','financial_sha256':storage.digest(financial)}},invoke,checkpoint)
-            validate_review(final,set(check_input['supplied_scope_ids']));review=final
+            validate_review(final,known_sources(check_input,bundle)|content.cited(review or {}));review=final
         content.require(review['verdict']=='pass','Material errors remain after the sole correction')
         # Original sources and extraction are verified again before publishing.
         frozen=evidence.load_bundle(root/'sources/manifest.json')

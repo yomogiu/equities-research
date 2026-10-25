@@ -95,7 +95,7 @@ def validate(value,bundle):
         require(row['metric'] in METRICS,'Unknown selected calculation role')
         for k in ('label','basis','definition'):text(row[k])
         require(row['basis'] in ('GAAP','IFRS','non-GAAP'),'Explicit bounded accounting classification required')
-        citations(row['citations']);require(any(i.startswith('D') for i in row['citations']),'Original statement/note support required for mapping and basis')
+        citations(row['citations']);require(any(i.startswith(('D','document-source-')) for i in row['citations']),'Original statement/note support required for mapping and basis')
         ids=row['fact_ids'];require(isinstance(ids,list) and ids and len(ids)<=100 and len(set(ids))==len(ids) and set(ids)<=set(byid),'Known unique selected fact IDs required')
         require(not selected.intersection(ids),'A fact cannot be assigned to multiple metric rows');selected.update(ids);covered.add(row['metric'])
         signatures=set();period_values={}

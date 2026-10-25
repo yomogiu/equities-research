@@ -198,7 +198,8 @@ class Evidence:
         value=self.artifacts.get('single_report_packet')
         require(isinstance(value,dict) and value.get('version')==metadata.get('single_report_version'), 'Bound report packet required')
         body=json.dumps(value,ensure_ascii=False,separators=(',',':'))
-        require(len(body.encode())<=900000,'Report packet exceeds context bound')
+        maximum=1050000 if metadata.get('single_report_version')=='simple-report-v1' else 900000
+        require(len(body.encode())<=maximum,'Report packet exceeds context bound')
         return body
 
     def output(self, identifier, start=0, limit=768):

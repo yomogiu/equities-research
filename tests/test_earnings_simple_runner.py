@@ -101,3 +101,19 @@ class SimpleRunnerTests(unittest.TestCase):
     def test_style_cannot_be_a_failed_criterion(self):
         self.run_one();review=simple.read(self.job/'review.json');review['criteria']['concise_writing']['status']='fail'
         with self.assertRaisesRegex(ValueError,'Style alone'):simple.validate_review(review,set(simple.content.cited(review)))
+
+    def test_simple_context_accepts_funded_large_packet_without_changing_legacy_limit(self):
+        from types import SimpleNamespace
+        root=self.root/'context';root.mkdir()
+        reader=SimpleNamespace(root=root,artifacts={'single_report_packet':{'version':simple.VERSION,'text':'x'*950000}})
+        simple.save(root/'metadata.json',{'single_report_version':simple.VERSION})
+        self.assertGreater(len(context.Evidence._report_packet(reader)),900000)
+        reader.artifacts['single_report_packet']['text']='x'*1050000
+        with self.assertRaisesRegex(ValueError,'context bound'):context.Evidence._report_packet(reader)
+        reader.artifacts['single_report_packet'].update(version='single-author-report-v2',text='x'*950000)
+        simple.save(root/'metadata.json',{'single_report_version':'single-author-report-v2'})
+        with self.assertRaisesRegex(ValueError,'context bound'):context.Evidence._report_packet(reader)
+
+    def test_fixed_budget_still_stops_before_any_call(self):
+        with patch.object(simple,'BUDGET',100):value=self.run_one()
+        self.assertEqual(value['status'],'failed');self.assertFalse(self.calls);self.assertEqual(value['tokens_used'],0)

@@ -39,6 +39,15 @@ class SelectionTests(unittest.TestCase):
         self.value['rows'][0]['value']='999'
         with self.assertRaisesRegex(ValueError,'Exact selected row'):selection.validate(self.value,self.bundle)
 
+    def test_original_document_ids_are_valid_statement_support(self):
+        value=copy.deepcopy(self.value)
+        for row in value['rows']:row['citations']=['document-source-fictional']
+        known={'D001':{},'document-source-fictional':{}}
+        with patch.object(selection.evidence,'_scopes',return_value=known):
+            selection.validate(value,self.bundle)
+        value['rows'][0]['citations']=['document-source-invented']
+        with self.assertRaisesRegex(ValueError,'Known original'):selection.validate(value,self.bundle)
+
     def test_unknown_nil_proposed_and_duplicate_fact_ids_rejected(self):
         for mutation in ('unknown','nil','proposed','duplicate'):
             v=copy.deepcopy(self.value);b=copy.deepcopy(self.bundle)
