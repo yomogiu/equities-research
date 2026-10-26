@@ -167,3 +167,85 @@ class SimpleRunnerTests(unittest.TestCase):
         page=(self.job/'report.html').read_text()
         self.assertIn('<header>Accepted after independent review</header>',page)
         self.assertEqual(page.replace('<header>Accepted after independent review</header>','<header>Draft — review pending</header>'),simple.finance.preview_html(candidate))
+
+    def citation_invoke(self, author_citation=None, correction_citation=None, review_citation=None):
+        original=self.invoke
+        def invoke(*args,**kwargs):
+            response=original(*args,**kwargs);value=response['content'];role=self.calls[-1]
+            bundle=simple.evidence.load_bundle(self.job/'sources/manifest.json')
+            table=bundle['packet_inventory']['tables'][0]
+            choice={'author':author_citation,'correction':correction_citation,'review':review_citation}.get(role)
+            citation={'table':table['id'],'document':table['source_id']}.get(choice,choice)
+            if choice is not None:
+                target=value['criteria']['source_accuracy'] if role=='review' else value['analysis']['sections']['demand']
+                target['citations']=[citation]
+                if choice=='table':target['citations'].append(table['source_id'])
+            simple.save(Path(args[0])/'output.json',value)
+            return response
+        return invoke
+
+    def test_exact_table_alias_publishes_without_correction_and_preserves_raw_receipt(self):
+        state=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=self.citation_invoke(author_citation='table'))
+        self.assertEqual(state['status'],'published',state.get('reason'));self.assertEqual(self.calls,['author','review'])
+        raw=simple.read(self.job/'author.json');resolved=simple.read(self.job/'author-resolved.json')
+        self.assertEqual(raw,simple.read(self.job/'roles/0/output.json'))
+        self.assertTrue(raw['analysis']['sections']['demand']['citations'][0].startswith('T-'))
+        self.assertEqual(len(resolved['analysis']['sections']['demand']['citations']),1)
+        self.assertEqual(raw['financial_selection'],resolved['financial_selection'])
+        self.assertEqual(raw['analysis']['sections']['demand']['text'],resolved['analysis']['sections']['demand']['text'])
+        trace=simple.read(self.job/'author-citations.json')
+        self.assertEqual(len(trace['changes']),1)
+        self.assertEqual(trace['raw_sha256'],simple.storage.sha(self.job/'author.json'))
+        self.assertEqual(trace['resolved_sha256'],simple.storage.sha(self.job/'author-resolved.json'))
+
+    def test_unknown_author_citation_uses_one_correction_then_independent_review(self):
+        state=simple.run_company(self.job,self.spec,self.prepare,self.publish,
+            invoke=self.citation_invoke(author_citation='T-fictional-unknown',correction_citation='document'))
+        self.assertEqual(state['status'],'published',state.get('reason'));self.assertEqual(self.calls,['author','correction','review'])
+        self.assertEqual(state['corrections'],1);self.assertEqual(state['tokens_used'],300)
+        payload=simple.read(self.job/'contexts/1/artifacts.json')['single_report_packet']
+        self.assertIn('T-fictional-unknown',payload['validation_error'])
+        self.assertIn('documents',simple.read(self.job/'contexts/2/artifacts.json')['single_report_packet'])
+        self.assertEqual(simple.read(self.job/'author.json')['analysis']['sections']['demand']['citations'],['T-fictional-unknown'])
+
+    def test_unknown_citation_after_correction_stays_terminal_and_charged(self):
+        state=simple.run_company(self.job,self.spec,self.prepare,self.publish,
+            invoke=self.citation_invoke(author_citation='T-fictional-unknown',correction_citation='T-fictional-unknown'))
+        self.assertEqual(state['status'],'failed');self.assertEqual(self.calls,['author','correction'])
+        self.assertEqual(state['tokens_used'],200);self.assertEqual(state['corrections'],1)
+        self.assertFalse((self.job/'report.html').exists());self.assertEqual(self.run_one(),state)
+        self.assertEqual(len(self.calls),2)
+
+    def test_malformed_author_citation_gets_correction_without_laundering_invalid_input(self):
+        original=self.invoke
+        def invoke(*args,**kwargs):
+            response=original(*args,**kwargs);value=response['content']
+            if self.calls[-1]=='author':value['analysis']['sections']['demand']['citations']=[{'invalid':'Fictional malformed reference'}]
+            if self.calls[-1]=='correction':value['analysis']['sections']['demand']['citations']=['D001']
+            return response
+        state=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=invoke)
+        self.assertEqual(state['status'],'published',state.get('reason'));self.assertEqual(self.calls,['author','correction','review'])
+        self.assertIsInstance(simple.read(self.job/'author-resolved.json')['analysis']['sections']['demand']['citations'][0],dict)
+
+    def test_review_table_alias_is_bound_to_raw_and_resolved_review(self):
+        state=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=self.citation_invoke(review_citation='table'))
+        self.assertEqual(state['status'],'published',state.get('reason'))
+        self.assertEqual(state['review_sha256'],simple.storage.sha(self.job/'review-resolved.json'))
+        self.assertNotEqual(simple.read(self.job/'review.json'),simple.read(self.job/'review-resolved.json'))
+        self.assertEqual(len(simple.read(self.job/'review-citations.json')['changes']),1)
+
+    def test_unknown_reviewer_citation_never_authorizes_publication(self):
+        state=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=self.citation_invoke(review_citation='T-fictional-unknown'))
+        self.assertEqual(state['status'],'failed');self.assertEqual(self.calls,['author','review'])
+        self.assertFalse((self.job/'publication.json').exists())
+
+    def test_citation_resolution_does_not_rewrite_fact_selection_or_unsupplied_sources(self):
+        self.run_one();bundle=simple.evidence.load_bundle(self.job/'sources/manifest.json');table=bundle['packet_inventory']['tables'][0]
+        value={'table_id':table['id'],'fact_ids':[table['id']],'text':'Fictional original text.',
+               'citations':[table['id'],table['source_id'],'T-fictional-unknown']}
+        original=copy.deepcopy(value)
+        resolved,trace=simple.resolve_citations(value,bundle,{table['source_id']})
+        self.assertEqual(value,original);self.assertEqual(resolved['table_id'],value['table_id']);self.assertEqual(resolved['fact_ids'],value['fact_ids'])
+        self.assertEqual(resolved['citations'],[table['source_id'],'T-fictional-unknown']);self.assertEqual(len(trace),1)
+        unavailable,trace=simple.resolve_citations(value,bundle,set())
+        self.assertEqual(unavailable,value);self.assertEqual(trace,[])

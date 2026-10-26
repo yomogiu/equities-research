@@ -36,6 +36,15 @@ The final check receives the complete candidate, full call, complete cited origi
 scopes for actual changed claims and blocking findings, and prior review. Unchanged claims retain their original independent review; the final check sees the complete candidate and exact change map. Numerical selections are revalidated against frozen extraction.
 A schema failure without an initial review receives full-packet independent checking.
 
+Exact captured table IDs in citation lists resolve deterministically to their source
+documents. Fact IDs, selected table IDs, financial values and prose are unchanged.
+Raw model outputs and their authenticated receipts remain immutable; separate resolved
+outputs and citation-mapping records bind both versions by hash. Review acceptance
+binds the resolved review, whose raw output and deterministic mapping remain auditable.
+Unknown citations and author schema/selection errors use the existing single correction
+allowance. Persistent errors block publication. Transport, receipt, source-integrity and
+budget failures remain terminal; this change adds no paid retry or allowance.
+
 The private `run_simple_reports.py` adapter freezes an ordered manifest before testing,
 checks clean code and adapter hashes, and selects consecutive untouched qualified packets
 from the authorized batch. It persists stage state and verifies exact remote report bytes.

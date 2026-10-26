@@ -95,9 +95,44 @@ Return exactly {"verdict":"pass|revise","criteria":{NAME:{"status":"pass|warning
 Verdict revise if and only if a blocking finding exists. Every failed check requires a blocking finding. concise_writing can be pass or warning, never fail. No hidden reasoning. Criteria: '''+', '.join(content.CRITERIA)+'. Questions: '+', '.join(questions.QUESTIONS)+'.'
 
 
-def compile_report(root, bundle, config, value, number):
-    content.require(set(value)=={'financial_selection','analysis'},'Exact author fields required')
-    known=set(evidence._scopes(bundle))
+def resolve_citations(value, bundle, known):
+    """Resolve exact, source-bound table aliases; never change facts or prose."""
+    tables={t['id']:t for t in bundle['packet_inventory']['tables'] if t['source_id'] in known}
+    resolved=deepcopy(value);changes=[]
+    def visit(node,path=''):
+        if isinstance(node,dict):
+            for key,child in node.items():
+                if key=='citations' and isinstance(child,list):
+                    citations=[]
+                    for index,identifier in enumerate(child):
+                        table=tables.get(identifier) if isinstance(identifier,str) else None
+                        if table:
+                            changes.append({'path':path+'/citations/'+str(index),'table_id':identifier,
+                                'source_id':table['source_id'],'raw_span_sha256':table['raw_span_sha256']})
+                            identifier=table['source_id']
+                        # Two valid aliases may identify the same original source.
+                        if identifier not in citations:citations.append(identifier)
+                    node[key]=citations
+                else:visit(child,path+'/'+key)
+        elif isinstance(node,list):
+            for index,child in enumerate(node):visit(child,path+'/'+str(index))
+    visit(resolved)
+    return resolved,changes
+
+
+def resolved_output(root, bundle, role, value, known):
+    resolved,changes=resolve_citations(value,bundle,known)
+    save(root/f'{role}-resolved.json',resolved)
+    save(root/f'{role}-citations.json',{'raw_sha256':storage.sha(root/f'{role}.json'),
+        'resolved_sha256':storage.sha(root/f'{role}-resolved.json'),'changes':changes})
+    return resolved
+
+
+def compile_report(root, bundle, config, value, number, *, known=None):
+    content.require(isinstance(value,dict) and set(value)=={'financial_selection','analysis'},'Exact author fields required')
+    known=set(evidence._scopes(bundle)) if known is None else known
+    unknown=content.cited(value)-known
+    content.require(not unknown,'Citations must refer to supplied original evidence; unknown IDs: '+', '.join(sorted(map(str,unknown))))
     content.validate_analysis(value['analysis'],known,{x['id'] for x in bundle['transcript_index']['exchanges']})
     report_contract.validate(value['analysis'].get('report_support'),value['analysis'],root/'sources/manifest.json')
     qualified=selection.apply(statements.qualify(bundle),value['financial_selection'])
@@ -206,11 +241,6 @@ def model_call(root, state, bundle, role, payload, invoke, checkpoint):
         content.require(session['model_turns']==1 and session['tool_calls']==0,'One tool-free model output required')
         content.require(session['id'] not in [a.get('session_id') for a in state['attempts'][:-1]],'Fresh independent sessions required')
         value=response['content'];save(root/f'{role}.json',value)
-        known=known_sources(payload,bundle)
-        # Full replacement output retains source IDs on immutable components;
-        # final checking may cite the authenticated earlier review for those.
-        known|=content.cited(payload.get('current_output',{}))|content.cited(payload.get('prior_review',{}))
-        content.require(content.cited(value)<=known,'Citations must refer to supplied original evidence')
         return value
     except Exception:
         if attempt['status']=='running':
@@ -250,7 +280,7 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
         content.require(inventory.build(bundle['manifest']['sources'])==bundle['packet_inventory'],'Original extraction differs')
         config=content.financial_configuration(bundle,spec.get('financial_analysis'));save(root/'financial-configuration.json',config)
         save(root/'passages.json',passages.catalog(root/'sources/manifest.json'))
-        original=packet(bundle)
+        original=packet(bundle);original_known=known_sources(original,bundle)
         shared={'questions':questions.QUESTIONS,'shared_report_requirements':report_contract.requirements(),
                 'writing_standard':Path(spec['writing_standard']).read_text(),'financial_configuration':config,
                 'valuation_inventory':bundle['valuation_inventory'],
@@ -258,12 +288,13 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
                     'coverage':[{**{k:v for k,v in row.items() if k!='limitations'},
                         'limitations':list(dict.fromkeys(str(v.get('reason')) if isinstance(v,dict) else str(v) for v in row['limitations']))}
                         for row in bundle['packet_inventory']['coverage']]},
-                'citation_rules':'Cite only exact supplied D/F/document-source/turn/exchange/section IDs or transcript-source. Do not use human labels or candidate locations as citations. Financial row fact_ids select existing F IDs; they are not invented numeric values.'}
+                'citation_rules':'Cite only exact supplied D/F/document-source/turn/exchange/section IDs or transcript-source. An exact captured table ID in citations is resolved to its original document; financial_selection.table_id and fact_ids remain unchanged. Do not use human labels or candidate locations as citations. Financial row fact_ids select existing F IDs; they are not invented numeric values.'}
         state['stage']='author';checkpoint()
         author_instructions=content.author_requirements()+'\nSelection consistency: cite original D chunk IDs or document-source IDs for basis. A selected metric cannot also be listed as a gap. Gross margin is computed when compatible revenue and gross-profit/cost inputs are selected; lack of a separately reported percentage is NOT a gap. A net-capex disclosure is not gross capex: select its original reported-table row instead and leave gross capex unavailable. Never label net spending as gross for FCF.'
         value=model_call(root,state,bundle,'author',{**original,**shared,'instructions':author_instructions},invoke,checkpoint)
+        value=resolved_output(root,bundle,'author',value,original_known)
         validation_error=None
-        try:candidate,financial=compile_report(root,bundle,config,value,0)
+        try:candidate,financial=compile_report(root,bundle,config,value,0,known=original_known)
         except (ValueError,KeyError,TypeError) as exc:validation_error=str(exc)
         review=None
         if validation_error is None:
@@ -272,6 +303,7 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
             review=model_call(root,state,bundle,'review',{**review_input,**shared,'instructions':review_requirements(),
                 'candidate':candidate,'financial_verification':{'status':'reproduced','financial_sha256':storage.digest(financial)},
                 'financial_selection':value['financial_selection']},invoke,checkpoint)
+            review=resolved_output(root,bundle,'review',review,known_sources(review_input,bundle))
             validate_review(review,known_sources(review_input,bundle))
         if validation_error is not None or review['verdict']=='revise':
             state.update(stage='correction',corrections=1);checkpoint()
@@ -282,7 +314,12 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
                 correction_input=revision_packet(bundle,original,value,review,needs_tables);fault={'review':review}
             corrected=model_call(root,state,bundle,'correction',{**correction_input,**shared,**fault,'current_output':value,
                 'instructions':author_instructions+'\nCORRECTION: This is the sole correction allowance. Return the complete two-key output, correcting blocking findings or the compiler error. Make only changes necessary to resolve the blocking findings. Preserve unrelated title, prose, Q&A and financial selections. A finding in a narrative section may require a source-backed financial note or basis clarification; reviewer locations are navigation labels, not edit permissions. Financial selections may change only against supplied original facts and tables. Do not change sources, invent numbers, or act on advisory preferences. Keep the report-support excerpts synchronized.'},invoke,checkpoint)
-            candidate,financial=compile_report(root,bundle,config,corrected,1)
+            # Corrections can retain initially supplied sources even when their
+            # text is omitted from this smaller repair packet. Changed claims
+            # receive complete original evidence in the independent final check.
+            correction_known=known_sources(correction_input,bundle)|original_known
+            corrected=resolved_output(root,bundle,'correction',corrected,correction_known)
+            candidate,financial=compile_report(root,bundle,config,corrected,1,known=correction_known)
             state['stage']='check';checkpoint()
             # A schema/selection failure had no independent full-source review yet.
             check_input=({k:v for k,v in original.items() if k!='financial_inventory'} if validation_error else
@@ -290,14 +327,16 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
             final=model_call(root,state,bundle,'check',{**check_input,**shared,'instructions':review_requirements(),
                 'candidate':candidate,'prior_review':review,'changes':changed_claims(value,corrected),'financial_selection':corrected['financial_selection'],
                 'financial_verification':{'status':'reproduced','financial_sha256':storage.digest(financial)}},invoke,checkpoint)
-            validate_review(final,known_sources(check_input,bundle)|content.cited(review or {}));review=final
+            check_known=known_sources(check_input,bundle)|content.cited(review or {})
+            final=resolved_output(root,bundle,'check',final,check_known)
+            validate_review(final,check_known);review=final
         content.require(review['verdict']=='pass','Material errors remain after the sole correction')
         # Original sources and extraction are verified again before publishing.
         frozen=evidence.load_bundle(root/'sources/manifest.json')
         content.require(inventory.build(frozen['manifest']['sources'])==bundle['packet_inventory'],'Frozen extraction changed')
         number=state['corrections'];exact=root/f'candidate-{number}.md'
         content.require(exact.read_text()==candidate,'Reviewed candidate changed')
-        state.update(stage='publication',accepted_sha256=storage.sha(exact),review_sha256=storage.sha(root/('check.json' if number else 'review.json')));checkpoint()
+        state.update(stage='publication',accepted_sha256=storage.sha(exact),review_sha256=storage.sha(root/('check-resolved.json' if number else 'review-resolved.json')));checkpoint()
         (root/'report.md').write_text(candidate);(root/'report.html').write_text(finance.preview_html(candidate,status='accepted'))
         receipt=publish(root,state)
         content.require(receipt.get('candidate_sha256')==state['accepted_sha256'] and receipt.get('html_sha256')==storage.sha(root/'report.html') and receipt.get('verification')=='exact_remote_bytes','Publication bytes unconfirmed')
