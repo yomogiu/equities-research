@@ -96,9 +96,15 @@ def normalization_gaps(value,bundle):
     tables={t['id']:t for t in bundle['packet_inventory']['tables']}
     citations=sorted({tables[p['table_id']]['source_id'] for p in value['reported_tables']})
     existing={g.get('metric') for g in value['gaps'] if isinstance(g,dict)}
-    added=sorted(REQUIRED-{'annual_eps','price'}-existing)
+    missing=REQUIRED-{'annual_eps','price'}
+    valuation=bundle.get('valuation_inventory',{})
+    if valuation.get('annual_eps')==[]:missing=missing|{'annual_eps'}
+    if valuation.get('prices')==[]:missing=missing|{'price'}
+    added=sorted(missing-existing)
+    reasons={'annual_eps':'No qualified annual-EPS input is present in the frozen valuation inventory. Reported EPS may still appear in the original tables; no annual earnings multiple is computed.',
+             'price':'No qualified dated, security- and currency-matched price is present in the frozen valuation inventory. Provider navigation quotes are not qualified prices.'}
     for metric in added:
-        value['gaps'].append({'metric':metric,'reason':'No normalized numeric observations were extracted from this packet. Original reported tables remain available; this is an extraction limitation, not evidence of issuer nondisclosure.','citations':citations})
+        value['gaps'].append({'metric':metric,'reason':reasons.get(metric,'No normalized numeric observations were extracted from this packet. Original reported tables remain available; this is an extraction limitation, not evidence of issuer nondisclosure.'),'citations':citations})
     return value,added
 
 

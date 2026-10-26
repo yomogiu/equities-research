@@ -59,8 +59,22 @@ class FreshSourcesTests(unittest.TestCase):
         self.assertEqual(normalized['reported_tables'],value['reported_tables'])
         self.assertTrue(all('not evidence of issuer nondisclosure' in g['reason'] for g in normalized['gaps']))
         self.assertEqual(selection.normalization_gaps(normalized,bundle),(normalized,[]))
+        bundle['valuation_inventory']={'annual_eps':[],'prices':[]}
+        self.assertEqual(set(selection.normalization_gaps(value,bundle)[1]),selection.REQUIRED)
+        bundle['valuation_inventory']={'annual_eps':[{'id':'EPS-fake'}],'prices':[{'id':'price-fake'}]}
+        self.assertEqual(set(selection.normalization_gaps(value,bundle)[1]),selection.REQUIRED-{'price','annual_eps'})
         bundle['financial']['observations']=[{'id':'F1'}]
         self.assertEqual(selection.normalization_gaps(value,bundle),(value,[]))
+
+    def test_pdf_numeric_unit_and_year_header_survives_row_selection(self):
+        text='[Page 1]\n'+f'{"Amounts USD thousand":25}{"2040":>12}{"2039":>12}\n'
+        for label,a,b in [('Revenue','120 000','100 000'),('Cost','-80 000','-70 000'),('Profit','40 000','30 000')]:
+            text+=f'{label:25}{a:>12}{b:>12}\n'
+        t=pdf.tables(text,{'document_id':'fictional','sha256':financial.digest(text.encode())})[0]
+        t['selected_row_ids']=['R2']
+        rendered='\n'.join(pdf.render(t))
+        self.assertIn('Amounts USD thousand',rendered);self.assertIn('2040',rendered);self.assertIn('2039',rendered)
+        self.assertIn('120 000',rendered);self.assertNotIn('-80 000',rendered)
 
     def test_retest_budget_can_only_reduce_fixed_ceiling(self):
         from research import earnings_simple_runner as runner

@@ -79,7 +79,9 @@ def render(table):
     for row in table['rows']:
         values=[cells[i] for i in row['cells']]
         numeric=sum(bool(NUMBER.fullmatch(c['text'])) for c in values)
-        data=numeric>=2 and any(re.search('[A-Za-z]',c['text']) for c in values)
+        label=next((c['text'] for c in values if re.search('[A-Za-z]',c['text'])),'')
+        header=bool(re.search(r'^(?:amounts|note|currency|units?|USD|EUR|NOK|GBP|SEK|CHF)\b',label,re.I))
+        data=not header and numeric>=2 and any(re.search('[A-Za-z]',c['text']) for c in values)
         if data and row['id'] not in chosen:continue
         line=['']*width
         for c in values:line[c['column']]=c['text']

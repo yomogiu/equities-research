@@ -88,3 +88,9 @@ A new explicitly scoped development retest may reduce its ceiling by exact prior
 usage. It cannot increase the fixed ceiling, mutate the failed job, reuse paid outputs,
 or reset costs. The private manifest binds prior terminal receipts and the remaining
 allowance; the retest still starts with fresh sources and its own one-correction limit.
+
+Empty explicit price and annual-EPS inventories also receive deterministic gap labels;
+this never supplies a valuation input or overrides an existing qualified value. PDF
+unit/year/date header rows are retained even when authors select only metric rows.
+Source-backed narrative FCF arithmetic remains required when reported inputs permit it,
+with cash-capex/software/development conventions stated separately from normalization.
