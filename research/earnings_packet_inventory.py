@@ -93,7 +93,18 @@ def build(sources):
                'tagged_observations':0,'tables':0,'status':'extracted','limitations':[]}
         try: raw = data.decode('utf-8')
         except UnicodeDecodeError:
-            row.update(status='unsupported_format', limitations=['Binary/PDF source requires a qualified table representation; not issuer nondisclosure.'])
+            text_sources=[s for s in sources if s['document_id']==source['document_id'] and s['representation']=='text'
+                          and s.get('derived_from_sha256')==source['sha256'] and s.get('extraction')=='pdftotext-layout-v1']
+            if data.startswith(b'%PDF') and len(text_sources)==1:
+                from . import earnings_pdf_tables
+                original=text_sources[0];text_data=Path(original['path']).read_bytes()
+                if financial.digest(text_data)!=original['sha256']:raise ValueError('PDF text source changed')
+                captured=earnings_pdf_tables.tables(text_data.decode('utf-8'),original)
+                extracted_tables.extend(captured)
+                row.update(status='pdf_positional_tables',tables=len(captured),
+                    limitations=['Verbatim positional PDF rows; no normalized fact, unit or period inference. Complete PDF and extracted text retained.'])
+            else:
+                row.update(status='unsupported_format', limitations=['Binary/PDF source requires a qualified table representation; not issuer nondisclosure.'])
             coverage.append(row); continue
         binding = {'document_id':source['document_id'],'raw_sha256':source['sha256']}
         artifact = financial.extract_inline_xbrl(raw, binding)
@@ -162,8 +173,9 @@ def validate_selection(rows, bundle):
         ids=pick['row_ids']; known={r['id']:r for r in table['rows']}
         if not isinstance(ids,list) or not ids or len(ids)!=len(set(ids)) or not set(ids)<=set(known):raise ValueError('Known unique original table rows required')
         cells={c['id']:c for c in table['cells']}
+        allowed={'explicit'} if table.get('representation')!='pdf_layout_text' else {'pdf_positional','pdf_unresolved_line'}
         for rid in ids:
-            if any(cells[c]['nested_table'] or cells[c]['layout']!='explicit' for c in known[rid]['cells']):
+            if any(cells[c]['nested_table'] or cells[c]['layout'] not in allowed for c in known[rid]['cells']):
                 raise ValueError('Ambiguous or nested layout cannot become a report table')
     return rows
 
@@ -222,6 +234,9 @@ def render_compact(table):
     from . import earnings_markdown_render as markdown
     cells={c['id']:c for c in table['cells']}; chosen=set(table['selected_row_ids'])
     rows=[row for row in table['rows'] if row['id'] in chosen]
+    if table.get('representation')=='pdf_layout_text':
+        from . import earnings_pdf_tables
+        return earnings_pdf_tables.render(table)
     numeric=lambda text:bool(re.fullmatch(r'[($€£+\-−]?\s*[\d,.]+\s*[%)]?',text))
     def data(row):
         populated=[cells[i] for i in row['cells'] if cells[i]['text']]

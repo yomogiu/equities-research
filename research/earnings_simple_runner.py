@@ -275,10 +275,11 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
     checkpoint()
     try:
         case=prepare(root,spec)
+        state['source_period']=read(case)['period'] if 'period' in read(case) else spec.get('period')
         evidence.prepare(case,root/'sources');bundle=evidence.load_bundle(root/'sources/manifest.json')
         content.require(bundle.get('packet_inventory') is not None,'Packet-wide financial inventory required')
         content.require(inventory.build(bundle['manifest']['sources'])==bundle['packet_inventory'],'Original extraction differs')
-        config=content.financial_configuration(bundle,spec.get('financial_analysis'));save(root/'financial-configuration.json',config)
+        config=content.financial_configuration(bundle,spec.get('financial_analysis') or read(case).get('financial_configuration'));save(root/'financial-configuration.json',config)
         save(root/'passages.json',passages.catalog(root/'sources/manifest.json'))
         original=packet(bundle);original_known=known_sources(original,bundle)
         shared={'questions':questions.QUESTIONS,'shared_report_requirements':report_contract.requirements(),

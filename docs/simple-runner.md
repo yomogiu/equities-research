@@ -51,3 +51,27 @@ from the authorized batch. It persists stage state and verifies exact remote rep
 The batch is not a schedule. Automation remains paused during validation. Historical
 jobs and costs are unchanged. Genuine autonomy evidence requires consecutive live runs
 on a frozen version, without operator edits or extensions; fake tests alone do not prove it.
+
+Fresh-source tests may provide an explicit verified-issuer source profile instead of
+an archived packet. `earnings_fresh_sources` uses the existing bounded HTTPS client,
+text/PDF extraction and native transcript index. It discovers the latest completed
+ordinary quarter from an approved public issuer index, fetches the call and its exact
+attached report, prefers an available official PDF, and permits an explicitly approved
+provider mirror. It verifies issuer/quarter, financial-statement coverage and indexed
+Q&A before passing an immutable source case directly to the finite runner. Retrieval
+failures and every source hash remain in the case; source failures terminate before
+paid authorship. It creates no global library acceptance or legacy qualification handoff.
+
+The initial adapter supports English calendar-year quarterly PDF reports and the
+configured public transcript-provider layout. Unsupported calendars, stale/ambiguous
+periods, missing statements or unindexed calls fail explicitly. It observes issuer/period
+transcript exclusions. Discovery is scoped to the configured indexes, not a guarantee
+that every public disclosure was found. Source matching is deterministic; independent
+report review still checks source interpretation. No source-model allowance is added.
+
+`earnings_pdf_tables` retains original page text, units, header rows, sparse numeric
+columns and source spans. PDF rows can be selected as reported tables. They do not
+become inferred XBRL facts; normalized QoQ/YoY calculations remain unavailable without
+qualified normalized inputs. Original tagged extraction and Decimal calculations are
+unchanged. PDF text is bound to the original bytes and independently reproducible with
+Poppler; positional limitations remain visible.
