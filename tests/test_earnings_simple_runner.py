@@ -131,3 +131,32 @@ class SimpleRunnerTests(unittest.TestCase):
         value=self.run_one()
         self.assertEqual(value['status'],'failed');self.assertFalse(self.calls)
         self.assertIn('serialized context',value['reason'])
+
+    def test_correction_can_clarify_financial_note_for_narrative_finding(self):
+        self.finding='blocking';original=self.invoke
+        def clarify(*args,**kwargs):
+            result=original(*args,**kwargs)
+            if self.calls[-1]=='correction':
+                result['content']['financial_selection']['notes']=[{'text':'Fictional unit clarification.','citations':['D001']}]
+            return result
+        value=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=clarify)
+        self.assertEqual(value['status'],'published',value.get('reason'));self.assertEqual(len(self.calls),4)
+
+    def test_revision_sources_actual_changes_without_resending_old_claims(self):
+        self.run_one();bundle=simple.evidence.load_bundle(self.job/'sources/manifest.json');original=simple.packet(bundle)
+        value=simple.read(self.job/'author.json');after=copy.deepcopy(value)
+        after['financial_selection']['notes']=[{'text':'Fictional revised basis.','citations':['D001']}]
+        review=simple.read(self.job/'review.json');review['findings']=[{'severity':'blocking','location':'cash','citations':[]}]
+        result=simple.revision_packet(bundle,original,after,review,before=value)
+        self.assertEqual([row['id'] for row in result['original_support']],['D001'])
+        self.assertNotIn('financial_inventory',result)
+        review['findings'][0]['location']='financial_tables'
+        correction=simple.revision_packet(bundle,original,value,review,True)
+        self.assertEqual(correction['original_support'],[])
+        self.assertEqual(correction['financial_inventory'],original['financial_inventory'])
+        self.assertEqual(simple.changed_claims({'a':1,'b':2},{'a':1}),{'b':{'removed':2}})
+
+    def test_changed_text_keeps_unchanged_citations_for_independent_check(self):
+        before={'sections':{'cash':{'text':'Old fictional claim.','citations':['D002']}}}
+        after=copy.deepcopy(before);after['sections']['cash']['text']='New fictional claim.'
+        self.assertEqual(simple.changed_claims(before,after),after)

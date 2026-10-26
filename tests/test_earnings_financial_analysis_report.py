@@ -48,9 +48,9 @@ class FinancialTableTests(unittest.TestCase):
   # Stable output after removing duplicate legends and internal artifact notes.
   text=report.preview_markdown(self.value)
   self.assertEqual(hashlib.sha256(text.encode()).hexdigest(),
-                   '7248e33f41343e3a1bc558559ba6d31c267f66b4a3ab454909d01c3ca085d6eb')
+                   '85fff6c106b32b767c7729c9d144a1ddd2e6635f2dc4c851d05ee978dd78c102')
   self.assertEqual(hashlib.sha256(report.preview_html(text).encode()).hexdigest(),
-                   '2a313e92d1bc8621fb9cf0c9abe5810f972f5be7ea2faf067ee9477dce676c9c')
+                   '623e8d035d16bcc9670c4869ce4ac985d91a54b738102d71d264e125c751c4c2')
  def test_income_expense_routing_and_neutral_unknown_concepts(self):
   rendered=report.sections(self.value)
   self.assertIn('Research and development','\n'.join(rendered['earnings']))
@@ -111,7 +111,7 @@ class FinancialTableTests(unittest.TestCase):
  def test_conflicting_current_metric_has_gap_not_zero_or_historical_fallback(self):
   specs=[facts.spec('revenue',100000000),facts.spec('revenue',110000000),facts.spec('revenue',50000000,facts.PY3)]
   value=report.compile(facts.fixture(self.root,specs),self.config);text=report.preview_markdown(value)
-  self.assertIn('Current consolidated metrics unavailable: Revenue.',text)
+  self.assertIn('Normalized current-period comparisons unavailable: Revenue.',text)
   self.assertNotIn('| Revenue |',text);self.assertNotIn('50 [^',text)
   self.assertIn('Conflicting',json.dumps(value))
  def test_period_preference_and_debt_suppression_are_per_entity_unit_basis(self):
@@ -140,7 +140,7 @@ class FinancialTableTests(unittest.TestCase):
   self.assertIn('Current debt and finance lease obligations · selected disclosure',text)
   self.assertIn('Noncurrent debt and finance lease obligations · selected disclosure',text)
   self.assertIn('11 [^F001]',text);self.assertIn('25 [^F002]',text)
-  self.assertNotIn('36 [^',text);self.assertIn('Current consolidated metrics unavailable:',text);self.assertIn('Total debt.',text)
+  self.assertNotIn('36 [^',text);self.assertIn('Normalized current-period comparisons unavailable:',text);self.assertIn('Total debt.',text)
   self.assertIn('| Metric | Unit / basis | Current |',text)
   self.assertNotIn('QoQ Δ / change',text)
   with patch('research.earnings_visual_signals.badges',side_effect=AssertionError('No heuristic badge on computed balances')):
@@ -198,7 +198,7 @@ class FinancialOptInTests(PassageFixture,unittest.TestCase):
    receipt=report.preview(self.root/'evidence/manifest.json',root,quarter_start='2026-07-01',quarter_end='2026-09-30')
   self.assertEqual(receipt['model_calls'],0)
   self.assertEqual(set(receipt['files']),{'financial-analysis-config.json','financial-analysis.json','financial-analysis.md','financial-analysis.html'})
-  self.assertIn('Current consolidated metrics unavailable',(root/'financial-analysis.html').read_text())
+  self.assertIn('Normalized current-period comparisons unavailable',(root/'financial-analysis.html').read_text())
   self.assertNotIn('<table>',(root/'financial-analysis.html').read_text())
   (root/'financial-analysis.md').write_text('retained existing output')
   with self.assertRaisesRegex(ValueError,'choose a new'):report.preview(self.root/'evidence/manifest.json',root,quarter_start='2026-07-01',quarter_end='2026-09-30')

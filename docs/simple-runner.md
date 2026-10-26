@@ -31,9 +31,9 @@ Review assesses the same eight criteria and five questions. Material factual err
 misleading basis/periods, false Q&A attribution and consequential omissions block.
 Style, repetition, optional detail and layout preferences are advisory. Missing inputs
 are not failures when accurately disclosed. One correction may change source selection
-when specifically flagged; unchanged components are preserved for narrative-only edits.
+when needed to fix a material finding; reviewer section labels do not restrict necessary basis clarifications.
 The final check receives the complete candidate, full call, complete cited original
-scopes and prior review. Numerical selections are revalidated against frozen extraction.
+scopes for actual changed claims and blocking findings, and prior review. Unchanged claims retain their original independent review; the final check sees the complete candidate and exact change map. Numerical selections are revalidated against frozen extraction.
 A schema failure without an initial review receives full-packet independent checking.
 
 The private `run_simple_reports.py` adapter freezes an ordered manifest before testing,

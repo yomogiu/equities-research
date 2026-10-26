@@ -110,32 +110,37 @@ def compile_report(root, bundle, config, value, number):
     return candidate,financial
 
 
-def correction_scope(before, after, review):
-    """One replacement output, with unaffected report components kept identical."""
-    allowed={f['location'] for f in review['findings'] if f['severity']=='blocking'}
-    if 'financial_tables' not in allowed:
-        content.require(before['financial_selection']==after['financial_selection'],'Unflagged financial selection changed')
-    # Financial corrections may change affected prose. Full final review checks it.
-    if 'financial_tables' in allowed:return
-    for key in ('title','opening','qa','next_tests'):
-        if key not in allowed:content.require(before['analysis'][key]==after['analysis'][key],'Unflagged component changed: '+key)
-    for key in content.SECTIONS:
-        if key not in allowed:content.require(before['analysis']['sections'][key]==after['analysis']['sections'][key],'Unflagged section changed: '+key)
-    if 'valuation' not in allowed:
-        content.require(before['analysis']['report_support']['valuation']==after['analysis']['report_support']['valuation'],'Unflagged valuation changed')
+def changed_claims(before, after):
+    """Source only actual changes; unchanged claims retain their initial review."""
+    if not isinstance(before,dict) or not isinstance(after,dict):return after
+    if before!=after and 'citations' in after:return after
+    return {**{key:changed_claims(before.get(key),value) for key,value in after.items()
+               if key not in before or before[key]!=value},
+            **{key:{'removed':before[key]} for key in before.keys()-after.keys()}}
 
 
-def revision_packet(bundle, original, value, review, include_inventory=False):
+def revision_packet(bundle, original, value, review, include_inventory=False, before=None):
     """Full call plus complete original scopes for claims and findings, interned once."""
     findings=[f for f in review['findings'] if f['severity']=='blocking']
     locations={f['location'] for f in findings}
-    if 'financial_tables' in locations:
-        claims=value
+    if before is not None:
+        claims=changed_claims(before,value)
     else:
         analysis=value['analysis']
         claims={k:analysis.get(k,analysis['sections'].get(k)) for k in locations}
         if 'valuation' in locations:claims['valuation']=analysis['report_support']['valuation']
     ids=content.cited(claims)|content.cited(findings)
+    # Financial corrections get the complete inventory, not all unrelated old
+    # narrative sources again. Final checking sources every changed claim.
+    if before is None and 'financial_tables' in locations:ids=content.cited(findings)
+    if before is not None:
+        changed_selection=claims.get('financial_selection',{})
+        def rows(key):
+            value=changed_selection.get(key,[])
+            return value.get('removed',[]) if isinstance(value,dict) else value
+        for row in rows('rows'):ids.update(row.get('fact_ids',[]))
+        tables={t['id']:t for t in bundle['packet_inventory']['tables']}
+        for row in rows('reported_tables'):ids.add(tables[row['table_id']]['source_id'])
     # Complete transcript already supplies all exchanges, sections and turns.
     ids={i for i in ids if i.startswith(('D','F','document-source-'))}
     records={};support=[]
@@ -148,7 +153,7 @@ def revision_packet(bundle, original, value, review, include_inventory=False):
         support.append(bound)
     result={k:deepcopy(original[k]) for k in ('transcript','transcript_source_id','transcript_index','scope_notes')}
     result.update(original_support=support,original_records=records,
-        source_policy='Complete original scopes for blocking findings and changed components, plus full call. All other components must remain identical and retain their initial independent full-packet review. Final checking covers the full report and every criterion. No external retrieval or new source material.',
+        source_policy='Complete original scopes for blocking findings and changed components, plus full call. Unchanged components retain their initial independent full-packet review; every changed component receives original evidence. Final checking covers the full report and every criterion. No external retrieval or new source material.',
         supplied_scope_ids=sorted(ids|{i for i in evidence._scopes(bundle) if not i.startswith(('D','F','document-source-'))}))
     if include_inventory:result['financial_inventory']=original['financial_inventory']
     return result
@@ -276,15 +281,14 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
                 needs_tables=any(f['severity']=='blocking' and f['location']=='financial_tables' for f in review['findings'])
                 correction_input=revision_packet(bundle,original,value,review,needs_tables);fault={'review':review}
             corrected=model_call(root,state,bundle,'correction',{**correction_input,**shared,**fault,'current_output':value,
-                'instructions':author_instructions+'\nCORRECTION: This is the sole correction allowance. Return the complete two-key output, correcting blocking findings or the compiler error. Preserve every unflagged component exactly, including title, section text, Q&A and selection. Financial-table errors permit selection and affected prose changes against the SAME inventory. Do not change sources, invent numbers, or act on advisory preferences. Keep the report-support excerpts synchronized.'},invoke,checkpoint)
-            if not validation_error:correction_scope(value,corrected,review)
+                'instructions':author_instructions+'\nCORRECTION: This is the sole correction allowance. Return the complete two-key output, correcting blocking findings or the compiler error. Make only changes necessary to resolve the blocking findings. Preserve unrelated title, prose, Q&A and financial selections. A finding in a narrative section may require a source-backed financial note or basis clarification; reviewer locations are navigation labels, not edit permissions. Financial selections may change only against supplied original facts and tables. Do not change sources, invent numbers, or act on advisory preferences. Keep the report-support excerpts synchronized.'},invoke,checkpoint)
             candidate,financial=compile_report(root,bundle,config,corrected,1)
             state['stage']='check';checkpoint()
             # A schema/selection failure had no independent full-source review yet.
             check_input=({k:v for k,v in original.items() if k!='financial_inventory'} if validation_error else
-                         revision_packet(bundle,original,corrected,review))
+                         revision_packet(bundle,original,corrected,review,before=value))
             final=model_call(root,state,bundle,'check',{**check_input,**shared,'instructions':review_requirements(),
-                'candidate':candidate,'prior_review':review,'financial_selection':corrected['financial_selection'],
+                'candidate':candidate,'prior_review':review,'changes':changed_claims(value,corrected),'financial_selection':corrected['financial_selection'],
                 'financial_verification':{'status':'reproduced','financial_sha256':storage.digest(financial)}},invoke,checkpoint)
             validate_review(final,known_sources(check_input,bundle)|content.cited(review or {}));review=final
         content.require(review['verdict']=='pass','Material errors remain after the sole correction')

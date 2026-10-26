@@ -133,4 +133,30 @@ class PacketTests(unittest.TestCase):
         for value in ('Q2 2040','Q2 2039','10','9','15','USD thousands'):self.assertIn(value,result)
         self.assertNotIn('15^',result)
 
+    def test_units_in_column_zero_survive_numeric_projection(self):
+        raw='<table><tr><td>Fictional adjusted results</td><td></td><td></td></tr><tr><td>(Unaudited - In thousands)</td><td></td><td></td></tr><tr><td></td><td>2040</td><td>2039</td></tr><tr><td>Income</td><td>123</td><td>100</td></tr></table>'
+        t=inventory.tables(raw,{'document_id':'fake','sha256':'a'*64})[0]
+        t['selected_row_ids']=['R4']
+        output='\n'.join(inventory.render_compact(t))
+        for text in ('Fictional adjusted results','In thousands','2040','2039','123','100'):self.assertIn(text,output)
+
+    def test_explicit_document_units_survive_distant_table_and_boilerplate(self):
+        raw='<p>Except where otherwise indicated, amounts presented in this Form 10-Q are in thousands, except per share amounts.</p>'
+        raw+='<p>Fictional page furniture.</p>'*4+'<p>'+('Fictional boilerplate. '*100)+'</p>'
+        raw+='<table><tr><td></td><td>2040</td></tr><tr><td>Total debt</td><td>123</td></tr></table>'
+        t=inventory.tables(raw,{'document_id':'fake','sha256':'a'*64})[0];t['selected_row_ids']=['R2']
+        output='\n'.join(inventory.render_compact(t))
+        self.assertIn('amounts presented in this Form 10-Q are in thousands',output)
+        self.assertNotIn('Fictional boilerplate.',output)
+        declaration=next(c for c in t['context'] if 'in thousands' in c['text'])
+        from research import financial_evidence
+        self.assertEqual(declaration['raw_span_sha256'],financial_evidence.digest(raw[declaration['start']:declaration['end']].encode()))
+
+    def test_combined_comparison_retains_internal_unit_heading(self):
+        raw='<table><tr><td>(USD thousands except per share amounts)</td><td></td><td></td></tr><tr><td>Metric</td><td>GAAP</td><td>Non-GAAP</td></tr><tr><td>Income</td><td>12</td><td>15</td></tr></table>'
+        t=inventory.tables(raw,{'document_id':'fake','sha256':'a'*64})[0];t['selected_row_ids']=['R3']
+        output='\n'.join(inventory.render_comparison([t]))
+        self.assertIn('USD thousands except per share amounts',output)
+        self.assertIn('| 12 | 15 |',output)
+
 if __name__=='__main__':unittest.main()

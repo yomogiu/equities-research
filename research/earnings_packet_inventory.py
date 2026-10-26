@@ -60,6 +60,16 @@ def tables(raw, source):
         context=[{'text':_text(n),'start':n.start,'end':n.end,
                   'raw_span_sha256':financial.digest(raw[n.start:n.end].encode())}
                  for n in [b for b in blocks if b.end<=table.start][-3:]]
+        # Explicit document-wide unit declarations apply even when the nearest
+        # table caption omits them. Keep their original text and source spans;
+        # never infer a scale from the numbers or a different table's heading.
+        declarations=[n for n in blocks if n.end<=table.start and len(_text(n))<=600
+                      and re.search(r'amounts.{0,100}in this (?:form|report).{0,100}in (?:thousands|millions|billions)',_text(n),re.I)]
+        if declarations:
+            n=declarations[-1]
+            if not any(c['start']==n.start for c in context):
+                context.append({'text':_text(n),'start':n.start,'end':n.end,
+                    'raw_span_sha256':financial.digest(raw[n.start:n.end].encode())})
         result.append({'context':context,'id':'T-'+storage.digest([source['document_id'], source['sha256'], table.start])[:20],
             'document_id':source['document_id'], 'source_sha256':source['sha256'],
             'source_id':'document-source-'+source['document_id'][:20],
@@ -200,7 +210,7 @@ def render(table):
     return lines+['']
 
 
-LAYOUT = 'original-table-columns-v2'
+LAYOUT = 'original-table-columns-v3'
 
 
 def render_compact(table):
@@ -231,13 +241,20 @@ def render_compact(table):
         # One shared date header can itself be the column name.
         column_labels=[' / '.join(headers[col]) or 'Reported value' for col in columns]
         common=[]
-    contexts=[c['text'] for c in table.get('context',[]) if c['text'] and not re.fullmatch(r'\d+',c['text'])]
-    # The nearest preceding title and its trailing unit declaration apply to
-    # this table; earlier paragraphs/page furniture do not become report prose.
-    title_index=next((i for i in reversed(range(len(contexts))) if not contexts[i].startswith('(')),None)
-    if title_index is not None:contexts=contexts[title_index:]
-    title=contexts[0] if contexts and not contexts[0].startswith('(') else 'Reported financial detail'
-    context=contexts[1:] if contexts and title==contexts[0] else contexts
+    # Titles and unit declarations often occupy only column zero followed by
+    # blank cells, so projecting numeric columns alone loses their meaning.
+    header_text=list(dict.fromkeys(c['text'] for c in table['cells']
+                     if c['row']<first_data and c['text'] and c['text'] not in ('$', '%', '(', ')')))
+    detached=[text for text in header_text if not any(text in values for values in headers.values())]
+    common=list(dict.fromkeys([*detached,*common]))
+    # External page boilerplate is retained in the source inventory, not used as
+    # a report heading. Short captions and explicit unit declarations survive.
+    contexts=[c['text'] for c in table.get('context',[]) if c['text']
+              and len(c['text'])<=600 and not re.fullmatch(r'\d+',c['text'])]
+    units=[text for text in contexts if re.search(r'\b(?:thousands|millions|billions|per.share)\b',text,re.I)]
+    captions=[text for text in contexts if text not in units and len(text)<=250 and not text.startswith('(')]
+    title=captions[-1] if captions else 'Reported financial detail'
+    context=units
     lines=['### '+markdown.cell(title),'',*dict.fromkeys([*context,*common]),'',markdown.refs([table['source_id']]),'',
            '| '+' | '.join(markdown.cell(s) for s in ['Metric',*column_labels])+' |',
            '| '+' | '.join('---' for _ in range(len(columns)+1))+' |']
@@ -275,7 +292,8 @@ def render_comparison(tables):
         title=lines[0][4:] if lines[0].startswith('### ') else 'Reported metric'
         period=re.search(r'\(([^)]*\b\d{4}\b[^)]*)\)',title)
         period=period[1] if period else next((s for s in lines if re.search(r'\b(?:ended|ending|as of)\b',s,re.I)),title)
-        units=next((c['text'] for c in reversed(table.get('context',[])) if c['text'].startswith('(')),'Source-reported units')
+        unit_lines=[line for line in lines if not line.startswith('|') and re.search(r'\b(?:thousands|millions|billions|per.share)\b',line,re.I)]
+        units='; '.join(dict.fromkeys(unit_lines)) or 'Unit not specified in captured table'
         clean=lambda s:re.sub(r'[\^†*]+$','',s)
         for row in grid[2:]:
             if len(row)!=len(heads):raise ValueError('Source table column count changed')
@@ -303,4 +321,4 @@ def render_comparison(tables):
 
 
 COMPACT_LAYOUT = LAYOUT
-LAYOUT = 'original-table-comparison-v3'
+LAYOUT = 'original-table-comparison-v4'

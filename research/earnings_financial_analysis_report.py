@@ -301,8 +301,8 @@ def front_gaps(selected,target):
               'earnings':('diluted_eps','gross_margin','research_and_development','diluted_shares'),
               'cash':('free_cash_flow','operating_cash_flow','total_debt')}[target]
     missing=[FRONT_NAMES[role] for role in required if role not in present]
-    return ('Current consolidated metrics unavailable: '+', '.join(missing)+
-            '.') if missing else ''
+    return ('Normalized current-period comparisons unavailable: '+', '.join(missing)+
+            '. Original reported tables or commentary may supply these values on a different basis.') if missing else ''
 
 
 def earnings_commentary(value):
