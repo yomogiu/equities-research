@@ -160,3 +160,10 @@ class SimpleRunnerTests(unittest.TestCase):
         before={'sections':{'cash':{'text':'Old fictional claim.','citations':['D002']}}}
         after=copy.deepcopy(before);after['sections']['cash']['text']='New fictional claim.'
         self.assertEqual(simple.changed_claims(before,after),after)
+
+    def test_published_html_has_accepted_status_without_changing_reviewed_body(self):
+        state=self.run_one();self.assertEqual(state['status'],'published',state.get('reason'))
+        candidate=(self.job/'candidate-0.md').read_text()
+        page=(self.job/'report.html').read_text()
+        self.assertIn('<header>Accepted after independent review</header>',page)
+        self.assertEqual(page.replace('<header>Accepted after independent review</header>','<header>Draft — review pending</header>'),simple.finance.preview_html(candidate))

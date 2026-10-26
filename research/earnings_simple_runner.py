@@ -298,7 +298,7 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
         number=state['corrections'];exact=root/f'candidate-{number}.md'
         content.require(exact.read_text()==candidate,'Reviewed candidate changed')
         state.update(stage='publication',accepted_sha256=storage.sha(exact),review_sha256=storage.sha(root/('check.json' if number else 'review.json')));checkpoint()
-        (root/'report.md').write_text(candidate);(root/'report.html').write_text(finance.preview_html(candidate))
+        (root/'report.md').write_text(candidate);(root/'report.html').write_text(finance.preview_html(candidate,status='accepted'))
         receipt=publish(root,state)
         content.require(receipt.get('candidate_sha256')==state['accepted_sha256'] and receipt.get('html_sha256')==storage.sha(root/'report.html') and receipt.get('verification')=='exact_remote_bytes','Publication bytes unconfirmed')
         save(root/'publication.json',receipt);state.update(status='published',publication=receipt)

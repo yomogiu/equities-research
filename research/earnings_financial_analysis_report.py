@@ -463,8 +463,8 @@ def preview_markdown(value,earnings_multiples=None,selection=None):
     return '\n'.join(lines).rstrip()+'\n'
 
 
-def preview_html(text):
-    page=markdown.render(text)
+def preview_html(text, *, status='draft'):
+    page=markdown.render(text,status=status)
     # Fixed application markup only; all financial/source text was escaped by render.
     marker='<h2>Source and calculation notes</h2>'
     return page.replace(marker,'<details class="original-qa"><summary>Sources and calculation notes</summary>',1).replace('</main>','</details></main>',1)
