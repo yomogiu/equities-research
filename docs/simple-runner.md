@@ -75,3 +75,16 @@ become inferred XBRL facts; normalized QoQ/YoY calculations remain unavailable w
 qualified normalized inputs. Original tagged extraction and Decimal calculations are
 unchanged. PDF text is bound to the original bytes and independently reproducible with
 Poppler; positional limitations remain visible.
+
+When the normalized observation inventory is completely empty but source tables are
+selected, code records the missing normalization for required accounting metrics.
+It preserves existing source-specific gaps and never fills price or annual-EPS valuation
+inputs. Raw author outputs remain unchanged; the resolved output and a normalization
+receipt record the added parser-gap labels. This does not label the metric undisclosed,
+invent a fact, or waive source-table review. Partially tagged packets retain explicit
+per-metric selection and gap checks. Compiler errors enumerate missing roles.
+
+A new explicitly scoped development retest may reduce its ceiling by exact prior failed
+usage. It cannot increase the fixed ceiling, mutate the failed job, reuse paid outputs,
+or reset costs. The private manifest binds prior terminal receipts and the remaining
+allowance; the retest still starts with fresh sources and its own one-correction limit.

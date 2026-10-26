@@ -122,6 +122,13 @@ def resolve_citations(value, bundle, known):
 
 def resolved_output(root, bundle, role, value, known):
     resolved,changes=resolve_citations(value,bundle,known)
+    if role in ('author','correction') and isinstance(resolved,dict) and 'financial_selection' in resolved:
+        try:
+            normalized,added=selection.normalization_gaps(resolved['financial_selection'],bundle)
+            resolved['financial_selection']=normalized
+            save(root/f'{role}-normalization.json',{'policy':'empty-normalized-inventory-v1','added_gap_metrics':added})
+        except (ValueError,KeyError,TypeError):
+            pass  # Invalid selections retain their original compiler correction path.
     save(root/f'{role}-resolved.json',resolved)
     save(root/f'{role}-citations.json',{'raw_sha256':storage.sha(root/f'{role}.json'),
         'resolved_sha256':storage.sha(root/f'{role}-resolved.json'),'changes':changes})
@@ -267,7 +274,9 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
         if state['status'] in TERMINAL:return state
         state.update(status='failed',reason='Interrupted execution; no automatic paid retry',usage_complete=False)
         save(path,state);return state
-    state={'version':VERSION,'specification':spec,'status':'running','stage':'sources','budget_tokens':BUDGET,
+    budget=spec.get('budget_tokens',BUDGET)
+    content.require(type(budget) is int and 0<budget<=BUDGET,'Budget can only reduce the fixed ceiling')
+    state={'version':VERSION,'specification':spec,'status':'running','stage':'sources','budget_tokens':budget,
            'tokens_used':0,'usage_complete':True,'attempts':[],'corrections':0}
     def checkpoint():
         save(path,state)

@@ -80,6 +80,28 @@ def compact(bundle):
 
 
 
+def normalization_gaps(value,bundle):
+    """Record known parser limits without claiming the issuer omitted a metric.
+
+    An entirely untagged packet can still supply valid reported tables. Requiring
+    a model to re-declare the same mechanical absence for every role caused a
+    false completeness failure. This adds no numbers or semantic row mappings.
+    Partially tagged packets retain the ordinary explicit per-metric contract.
+    """
+    value=deepcopy(value)
+    if bundle['financial']['observations'] or not isinstance(value,dict):return value,[]
+    if value.get('rows')!=[] or not isinstance(value.get('gaps'),list) or not value.get('reported_tables'):return value,[]
+    from . import earnings_packet_inventory as packet_inventory
+    packet_inventory.validate_selection(value['reported_tables'],bundle)
+    tables={t['id']:t for t in bundle['packet_inventory']['tables']}
+    citations=sorted({tables[p['table_id']]['source_id'] for p in value['reported_tables']})
+    existing={g.get('metric') for g in value['gaps'] if isinstance(g,dict)}
+    added=sorted(REQUIRED-{'annual_eps','price'}-existing)
+    for metric in added:
+        value['gaps'].append({'metric':metric,'reason':'No normalized numeric observations were extracted from this packet. Original reported tables remain available; this is an extraction limitation, not evidence of issuer nondisclosure.','citations':citations})
+    return value,added
+
+
 def validate(value,bundle):
     require(isinstance(value,dict) and set(value) in ({'rows','gaps','notes'}, {'rows','gaps','notes','reported_tables'}),'Exact selection fields required')
     require(isinstance(value['rows'],list) and 0<=len(value['rows'])<=35,'Zero through 35 selected metric rows required')
@@ -123,7 +145,7 @@ def validate(value,bundle):
         require(row['metric'] not in gaps,'Duplicate completeness gap');gaps.add(row['metric']);text(row['reason']);citations(row['citations'])
     covered|={'gross_margin'} if {'gross_profit','revenue'}<=covered or {'cost_of_revenue','revenue'}<=covered else set()
     covered|={'total_debt'} if {'current_debt','noncurrent_debt'}<=covered else set()
-    require(REQUIRED<=covered|gaps,'Every core metric and valuation input requires selection or a specific source-backed gap')
+    require(REQUIRED<=covered|gaps,'Every core metric and valuation input requires selection or a specific source-backed gap. Missing normalized roles: '+', '.join(sorted(REQUIRED-covered-gaps))+'. Reported tables preserve figures but do not create normalized facts.')
     require(not (covered&gaps),'Selected metrics cannot also be marked absent')
     for note in value['notes']:
         require(set(note)=={'text','citations'},'Exact financial definition note required');text(note['text']);citations(note['citations'])

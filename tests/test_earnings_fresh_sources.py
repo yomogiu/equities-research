@@ -47,6 +47,30 @@ class FreshSourcesTests(unittest.TestCase):
         rendered='\n'.join(inventory.render_compact(selected[0]))
         self.assertIn('120 000',rendered);self.assertIn('USD thousand',rendered)
 
+    def test_empty_normalized_inventory_records_parser_gaps_without_changing_values(self):
+        from research import earnings_financial_selection as selection
+        table={'id':'T-fake','source_id':'document-source-fake','rows':[{'id':'R1','cells':['C1']}],
+               'cells':[{'id':'C1','nested_table':False,'layout':'explicit'}]}
+        bundle={'financial':{'observations':[]},'packet_inventory':{'tables':[table]}}
+        value={'rows':[],'gaps':[],'notes':[],'reported_tables':[{'table_id':'T-fake','row_ids':['R1'],'section':'earnings'}]}
+        normalized,added=selection.normalization_gaps(value,bundle)
+        self.assertEqual(set(added),selection.REQUIRED-{'price','annual_eps'})
+        self.assertEqual(value['gaps'],[])
+        self.assertEqual(normalized['reported_tables'],value['reported_tables'])
+        self.assertTrue(all('not evidence of issuer nondisclosure' in g['reason'] for g in normalized['gaps']))
+        self.assertEqual(selection.normalization_gaps(normalized,bundle),(normalized,[]))
+        bundle['financial']['observations']=[{'id':'F1'}]
+        self.assertEqual(selection.normalization_gaps(value,bundle),(value,[]))
+
+    def test_retest_budget_can_only_reduce_fixed_ceiling(self):
+        from research import earnings_simple_runner as runner
+        with tempfile.TemporaryDirectory() as d:
+            def fail(root,spec):raise ValueError('fake source failure')
+            value=runner.run_company(Path(d)/'small',{'budget_tokens':900000},fail,None)
+            self.assertEqual(value['budget_tokens'],900000);self.assertEqual(value['tokens_used'],0)
+            with self.assertRaisesRegex(ValueError,'reduce'):
+                runner.run_company(Path(d)/'large',{'budget_tokens':runner.BUDGET+1},fail,None)
+
     def test_pdf_text_must_bind_original_and_reject_tampering(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);raw=root/'source.pdf';raw.write_bytes(b'%PDF\xfforiginal')
