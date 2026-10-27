@@ -64,7 +64,7 @@ class ReportIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'heading'):identity.recognize(text,'Fictional Micro',(2040,2))
 
     def test_auditor_subject_across_legal_forms_and_report_layouts(self):
-        for form in ('AB','AB (publ)','plc','AG','N.V.','Limited',''):
+        for form in ('AB','AB (publ)','AB (publ.)','Group AB (publ.)','plc','AG','N.V.','Limited',''):
             for heading,verb,subject in (
                 ('Review Report','reviewed','condensed interim report for'),
                 ("Independent auditor’s report",'audited','consolidated financial statements of'),
@@ -74,6 +74,15 @@ class ReportIdentityTests(unittest.TestCase):
                     result=identity.recognize(text,'Fictional Micro',(2040,2))
                     self.assertEqual(result['issuer_evidence']['rule'],'auditor_report_subject')
                     self.check_spans(text,result)
+
+    def test_group_registration_and_as_per_auditor_subject(self):
+        for body, rule in (
+            ('Fictional Micro Group AB (publ.), corporate identity number 123456-7890', 'registered_issuer_block'),
+            ('We have reviewed the condensed interim report for Fictional Micro Group AB (publ.) as per June 30, 2040.', 'auditor_report_subject')):
+            text='[Page 1]\nQ2 2040\n[Page 9]\nReview report\n'+body+'\n'
+            result=identity.recognize(text,'Fictional Micro',(2040,2))
+            self.assertEqual(result['issuer_evidence']['rule'],rule)
+            self.check_spans(text,result)
 
     def test_registration_blocks_and_wrapped_labels(self):
         for heading in ('Review Report','Corporate information','Company information','Registered office'):
@@ -89,6 +98,7 @@ class ReportIdentityTests(unittest.TestCase):
             'Acquisitions\nFictional Micro AB, org.no 123456-7890',
             'Review Report\nOther Company AB, org.no 123456-7890',
             'Review Report\nFictional Microsystems AB, org.no 123456-7890',
+            'Review Report\nFictional Micro Group Holdings AB, org.no 123456-7890',
             'Review Report\nFictional Micro Holdings AB, org.no 123456-7890',
             'Our auditor wrote: We have reviewed the interim report for Fictional Micro AB as at June 30, 2040.',
             'Review Report\nWe have not reviewed the interim report for Fictional Micro AB as at June 30, 2040.',

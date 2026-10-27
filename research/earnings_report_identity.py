@@ -31,7 +31,7 @@ def institutional_identity(text, name):
     Context headings and line anchors distinguish these from mentions of an
     acquired business, competitor or quoted auditor. Offsets stay in original text.
     """
-    entity=name+r'(?:[ \t]+(?:'+LEGAL_FORM+r'))?(?:[ \t]*\(publ\))?'
+    entity=name+r'(?:[ \t]+Group)?(?:[ \t]+(?:'+LEGAL_FORM+r'))?(?:[ \t]*\(publ\.?\))?'
     def context(start, heading):
         prefix=text[max(0,start-700):start]
         matches=list(re.finditer(r'(?im)^[ \t]*'+heading+r'[ \t]*$',prefix))
@@ -44,7 +44,7 @@ def institutional_identity(text, name):
     subject=(r'(?im)^[ \t]*We have (?:audited|reviewed) (?:the )?'
              r'(?:(?:accompanying|condensed|consolidated|interim|annual|financial)\s+){0,5}'
              r'(?:financial statements|statements|report|financial information)\s+(?:of|for)\s+'
-             +entity+r'(?=\s+(?:as (?:at|of)|at|for the|and (?:its|the))\b|[,.;])')
+             +entity+r'(?=\s+(?:as (?:at|of|per)|at|for the|and (?:its|the))\b|[,.;])')
     for match in re.finditer(subject,text):
         start=context(match.start(),AUDIT_HEADING)
         if start is not None:return span(text,start,match.end(),'auditor_report_subject')
