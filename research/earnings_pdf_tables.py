@@ -80,7 +80,8 @@ def render(table):
         values=[cells[i] for i in row['cells']]
         numeric=sum(bool(NUMBER.fullmatch(c['text'])) for c in values)
         label=next((c['text'] for c in values if re.search('[A-Za-z]',c['text'])),'')
-        header=bool(re.search(r'^\W*(?:amounts?|note|currency|units?|USD|EUR|NOK|GBP|SEK|CHF)\b',label,re.I))
+        header=bool(re.search(r'^\W*(?:amounts?|note|currency|units?|USD|EUR|NOK|GBP|SEK|CHF)\b',label,re.I)
+                    or re.match(r'^\s*\(?in\s+(?:[€£$]|USD|EUR|NOK|GBP|SEK|CHF|thousands?|millions?|billions?|percent)',label,re.I))
         data=not header and numeric>=2 and any(re.search('[A-Za-z]',c['text']) for c in values)
         if data and row['id'] not in chosen:continue
         line=['']*width

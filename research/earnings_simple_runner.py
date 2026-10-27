@@ -124,8 +124,10 @@ def resolved_output(root, bundle, role, value, known):
     resolved,changes=resolve_citations(value,bundle,known)
     if role in ('author','correction') and isinstance(resolved,dict) and 'financial_selection' in resolved:
         try:
-            normalized,added=selection.normalization_gaps(resolved['financial_selection'],bundle)
+            selected,merged=selection.coalesce_tables(resolved['financial_selection'],bundle)
+            normalized,added=selection.normalization_gaps(selected,bundle)
             resolved['financial_selection']=normalized
+            save(root/f'{role}-table-selections.json',{'policy':'union-repeated-source-tables-v1','changes':merged})
             save(root/f'{role}-normalization.json',{'policy':'empty-normalized-inventory-v1','added_gap_metrics':added})
         except (ValueError,KeyError,TypeError):
             pass  # Invalid selections retain their original compiler correction path.

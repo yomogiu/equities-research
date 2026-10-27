@@ -126,3 +126,12 @@ ordinary earnings calls. The release must have explicit issuer/period evidence
 and substantive financial disclosure. Missing financial-statement coverage is
 carried into the author/review context, with unavailable figures left as gaps.
 There is no post-draft search, old-period substitution or additional model stage.
+
+Repeated valid selections of the same source table are combined before compilation:
+the union of selected original rows is rendered once in source order, under the
+first requested section. Unknown tables, rows or sections still fail validation.
+Raw model output is immutable; a separate selection receipt records the original
+selections and exact union. This prevents a duplicate presentation choice from
+consuming a factual correction or causing another valid table to be dropped.
+PDF headers such as `(in € millions)` retain their original units and comparative
+years even when the author selects only metric rows.

@@ -80,6 +80,28 @@ def compact(bundle):
 
 
 
+def coalesce_tables(value,bundle):
+    """Union valid repeated selections without losing rows or rewriting values."""
+    from . import earnings_packet_inventory as inventory
+    value=deepcopy(value)
+    if not isinstance(value,dict) or 'reported_tables' not in value:return value,[]
+    picks=value['reported_tables']
+    require(isinstance(picks,list) and len(picks)<=12,'At most twelve original table selections required')
+    for pick in picks:inventory.validate_selection([pick],bundle)
+    tables={t['id']:t for t in bundle['packet_inventory']['tables']};groups={}
+    for pick in picks:groups.setdefault(pick['table_id'],[]).append(pick)
+    merged=[];changes=[]
+    for tid,group in groups.items():
+        pick=deepcopy(group[0])
+        if len(group)>1:
+            rows={rid for part in group for rid in part['row_ids']}
+            pick['row_ids']=[row['id'] for row in tables[tid]['rows'] if row['id'] in rows]
+            changes.append({'table_id':tid,'original_selections':group,'merged_selection':pick})
+        merged.append(pick)
+    value['reported_tables']=merged
+    return value,changes
+
+
 def normalization_gaps(value,bundle):
     """Record known parser limits without claiming the issuer omitted a metric.
 

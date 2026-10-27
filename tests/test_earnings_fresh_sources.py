@@ -67,7 +67,7 @@ class FreshSourcesTests(unittest.TestCase):
         self.assertEqual(selection.normalization_gaps(value,bundle),(value,[]))
 
     def test_pdf_numeric_unit_and_year_header_survives_row_selection(self):
-        for label in ('Amounts USD thousand','Amount in USD thousand','(Amounts in USD thousand)'):
+        for label in ('Amounts USD thousand','Amount in USD thousand','(Amounts in USD thousand)','(in € millions)','(in millions of dollars)','in percent'):
             with self.subTest(label=label):
                 text='[Page 1]\n'+f'{label:30}{"2040":>12}{"2039":>12}\n'
                 for metric,a,b in [('Revenue','120 000','100 000'),('Cost','-80 000','-70 000'),('Profit','40 000','30 000')]:
@@ -77,6 +77,21 @@ class FreshSourcesTests(unittest.TestCase):
                 rendered='\n'.join(pdf.render(t))
                 self.assertIn(label,rendered);self.assertIn('2040',rendered);self.assertIn('2039',rendered)
                 self.assertIn('120 000',rendered);self.assertNotIn('-80 000',rendered)
+
+    def test_duplicate_table_selection_unions_all_original_rows(self):
+        from research import earnings_financial_selection as selection
+        t={'id':'T-fake','rows':[{'id':'R1','cells':['C1']},{'id':'R2','cells':['C2']}],
+           'cells':[{'id':c,'layout':'explicit','nested_table':False} for c in ('C1','C2')]}
+        b={'packet_inventory':{'tables':[t]}}
+        v={'reported_tables':[{'table_id':'T-fake','row_ids':['R2'],'section':'demand'},
+                              {'table_id':'T-fake','row_ids':['R1','R2'],'section':'cash'}]}
+        normalized,changes=selection.coalesce_tables(v,b)
+        self.assertEqual(normalized['reported_tables'],[{'table_id':'T-fake','row_ids':['R1','R2'],'section':'demand'}])
+        self.assertEqual(len(v['reported_tables']),2)
+        self.assertEqual(changes[0]['original_selections'],v['reported_tables'])
+        self.assertEqual(selection.coalesce_tables(normalized,b),(normalized,[]))
+        v['reported_tables'][1]['row_ids']=['not-a-row']
+        with self.assertRaises(ValueError):selection.coalesce_tables(v,b)
 
     def test_retest_budget_can_only_reduce_fixed_ceiling(self):
         from research import earnings_simple_runner as runner
