@@ -23,14 +23,15 @@ API key, run a nested model service, or copy account authentication into this re
 
 ## Agent workflow
 
-The user requested a replacement finite runner: use `docs/simple-runner.md` for new
-validation batches. Reuse deterministic extraction/calculation and neutral report
+The simple runner is the default for all new reports: use `docs/simple-runner.md`.
+The private runtime separates paused validation from explicitly authorized scheduling. Reuse deterministic extraction/calculation and neutral report
 utilities; do not import old orchestration into the new path. One independent review,
 one correction maximum and one final check share a fixed allowance. Editorial preferences
 are advisory; material factual errors block publication. Every company ends published
 or failed and the next company advances. Preserve old pinned reports and costs. Never
 migrate or silently rerun a historical paid job. Keep automation paused until explicitly
-resumed, independently of successful tests. Historical sequential procedures remain in
+resumed, independently of successful tests. After explicit resumption, use only the
+private scheduled simple-runner entry point and its frozen configuration. Historical sequential procedures remain in
 `docs/operations.md` solely for already pinned jobs.
 
 ## Code checks

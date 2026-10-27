@@ -94,6 +94,11 @@ class SimpleRunnerTests(unittest.TestCase):
         self.assertEqual(len(self.calls),4)
         simple.run_batch(self.root/'batch',{'code_commit':'a'*40,'companies':specs},prepare,self.publish,lambda p:None,invoke=self.invoke)
         self.assertEqual(len(self.calls),4)
+    def test_scheduled_summary_preserves_explicit_mode(self):
+        manifest={'code_commit':'a'*40,'companies':[self.spec],'automation':'ACTIVE'}
+        simple.run_batch(self.root/'scheduled',manifest,self.prepare,self.publish,lambda p:None,invoke=self.invoke)
+        self.assertEqual(simple.read(self.root/'scheduled/summary.json')['automation'],'ACTIVE')
+
     def test_no_old_control_modules_imported(self):
         import subprocess,sys
         code="import sys;from research import earnings_simple_runner;assert not any(n.startswith(('research.earnings_sequential','research.earnings_single_author')) for n in sys.modules)"

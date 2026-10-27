@@ -1,6 +1,6 @@
 # Finite earnings-report runner
 
-`research.earnings_simple_runner` is a separate execution path. It does not import
+`research.earnings_simple_runner` is the default execution path for new reports. It does not import
 any sequential controller, single-author controller, recovery graph or handoff.
 `earnings_report_content` holds shared report schemas, period resolution and rendering;
 historical callers re-export these helpers. Extraction, original-table inventory,
@@ -135,3 +135,11 @@ selections and exact union. This prevents a duplicate presentation choice from
 consuming a factual correction or causing another valid table to be dropped.
 PDF headers such as `(in € millions)` retain their original units and comparative
 years even when the author selects only metric rows.
+
+Scheduled execution requires explicit user resumption and a private scheduling adapter.
+That adapter freezes a main-branch code pin and source profile, holds a global execution
+lock, and processes one remaining company per invocation through this same runner.
+It must check the active schedule, preserve terminal outcomes and budgets, and never
+replay historical jobs. Source-profile ownership setup occurs before freezing; report
+collection and qualification still occur inside Sources. The batch summary records
+the manifest's scheduling mode; omitted mode remains PAUSED for existing validation.

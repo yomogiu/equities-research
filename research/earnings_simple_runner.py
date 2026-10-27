@@ -374,7 +374,7 @@ def run_batch(root, manifest, prepare, publish, persist, *, invoke=transport.run
             save(root/'summary.json',{'version':VERSION,'code_commit':manifest['code_commit'],'results':results,
                 'tokens_used':sum(r['tokens_used'] for r in results),'usage_complete':all(r['usage_complete'] for r in results),
                 'complete':len(results)==len(manifest['companies']),'all_published':all(r['status']=='published' for r in results),
-                'automation':'PAUSED'})
+                'automation':manifest.get('automation','PAUSED')})
             persist([root/spec['job_key'],root/'summary.json'])
             print(json.dumps({'symbol':spec['symbol'],'status':result['status'],'stage':result['stage'],'tokens':result['tokens_used'],'reason':result.get('reason')}),flush=True)
         return results

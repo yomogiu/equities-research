@@ -4,41 +4,29 @@ Codex cloud workflow preparation for scheduled earnings research, using Codex
 subscription authentication. This public repository holds code and instructions.
 **Watchlists, documents, research reports, and credentials stay in separate private storage.**
 
-The workflow is agent-led:
+New reports use the **simple runner** (`research.earnings_simple_runner`):
 
-1. Deterministic collectors fetch configured sources; a calendar agent reconciles date gaps.
-2. Scripts retrieve releases, transcripts, quarterly/annual filings, and background; agents resolve remaining source gaps.
-3. Independent agents extract exact quotes/data and interpret the investment evidence.
-4. A reviewer challenges both against original sources and a rubric.
-5. Authors repair material findings, with at most two cross-review revision rounds.
-6. Reviewed or explicitly incomplete reports are versioned in private storage.
+**Sources → financial tables → analysis → independent review → publication**
 
-The calendar prompt targets 07:00 Eastern Time on January, April, July and October 1; collection targets two-hour
-opportunities during earnings windows, with daily follow-ups for delayed filings.
-**These are prepared task prompts, not active schedules.** Creating this repository
-does not create a scheduler, persistent research storage, or a running agent service.
+Collection, extraction and financial calculations run in code. One author writes
+from the frozen evidence; one independent reviewer checks the draft. A material
+finding permits one correction and one final check. Every company ends published
+or failed, with a fixed cumulative token ceiling and exact private persistence.
+Failures do not trigger handoffs, extra allowances or silent paid retries.
 
 ## Start here
 
-- [Unified catalog, packets and durable handoffs](docs/workspace.md)
-- [Deterministic collection and private cloud execution](docs/deterministic-collection.md)
+- [Simple runner and source qualification](docs/simple-runner.md) — default for new reports
+- [Financial extraction and calculations](docs/deterministic-financial-analysis.md)
 - [Cloud environment setup](docs/cloud-setup.md)
-- [Calendar task](tasks/calendar.md)
-- [Collection, analysis, and cross-review task](tasks/earnings.md)
-- [Handoff and acceptance rules](docs/operations.md)
 - [Evidence rubric](roles/rubric.md)
 - [Investment methodology](.agents/skills/analyze-stock/SKILL.md)
 
-## Sequential report pipeline
-
-New reports use **Sources → financial tables → analysis → review → publication**.
-One job record owns progress and cumulative costs. Source preparation and financial
-calculations run in code; an author and a fresh independent reviewer perform the
-editorial work. Accepted reports are rendered and verified in private storage.
-
-See [operations](docs/operations.md) for execution and interruption behavior.
-Older passage/repair controllers remain available only for historical pinned-run
-inspection; they are not the entry point for new reports.
+The private runtime owns scheduling, source profiles and frozen code pins. A schedule
+requires explicit user authorization; installing this repository does not enable one.
+Older sequential, handoff and recovery controllers remain only for historical pinned
+runs. Their task prompts and [operations notes](docs/operations.md) are not instructions
+for new reports.
 
 ## Check the code
 

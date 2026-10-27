@@ -1,3 +1,6 @@
+> Historical workflow reference. New reports use [the simple runner](simple-runner.md).
+> Do not dispatch old controllers or recovery tasks from this document.
+
 ## Upstream financial inventory
 
 New source cases use `packet-financial-inventory-v1`. Before any model call, code
