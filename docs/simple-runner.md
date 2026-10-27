@@ -143,3 +143,9 @@ It must check the active schedule, preserve terminal outcomes and budgets, and n
 replay historical jobs. Source-profile ownership setup occurs before freezing; report
 collection and qualification still occur inside Sources. The batch summary records
 the manifest's scheduling mode; omitted mode remains PAUSED for existing validation.
+
+Issuer recognition also accepts the named subject of a standard independent audit
+or review report, and labeled registration identities under audit/corporate-information
+headings. Bounded names, legal forms, paragraph/page context and original evidence
+spans distinguish these from incidental company mentions. This uses no issuer-specific
+name or identifier allowlist and does not relax reporting-period checks.

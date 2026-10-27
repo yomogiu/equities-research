@@ -63,5 +63,48 @@ class ReportIdentityTests(unittest.TestCase):
         text='[Page 1]\nFictional Micro\nBusiness report\nCompared with Q2 2040, the business improved.'
         with self.assertRaisesRegex(ValueError,'heading'):identity.recognize(text,'Fictional Micro',(2040,2))
 
+    def test_auditor_subject_across_legal_forms_and_report_layouts(self):
+        for form in ('AB','AB (publ)','plc','AG','N.V.','Limited',''):
+            for heading,verb,subject in (
+                ('Review Report','reviewed','condensed interim report for'),
+                ("Independent auditor’s report",'audited','consolidated financial statements of'),
+                ('Report of independent auditors','reviewed','interim financial information of')):
+                with self.subTest(form=form,heading=heading):
+                    text='[Page 1]\nQ2 2040\n[Page 8]\n'+heading+'\nIntroduction\nWe have '+verb+' the '+subject+' Fictional Micro '+form+' as at June 30, 2040.\n'
+                    result=identity.recognize(text,'Fictional Micro',(2040,2))
+                    self.assertEqual(result['issuer_evidence']['rule'],'auditor_report_subject')
+                    self.check_spans(text,result)
+
+    def test_registration_blocks_and_wrapped_labels(self):
+        for heading in ('Review Report','Corporate information','Company information','Registered office'):
+            for label,value in (('org.no','123456-7890'),('Company registration number:','AB123456'),('Corporate identity number:','123456789'),('Business ID:','123456-7')):
+                for separator in (', ','\n'):
+                    text='[Page 1]\nQ2 2040\n[Page 9]\n'+heading+'\nFictional Micro AB'+separator+label+' '+value+'\n'
+                    result=identity.recognize(text,'Fictional Micro',(2040,2))
+                    self.assertEqual(result['issuer_evidence']['rule'],'registered_issuer_block')
+                    self.check_spans(text,result)
+
+    def test_identity_blocks_do_not_admit_mentions_or_other_entities(self):
+        bad=[
+            'Acquisitions\nFictional Micro AB, org.no 123456-7890',
+            'Review Report\nOther Company AB, org.no 123456-7890',
+            'Review Report\nFictional Microsystems AB, org.no 123456-7890',
+            'Review Report\nFictional Micro Holdings AB, org.no 123456-7890',
+            'Our auditor wrote: We have reviewed the interim report for Fictional Micro AB as at June 30, 2040.',
+            'Review Report\nWe have not reviewed the interim report for Fictional Micro AB as at June 30, 2040.',
+            'Review Report\nWe have reviewed the interim report for Other Company AB as at June 30, 2040. Fictional Micro is a competitor.',
+            'Review Report\n[Page 10]\nFictional Micro AB, org.no 123456-7890',
+            'Corporate information\nFictional Micro AB, Telephone: 123456789',
+            'Review Report\nFictional Micro AB, org.no unavailable',
+        ]
+        for body in bad:
+            with self.subTest(body=body),self.assertRaisesRegex(ValueError,'issuer'):
+                identity.recognize('[Page 1]\nQ2 2040\n[Page 9]\n'+body,'Fictional Micro',(2040,2))
+
+    def test_new_identity_evidence_does_not_relax_period_checks(self):
+        text='[Page 1]\nQ1 2040\n[Page 8]\nReview Report\nFictional Micro AB, org.no 123456-7890\n'
+        with self.assertRaisesRegex(ValueError,'differs'):
+            identity.recognize(text,'Fictional Micro',(2040,2))
+
 
 if __name__=='__main__':unittest.main()

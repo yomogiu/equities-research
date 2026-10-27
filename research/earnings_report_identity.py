@@ -19,6 +19,48 @@ def front(text):
     return text[:pages[3].start() if len(pages)>3 else len(text)]
 
 
+# Legal forms qualify a bounded issuer name; they never substitute for its name.
+LEGAL_FORM = r'(?:AB|ASA|AS|AG|SE|SA|S\.A\.|NV|N\.V\.|BV|B\.V\.|plc|Inc\.?|Ltd\.?|Limited|Corporation|Corp\.?)'
+AUDIT_HEADING = r"(?:review report|independent (?:auditor[’']?s? report|review report|auditor[’']?s? review report)|report of (?:the )?independent auditors?)"
+IDENTITY_HEADING = r'(?:'+AUDIT_HEADING+r'|corporate information|company information|registered office|contact information)'
+
+
+def institutional_identity(text, name):
+    """Find an issuer bound to an audit subject or labeled registration block.
+
+    Context headings and line anchors distinguish these from mentions of an
+    acquired business, competitor or quoted auditor. Offsets stay in original text.
+    """
+    entity=name+r'(?:[ \t]+(?:'+LEGAL_FORM+r'))?(?:[ \t]*\(publ\))?'
+    def context(start, heading):
+        prefix=text[max(0,start-700):start]
+        matches=list(re.finditer(r'(?im)^[ \t]*'+heading+r'[ \t]*$',prefix))
+        if not matches:return None
+        match=matches[-1]
+        between=prefix[match.end():]
+        # Do not bridge another page or a long discussion into an identity.
+        if '[Page ' in between or len(between)>500:return None
+        return max(0,start-700)+match.start()
+    subject=(r'(?im)^[ \t]*We have (?:audited|reviewed) (?:the )?'
+             r'(?:(?:accompanying|condensed|consolidated|interim|annual|financial)\s+){0,5}'
+             r'(?:financial statements|statements|report|financial information)\s+(?:of|for)\s+'
+             +entity+r'(?=\s+(?:as (?:at|of)|at|for the|and (?:its|the))\b|[,.;])')
+    for match in re.finditer(subject,text):
+        start=context(match.start(),AUDIT_HEADING)
+        if start is not None:return span(text,start,match.end(),'auditor_report_subject')
+    registration=(r'(?im)^[ \t]*'+entity+r'[ \t]*,?[ \t]*(?:\n[ \t]*)?'
+                  r'(?:org\.?[ \t]*(?:no\.?|number)|(?:company|corporate|business)'
+                  r'[ \t]+(?:(?:registration|identity|identification)[ \t]+)?(?:no\.?|number)|'
+                  r'registration[ \t]+(?:no\.?|number)|business[ \t]+ID)'
+                  r'[ \t]*:?[ \t]*(?:\n[ \t]*)?'
+                  r'(?=[A-Z0-9 -]{4,30}(?:$|\n))(?=[A-Z0-9 -]*\d)'
+                  r'[A-Z0-9][A-Z0-9 -]{3,29}[ \t]*$')
+    for match in re.finditer(registration,text):
+        start=context(match.start(),IDENTITY_HEADING)
+        if start is not None:return span(text,start,match.end(),'registered_issuer_block')
+    return None
+
+
 def issuer_evidence(text, issuer):
     words=re.findall(r'\w+',issuer)
     if not words:raise ValueError('Explicit issuer name required')
@@ -32,6 +74,8 @@ def issuer_evidence(text, issuer):
     for pattern in legal:
         match=re.search(pattern,text,re.I)
         if match:return span(text,*match.span(),'explicit_legal_identity')
+    institutional=institutional_identity(text,name)
+    if institutional:return institutional
     # Short title/identity lines in the opening pages; not narrative mentions.
     title=r'(?:\s|[|,:()—–-]|\b(?:Q[1-4]|20\d{2}|first|second|third|fourth|quarter|quarterly|half|year|yearly|annual|interim|financial|report|results|group|SA|plc|Inc|Ltd|audited|unaudited)\b)*'
     lines=list(re.finditer(r'(?m)^.*$',front(text)))
