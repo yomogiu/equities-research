@@ -94,3 +94,18 @@ this never supplies a valuation input or overrides an existing qualified value. 
 unit/year/date header rows are retained even when authors select only metric rows.
 Source-backed narrative FCF arithmetic remains required when reported inputs permit it,
 with cash-capex/software/development conventions stated separately from normalization.
+
+Report recognition uses opening identity headings or affirmative legal identity
+statements in the accounting notes, with exact original text spans and hashes.
+Image-only covers and contents pages need not contain the issuer name. The first
+dated report heading in the opening extracted pages binds the period; later body
+comparisons cannot substitute for it. Wrapped titles, year-first titles, ordinal
+quarters, half-year, nine-month and full-year labels are recognized for calendar-year
+events. Explicit heading dates must agree. This is bounded English heading recognition,
+not arbitrary-document or OCR support.
+
+A cumulative document can support the corresponding quarter's event, but qualification
+records its actual start/end, basis and whether it is a standalone quarter. That basis
+is carried into author/review scope notes. Every selected table retains its own period
+headers; six-month or nine-month flows must never be relabeled as quarterly flows.
+No normalized financial facts or quarter-only values are inferred by recognition.

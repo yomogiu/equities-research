@@ -13,6 +13,7 @@ from . import earnings_source_case as case
 from . import financial_evidence as financial
 from . import transcript_evidence as transcript
 from . import earnings_financial_analysis_report as finance
+from . import earnings_report_identity as identity
 from .fetch import Client, FetchError, PUBLIC_USER_AGENT
 from .source_parse import extract, page
 
@@ -49,15 +50,12 @@ def filing_url(body,landing):
 
 
 def qualify_report(text,issuer,period):
-    year,quarter=period;head=text[:1800]
-    require(issuer.casefold() in head.casefold(),'Report issuer differs from verified identity')
-    require(re.search(r'\bQ'+str(quarter)+r'\b[^\n]{0,70}\b'+str(year)+r'\b',head,re.I),
-            'Report cover does not match discovered fiscal quarter')
+    recognized=identity.recognize(text,issuer,period)
     require(len(text)>10000,'Quarterly report is incomplete or too short')
     checks=[r'income statement|statement of (?:profit|operations)',r'financial position|balance sheet',r'cash flow']
     require(all(re.search(p,text,re.I) for p in checks),'Financial statements missing from quarterly report')
     require(re.search(r'\[Page \d+\]',text),'PDF page extraction unavailable')
-    return {'issuer_and_period':'explicit_cover_match','completeness':'financial_statements_present',
+    return {'issuer_and_period':'explicit_document_evidence',**recognized,'completeness':'financial_statements_present',
             'language':'English statement headings verified','limitations':['Mechanical source qualification; report review independently checks interpretation and attribution.']}
 
 
@@ -133,7 +131,7 @@ def prepare(output,spec,*,client=None):
         require(not index['coverage'].get('unassigned_qa_turn_ids'),'Unassigned Q&A turns prevent source qualification')
         qualification.update(version=VERSION,issuer_id=spec['issuer_id'],period=period_id,as_of=profile['as_of'],
             documents=docs,discovery_complete=False,transcript_exchanges=len(index['exchanges']),
-            discovery_scope='Latest completed ordinary quarterly call in configured public issuer index, matched to report cover. Official-source failures are retained; no claim of exhaustive web coverage.',
+            discovery_scope='Latest completed ordinary quarterly call in configured public issuer index, matched to explicit report identity and reporting-period evidence. Official-source failures are retained; no claim of exhaustive web coverage.',
             source_gaps=['Separate release, annual background, consensus and current valuation inputs not collected by this bounded route.'])
         case.save(output/'qualification.json',qualification)
         case.save(output/'transcript-index.json',index)
@@ -170,6 +168,7 @@ def prepare(output,spec,*,client=None):
             'financial_configuration':finance.configuration(start,end),
             'scope_notes':[
                 'Freshly collected '+period_id+' event_update. Source qualification binds issuer, explicit quarter, statement coverage, hashes and indexed call; it is not accounting or investment approval.',
+                'Report document basis: '+qualification['report_period']['basis']+' ('+qualification['report_period']['start']+' to '+qualification['report_period']['end']+'). '+qualification['report_period']['interpretation'],
                 'PDF financial tables are verbatim positional extraction, not normalized tagged facts. Prefer selected original rows, include their period/unit headers, and disclose unsupported normalized comparisons. Never infer issuer nondisclosure from a missing tag.',
                 'Call and report may disagree; use the original financial report for reported accounting figures and explicitly flag material transcript conflicts.',
                 'Public provider-hosted issuer report and attributable transcript may be used when official HTTP retrieval fails. No source search after authorship.',

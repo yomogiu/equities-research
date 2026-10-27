@@ -22,7 +22,7 @@ class FreshSourcesTests(unittest.TestCase):
         with self.assertRaises(ValueError):fresh.filing_url(body,'https://example.test/filings/FAKE/3/')
     def test_qualification_requires_issuer_period_and_statements(self):
         good='[Page 1]\nFICTIONAL MICRO | Q2 REPORT 2040\nIncome statement\nStatement of financial position\nCash flow\n'+('original text '*1000)
-        self.assertEqual(fresh.qualify_report(good,'Fictional Micro',(2040,2))['issuer_and_period'],'explicit_cover_match')
+        self.assertEqual(fresh.qualify_report(good,'Fictional Micro',(2040,2))['issuer_and_period'],'explicit_document_evidence')
         for text,issuer,period in [(good,'Other',(2040,2)),(good,'Fictional Micro',(2040,1)),(good.replace('Cash flow','Other'),'Fictional Micro',(2040,2))]:
             with self.assertRaises(ValueError):fresh.qualify_report(text,issuer,period)
     def test_pdf_sparse_rows_keep_original_positions_and_hashes(self):
