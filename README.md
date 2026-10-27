@@ -29,27 +29,16 @@ does not create a scheduler, persistent research storage, or a running agent ser
 - [Evidence rubric](roles/rubric.md)
 - [Investment methodology](.agents/skills/analyze-stock/SKILL.md)
 
-## Selected report pipeline
+## Sequential report pipeline
 
-Use `research.earnings_passage_pipeline` for new authorized, bounded report runs.
-It runs Prime Agent sessions through the existing Codex subscription:
+New reports use **Sources → financial tables → analysis → review → publication**.
+One job record owns progress and cumulative costs. Source preparation and financial
+calculations run in code; an author and a fresh independent reviewer perform the
+editorial work. Accepted reports are rendered and verified in private storage.
 
-| Role | Model | Effort |
-| --- | --- | --- |
-| Financial context | GPT-5.6 Luna | Extra High |
-| Retrieval and Q&A coverage | GPT-6 Luna | Max |
-| Analysis | GPT-6.1 Sol | Medium |
-| Independent review | GPT-6.1 Sol | Medium |
-
-[Run, verify and repair the selected pipeline](docs/report-pipeline.md).
-Code copies exact selected passages and renders source-derived financial values.
-Use `freeze --repair-loop` to automatically dispatch targeted repairs or source-backed
-rebuttals and return them to the reviewer for adjudication. Unresolved findings
-keep reports in draft status; accepted reports require a final passing review.
-This entry point does not activate the collection scheduler or unattended analysis.
-New runs include [independently reviewed business signals](docs/report-signals.md)
-after report acceptance by default. Use `freeze --no-signals` to opt out; existing
-frozen runs keep their original setting.
+See [operations](docs/operations.md) for execution and interruption behavior.
+Older passage/repair controllers remain available only for historical pinned-run
+inspection; they are not the entry point for new reports.
 
 ## Check the code
 

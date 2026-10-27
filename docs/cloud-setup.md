@@ -52,9 +52,10 @@ write/read-back. A code-only smoke check does not validate those research capabi
 
 ## Scheduling
 
-`tasks/calendar.md` and `tasks/earnings.md` are durable prompts. Reuse them when the
-selected hosted scheduling surface is available, and give both stages access to the
-same private queue/store. A GitHub repository alone does not schedule Codex tasks.
+`tasks/calendar.md` governs calendar collection. New earnings report execution uses
+the sequential controller in `docs/operations.md` and the private runtime task
+`tasks/sequential-reports.md`. The scheduler invokes the single private command;
+it does not coordinate role handoffs or repairs. A GitHub repository alone does not schedule Codex tasks.
 Do not add a GitHub Actions job that assumes a subscription is an API key or publishes
 research as public Actions artifacts. Do not copy Codex account credentials here.
 

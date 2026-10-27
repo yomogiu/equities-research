@@ -1,209 +1,275 @@
-# Handoffs and acceptance
+## Upstream financial inventory
 
-Use private storage with a stable namespace, for example:
+New source cases use `packet-financial-inventory-v1`. Before any model call, code
+extracts all numeric inline XBRL observations from every qualified raw financial
+document, captures every HTML table cell with its original row/column spans and
+source hash, and freezes dated quote/annual-EPS observations. The coverage manifest
+lists source kinds, available tagged periods, parser limitations and unsupported
+formats. A missing source or extraction failure is not issuer nondisclosure.
 
-```text
-watchlist.json
-calendar/<as-of>/calendar.json + calendar.md
-queue/<issuer-period>.json
-packets/<issuer-period>/<packet-id>.json
-runs/<run-id>/<role>/result.json
-reports/<issuer-period>/<packet-id>/<revision>/report.json + report.md
-receipts/<run-id>.json
-```
+One author selects existing tagged fact IDs for normalized core tables and may
+select original table/row IDs for material untagged disclosures and reconciliations.
+Code preserves original labels, values, dates, units and basis headers for these
+reported tables; compact presentation folds original multi-row headers into named
+columns and removes empty layout scaffolding. It retains the original source grid
+for replay. An explicitly authorized layout upgrade archives reviewed table files
+and proves identical financial values, selection and arithmetic before the existing
+bounded prose correction and fresh review. It adds no new author call or budget; it does not infer normalized semantics or calculate changes from
+ambiguous untagged layouts. All source cells remain in the private inventory even
+when the report displays only a few. No extra financial-selection model or
+post-draft source hunt is added. Zero tagged metrics is permitted with accurate
+limitations and available original tables. Independent review still checks material
+omissions and accounting interpretation; it may accept explicit extraction limits.
 
-These are logical paths in a private service, not files to add to this repository.
-Each cloud task must restore the relevant inputs and write back its results through
-that service. Restoring a local copy alone does not establish durable persistence.
-The CLI accepts private paths and refuses to render a report inside this checkout.
+The inventory covers the qualified archived packet, not every document on the web.
+Binary/PDF tables and absent comparative sources remain explicit coverage gaps;
+source collection/qualification must resolve those upstream for future packets.
+Old pinned cases retain their original extract. An explicitly authorized comparison
+may re-extract the same source bytes into a new version while preserving the stopped
+baseline, its review and all prior token costs.
 
-Record run ID, task/session identity when exposed, stage, source cutoff, artifact
-locations/hashes, review status, superseded report, and next retry time. Use the
-storage service's conditional writes or a single-writer queue to prevent two tasks
-from publishing competing accepted versions. The workspace implements local file locks, fenced leases and fast-forward Git claim
-publication before dispatch. Use one coordinator; this is not a general distributed
-queue or exactly-once execution engine. See [workspace.md](workspace.md).
+## Shared single-author report contract
 
-Acceptance needs all three: an agent's substantive rubric review, exact-source/schema
-validation, and verified private persistence. A stopped task, a successful CLI exit,
-or a polished report is not sufficient. Codex has no use of Anthropic's outcome API
-here; the Codex coordinator follows the rubric and explicit repair procedure.
+The single-author path supplies the same material coverage obligations to author and
+reviewer: comparison distortions, usable liquidity and reporting dates, funding needs,
+cash-flow quality, and guidance basis. The author returns a source-cited coverage map
+pointing to actual report paragraphs. Code checks the wiring; independent review still
+judges applicability, completeness, materiality and source interpretation.
 
-Every material quote keeps its document ID, verbatim text, speaker, and locator.
-Every metric keeps its original passage, period, currency, unit/scale, and basis.
-Interpretations distinguish company claims, facts, and inference, with counterevidence
-and uncertainty. Review criteria assess evidence quality, not optimism or agreement.
+Annual EPS is reparsed from all frozen filings and bound to listed share classes via
+filed trading-symbol contexts. Recognized archived quote headers retain their actual
+dates and currencies. The author selects inventory IDs; code requires matching
+currency/security and a full annual earnings period,
+and calculates the multiple using Decimal arithmetic. The report displays the actual
+historical quote date. No quarterly annualization, target price or DCF is permitted.
+These source selections remain separate from the immutable core financial extraction.
+After a compiler fix, authenticated completed author output can be recompiled without
+another model call; original response, session, source hashes and all costs are retained.
+Ambiguous observations fail closed. This is not permission to rewrite the narrative.
+The author and renderer have distinct ownership: code prints table gaps, debt definitions,
+one calculation legend and the multiple block; prose explains business implications.
 
-Maintain a finite run capacity and bounded revisions. Codex subscription limits are
-shared with other use. On interruption, preserve receipts and resume incomplete work;
-do not recreate already accepted packets or assume an unlimited unattended budget.
+A new explicitly authorized versioned comparison preserves previous comparison records,
+code pins and costs. A quality failure still blocks publication and does not resume
+schedules. Passing unit tests alone is not evidence that a live report passed review.
 
-Live research starts only after a reviewed watchlist, public-source network access,
-private storage, and an actual cloud task invocation have been verified. The fake
-example is for tests only and must never be queried as a real company.
+# Sequential earnings reports
 
+## Single-author path for new jobs
 
-## Batched report repair
+The `single_author` code binding replaces separate financial selection and table-first authoring with **Sources → combined author → independent review → publication**. Extraction is deterministic. One author session receives one fixed packet directly in its prompt and returns source fact selections plus the full structured write-up. Code validates the selections, computes tables, and renders the candidate. The author receives every extracted observation, complete original filing/release bodies and the complete call. Overlapping source chunks are represented by offsets into one copy of each document; redundant SEC machine prefixes are identified explicitly. There is no retrieval loop or prior-review coaching in the initial author input.
 
-The initial independent audit lists every material defect in one correction batch,
-including repeated claims across financial context, retrieval summaries and prose.
-Corrections are hash-bound field patches; financial observations and selected
-quotations remain fixed. Claim groups enumerate every matching occurrence and require
-an explicit repair or a reason to retain it. This check does not infer semantic
-similarity; the author and reviewer must choose the complete aliases and affected fields.
+A fresh reviewer receives the exact candidate, every original document body and call, the selected definitions, and deterministic numerical verification. It evaluates the same eight criteria and five expected questions. The dictionary fact inventory is not reprinted to the reviewer because original financial statements and the computed tables are already supplied. Each session has one provider request, zero tools and one final output. Complete-prompt hashes establish packet delivery; a tool-output character limit cannot truncate it. Acceptance still requires a passing exact-candidate independent review; narrative findings enter bounded corrections without another full report run. Schedule state is separate.
 
-Subsequent reviews receive the complete rendered report, exact field changes, pending
-findings and original passages cited by the complete report, with source hashes and
-character offsets. Supplying all direct report citations up front avoids a second
-lookup for unchanged claims. Review prompts are bounded at 350,000 characters.
-Repeated source spans share one source block. The original full-source audit stays
-in the immutable history. A reviewer can request exact source IDs once; that evidence
-expansion consumes measured tokens but no correction round. Insufficient evidence,
-failed provenance, an uncertain launch or an exhausted budget cannot become acceptance.
+A newly authorized architecture comparison must retain its stopped baseline and cumulative accounting. The private adapter stores it under the original job, uses identical source bytes and a separate explicit test allowance, and reports both incremental and combined costs. It cannot reset or silently replay an existing comparison.
 
-The reviewer approves the exact staged candidate. Python applies the approved patch
-and renders the result; no author rewrites follow acceptance. Optional
-`format.layout` (`compact-financial-v1`) folds compatible ratio rows into monetary
-rows and moves secondary tables into expandable detail while retaining every original
-value and citation. Independent signal review and private persistence remain required.
-Historical pinned runs replay with their original code. Explicit v2 remediation
-editions may descend from a conclusively stopped correction or remediation run; they
-preserve the entire prior history and cannot retry an unchanged candidate or fork a
-second descendant from the same source.
+The procedures below also document compatibility for previously pinned jobs.
 
-Correction application retains exact idempotent instructions for independent review.
-A citation-only change may preserve the sentence while updating its support. Actual
-before/after values determine whether a field changed; an author label cannot mark
-a changed field as unchanged. Claim groups can reference exact existing metadata
-paths for paraphrases or display fields without a literal phrase match. All literal
-matches still need a proposed operation or an explicit disposition. Unknown paths,
-stale hashes, altered observations and unadjudicated repeated claims remain errors.
-This never grants acceptance: the reviewer receives each retained instruction, every
-actual delta and the original findings, and must approve the exact report.
+The active report path is **Sources → financial tables → analysis → review → publication**.
+`research.earnings_sequential` owns one `job.json` per company and period.
+`research.earnings_sequential_stages` supplies the five concrete handlers.
+The private runtime supplies source qualification and verified private publication.
 
-### Scoped transcript currentness
+The active path uses shared modules with no legacy-controller dependency:
 
-A changed market quote on a recognized transcript page can be checked separately
-from the archived call. The scoped-currentness verifier requires exact complete
-speaker blocks, fiscal metadata and all extracted text outside one structurally
-identified market widget. It archives the new raw page and extracted text, binds
-the actual HTTP observation and original qualification, and retains every original
-source hash and evidence offset. New packets state the scoped freshness basis;
-materialization replays the proof and rejects conflicting newer observations.
-This never asserts that changed full-page text or bytes are identical.
+| Module | Responsibility |
+| --- | --- |
+| `earnings_runtime_common` | Immutable file/hash operations, exact model selection and installed runtime discovery |
+| `earnings_source_case` | Existing source-case serialization and frozen-input validation |
+| `earnings_source_preparation` | Deterministic evidence derivation after caller-owned source qualification |
+| `earnings_markdown_render` | Report rendering and escaping without historical report builders |
+| `earnings_file_context` / `earnings_file_runner` | Source inspection and authenticated model execution |
 
-Repair review metadata uses a lossless columnar passage index to avoid repeated
-field names. Original evidence and Unicode offsets remain available in full.
-Explicit formatting remediation may correct table captions and period labels with
-source citations, while preserving numeric values, units, periods and group identity.
+Archived workflows re-export shared helpers for compatibility. Their controllers and
+result validators are not imported by the sequential path. The legacy result preflight
+is isolated in `earnings_legacy_result_validation`; sequential schemas and acceptance
+remain owned by the stage controller. Existing artifact serialization, hashes and source
+qualification rules remain unchanged. Dependency tests forbid retired imports while
+executing source preparation and a complete corrected-report cycle.
 
+1. **Sources:** freeze qualified issuer/period evidence, original filing and complete
+   call, writing standard, source hashes and observation cutoff. Historical reports
+   explicitly identify their fixed source snapshot. Missing or ambiguous evidence blocks.
+2. **Financial tables:** compile source-grounded periods, units, GAAP/adjusted basis,
+   core metrics and available QoQ/YoY comparisons in code. Missing inputs remain gaps;
+   no model invents comparatives or performs arithmetic.
+3. **Analysis:** one signed-in author session interprets the tables and original call,
+   with cited demand, profits, cash, outlook, earnings multiples and material Q&A.
+4. **Review:** a fresh session examines the exact candidate and original evidence,
+   all eight review criteria and five expected questions. Revisions return to analysis
+   in the same job, at most twice. Prose findings use targeted section corrections.
+   Table findings automatically archive the old tables and return to financial tables;
+   original sources and cumulative costs stay fixed. Changed tables expand correction scope to the affected sections and require
+   fresh independent review of the full candidate before publication.
+5. **Publication:** render only the exact accepted candidate. The private publisher
+   persists artifacts and verifies remote bytes before recording successful publication.
 
-### Batched call inspection
+Before either model stage, code replays the inline-XBRL extraction, financial
+configuration, calculations and table rendering against frozen source hashes. The
+model receives the tables once, a compact verification record, and explicit gaps.
+This verifies numerical reproducibility, not the completeness or accounting meaning
+of the report. Original disclosures remain available; qualitative claims still need
+original-source inspection and independent review.
 
-File-backed roles use `print(ctx.call_batch())` to show the original transcript
-once, with compact citation offsets and provisional Q&A annotations. For calls
-longer than 48,000 characters, follow `next_start` in the same IPython call when
-practical. The overlapping exchange, section, turn and quotation representations
-are locators rather than repeated source paragraphs. Coverage projects only to
-hash- and offset-equivalent transcript spans after the full call is delivered;
-filings and financial rows still require their own evidence reads. Merely loading
-a batch into kernel memory does not satisfy inspection. Reviewers inspect their
-own fresh-context batch. Historical frozen runs retain their original API.
+Initial analysis and independent review default to `gpt-6.1-sol` with medium
+reasoning. Verified corrections default to `gpt-6-luna` with max reasoning, including
+sections affected by verified table repairs. Per-job `models`
+overrides use the distinct `analysis`, `review` and `correction` keys.
 
-Measure retrieval changes in one fresh retrieval-only job with an explicit token
-budget, tool-call bound and no automatic retries. Record input, output, cache-read,
-cache-write, model turns and source coverage, including failed attempts. Do not
-advance analysis or restart the batch as part of this measurement.
+An exact, unambiguous reviewer-requested sentence deletion is applied in code when
+all affected components can be repaired solely by deletion. It adds no claims or
+citations, uses zero model tokens, records an explicit deterministic execution kind
+without a synthetic model session, and still requires a fresh full-report review.
+Other corrections use Luna Max. A narrative-only correction replaces exactly the
+sections identified by the prior review. Code preserves every other component, verifies the prior reviewed candidate,
+and saves hashes of the before/after components. The correction author receives the
+flagged sections and their original evidence. The fresh reviewer receives the entire
+revised candidate, prior review, verified changes and original evidence for changed
+claims and findings. Every replacement citation, including a reused financial ID,
+requires original-source inspection. The reviewer still assesses all eight criteria
+and all five questions; previous passes do not automatically carry forward. The full
+call is read on the initial pass and remains available during corrections. Changed
+financial tables expand the replacement scope to the affected financial sections.
+The prior candidate is reconstructed with its archived tables; new tables are verified
+against original sources. The fresh reviewer sees the full candidate, both change
+proofs and original support, including newly parsed comparative disclosures.
+Invalid proof or changed frozen
+sources blocks execution. No model call or new budget is hidden in these checks.
 
-The IPython runtime independently truncates outputs at 65,536 characters. Call
-batches therefore fit within 60,000 characters including compact locator tables,
-and expose next_start for any remaining source text. Do not concatenate batches
-or other prints beyond that total in one tool result. A delivery-hook setting
-does not remove the runtime truncation. Missing exact batch text earns no credit.
+Only analysis and review invoke models. There are no retrieval-model stages, separate
+signal-author stages, successor jobs, repair queues or agent-to-agent handoffs in this path.
+The standard successful pass has two model sessions; revisions add an author and reviewer.
+Each session may make several provider requests as it reads evidence, so repeated input
+counts toward actual usage. A smaller packet is not a measured token-saving guarantee.
+Each role plans its own required evidence reads. Whole-role token forecasts are advisory;
+admission checks minimum context feasibility and the runtime enforces actual usage.
+Every call consumes the same cumulative job allowance, including failed work. An uncertain
+paid execution stops for reconciliation rather than silently retrying. Deterministic,
+idempotent stages may safely resume after interruption. One process owns the job lock.
 
+The private runtime CLI is `python3 scripts/run_reports.py tick`. It advances one eligible
+company through up to five stages. The scheduler invokes this command and reports its
+result; it does not choose repairs, change budgets or edit execution state. `status` is
+read-only. `initialize` creates untouched jobs once from the static authorized batch.
+An operator may explicitly resume a proven closed model failure or a safely replayable,
+zero-token deterministic failure after fixing its cause.
+The same journal retains the failed attempt, all charged tokens and the code-change reason;
+actual model restarts are bounded to two. A recorded zero-token `not_started` model
+attempt with no session or execution directory, or a zero-token replay-safe deterministic
+attempt, can be repaired explicitly without consuming that limit. Classification comes
+from the referenced attempt outcome, including for older resume records; the operator's
+reason cannot change it. All repair records remain in the same journal. The scheduler
+never performs this technical resume action. A conclusively completed independent
+review with financial-table findings instead enters the automatic table repair path.
+The normal tick can adopt an older blocked table review after exact-candidate, source,
+usage and revision checks; uncertain sessions, exhausted jobs and final-review allowances
+are excluded. The transition and each stage are persisted before further work.
 
-### Filing retrieval without exact-query dead ends
+Automatic table repair currently applies a small deterministic rule set: source-bound
+SEC interim accounting-basis qualification; exact-concept duplicate consolidation;
+compatible additive-quarter derivation (never EPS/share subtraction); and selection of
+a revenue denominator only when one identity reconciles with reported gross profit plus
+cost across every shared period. Distinct revenue definitions remain separate rows.
+Every interpretation remains subject to fresh independent review. It does not invent
+missing observations, retrieve new sources, change code or accept arbitrary model mappings.
 
-Use `print(ctx.filing_batch(query, limit=4))` in a separate tool response from the
-call batch. It ranks individual query tokens over the complete D-excerpt inventory,
-prefers source-document diversity, omits duplicate and overlapping text, and prints
-whole excerpts with their original provenance and exact D IDs. Empty matches trigger
-an explicitly marked representative fallback, not a claim that evidence is absent.
-If no eligible excerpts exist, record a source-access gap; nonempty document selection
-remains required for a completed retrieval. Oversized scopes are counted separately
-and remain available through paged access. Selection is not acceptance or exhaustive
-filing review. Only complete visible, replay-verified batches gain coverage credit.
-`ctx.search` retains its original exact literal semantics for historical replay.
+Identical repaired table text stops before another author call. Repeated identical
+review findings also stop; a failed or unsupported repair stays blocked and the next
+tick selects another eligible company. At most two revision rounds share the original
+token allowance. Manual `rebuild-tables` remains available for diagnosed code fixes;
+neither path bypasses review or grants additional budget.
+An explicitly human-approved final-review allowance may fund one fresh review of the
+exact existing candidate. The core records the approval and original allowance, binds
+all retained artifacts, and prevents further model retries or corrections. Only a
+passing review permits zero-token publication. The scheduler cannot grant allowances.
+Global universe analysis remains separately gated. Collection and calendar workflows
+are unchanged.
 
+Historical report artifacts, code and receipts remain available for audit. They are
+not inputs to the new controller's execution decisions. The one-time migration inventory
+retains completed reports and unfinished accounting records; it never resets an old
+job's costs. See [historical operations](legacy-operations.md) only when inspecting an
+old pinned run. Those instructions do not govern new sequential reports.
 
-Live role bootstraps use `Evidence.for_job()`, deriving the context and canonical
-retrieval log from the runner-owned request in the kernel working directory.
-Direct construction in an active role also binds that log and rejects a different
-context. Historical offline audit contexts remain replayable. Full lifecycles use
-their explicit lifecycle budget; small retrieval-trial ceilings are not inherited
-as full-run ceilings. The conservative pre-turn input/output reserve remains in
-force; cached input and prior attempts remain counted.
-
-
-A completed retrieval stopped by the exact `{finding, document_id}` transport
-shape can continue through an explicit preparation manifest. The caller replays
-the original frozen verifier and coverage, performs only the lossless conversion
-to `{text, citations}`, and validates the complete canonical retrieval including
-Q&A grounding. A new immutable continuation carries the original token ceiling,
-all spent tokens and the retrieval session identity. Authors and reviewers remain
-fresh. Original requests, sessions and outputs are never edited; unknown or mixed
-schemas are rejected rather than repaired by guesswork.
-
-
-### Host-enforced progress and final-writing phase
-
-New role requests bind an execution policy: three tool calls for financial,
-retrieval, analysis and signal roles; four for reviewers and correction authors.
-Batch required evidence within that plan. The host uses Responses `tool_choice=none`
-after the allowance, or earlier when another maximum-output reserve no longer fits,
-so the next turn writes the result instead of adding another exploration round.
-An unexpected tool call in final-writing mode is blocked and cannot pass replay.
-This follows the final-request pattern in the official OpenAI agent optimization
-example: https://developers.openai.com/cookbook/examples/agent_optimization/optimizing_agents_for_cost_and_quality
-
-After every tool result, the host independently checkpoints the delivered evidence
-prefix and records its bound receipt. It preserves authored partial work if supplied;
-otherwise it labels the checkpoint source-progress-only, with no invented prose or
-acceptance authority. Resume retains all spent tokens, dependencies and the two-resume
-limit. Missing, altered or stale checkpoint receipts fail closed. Source-progress
-recovery still requires the new model to inspect material text for interpretation.
-The lifecycle ceiling and conservative output reserve remain unchanged. These
-controls cannot retroactively reconstruct an unsaved draft from a historical run.
-
-
-Completed author output can likewise continue through a separately bound analysis
-manifest when its only issue is source addressing. Exact passage references in
-citation lists map to their original parent scopes; the transcript document identity
-maps to all its original call sections. Unknown IDs remain errors. Text and quote
-selections are unchanged. The original frozen verifier replays the author receipt,
-normalizes addressing, and verifies original inspection and all author validation.
-The new lifecycle retains both session IDs and the combined inherited usage; it
-cannot raise the original ceiling or bypass fresh signal/review work.
+Use the signed-in subscription and configured private storage. Never put real evidence,
+reports, watchlists, session receipts or authentication in this public repository.
+Passing tests establishes code behavior, not live model execution or remote publication.
 
 
-### Typed, paged role packets
+### Presentation-only corrections
 
-Use handoff_batch for the whole report, metadata and relevant handoffs. Signal
-handoffs contain the finding catalogue rather than a duplicate of the entire state;
-review handoffs contain unit values rather than repeating both units and state.
-Use call_batch for the complete call and support_batch for all referenced non-call
-support. Each role packet is at most 59,000 body characters, with next_start when
-more remains. Full delivered ranges, not kernel loads, determine coverage.
+A completed review that passes all seven substantive criteria and flags only a
+supported repeated debt caveat can take one deterministic presentation repair.
+The rule removes two known generated notices only when the complete debt/lease
+limitation remains in the cash commentary. It preserves every financial row,
+source, citation and narrative byte. A separate candidate and deletion proof
+retain the previously reviewed report. The next stage is independent review,
+without another source, table or author run. All eight criteria and five expected
+questions remain mandatory; the review and publication bind the new candidate.
 
-Signal authors may instead use source_batch with exact selected scope or passage
-IDs after choosing material findings. It prints complete original parent scopes,
-original provenance, selected context/unit data and exact passage locators. This
-avoids a whole-call reread for a narrow signal selection. Reviewers still inspect
-all required original evidence. Support packets deduplicate source blocks and file
-identities without changing original text. Missing pages receive no coverage.
+This pass has a separate one-repair bound and uses the existing cumulative token
+budget, including after the two substantive revision rounds. Unsupported changes,
+uncertain executions, another editorial failure or insufficient budget stop. Normal
+execution never expands the budget. An explicit user request to correct and review
+an already blocked report may be recorded through `repair_editorial`; an optional
+bounded review allowance is recorded alongside all previous usage. Publication
+still requires acceptance. Scheduling is controlled independently.
 
-The early-finalization margin is 65,536 tokens above the registered maximum-output
-reserve, rather than another full maximum output. The hard conservative reserve
-and cumulative token accounting remain in force. A continuation may lower its
-ceiling to deduct a verified failed sibling's usage; it cannot raise the inherited
-ceiling. This preserves lost-attempt charges without rerunning a validated author.
+
+### Broad financial extraction and model selection
+
+New sequential jobs insert one accountable `financial_selection` stage between
+source preparation and deterministic financial tables. The compact inventory
+retains every raw observation, with shared dictionaries for concepts, labels,
+periods, entities, units and dimensions. Original statement/note excerpts accompany
+it; discovery previews cannot establish source inspection. The selector retrieves
+additional original evidence through the signed-in evidence reader.
+
+The saved mapping selects only existing fact IDs and supplies source-cited metric,
+basis and perimeter interpretations. Code rejects fabricated fields, unknown or
+unqualified facts, mixed classes/segments/units, conflicting values and uncovered
+core metrics. Share classes remain separate. Gross purchase capex defines the
+code-calculated FCF convention; debt/lease definitions remain explicit. Raw facts
+are never rewritten. Model semantic interpretation is not deterministic evidence;
+the independent reviewer still challenges it against original sources.
+
+Table compilation and review reproduce the exact hash-bound mapping. All selection
+usage is charged to the same job. Selection cannot declare replay safety; a failed
+call stops with its receipts. New runs enable this path at code binding. An existing
+zero-token blocked table pass may enter it through the explicit
+`enable_financial_selection` migration, preserving evidence, costs and revision
+limits. Automation does not grant extra budgets or operator recovery actions.
+
+A completed, charged selection rejected by a repaired validator can use
+`adopt_financial_selection` with the authenticated `verified_result` recovery.
+This revalidates the original response, source-inspection receipts and frozen
+inputs without another model call. Original costs and failed attempts remain
+recorded; recovery grants neither report acceptance nor additional budget.
+
+
+Single-author narrative review failures now enter the existing two-round bounded
+correction loop in the same job. GPT-6 Luna at max effort proposes small exact-anchor edits within the sections
+named by review. Code preserves text outside those edits, unions original citations
+and rebinds affected coverage entries mechanically. A correction cannot rewrite a
+whole paragraph or claim disclosures are absent merely because a selective packet
+does not repeat them. Original source rows and contexts are losslessly shared once. Selection, tables, valuation and
+unaffected prose remain frozen. A fresh GPT-6.1 Sol medium session verifies the
+whole revised candidate, all criteria/questions and every change using complete
+original cited scopes and the full call, plus reproduced table arithmetic. This
+revision packet avoids resending the author fact inventory and unrelated filing
+pages. No findings means publication; repeated identical findings, missing support,
+exhausted rounds or insufficient cumulative budget stop the job. Table-selection
+findings remain an explicit source-bound repair boundary rather than a prose fix.
+The operator `repair_single_author` core API can migrate a closed narrative review
+from a historical zero-revision comparison with explicit user authorization; it
+preserves all paid attempts, artifacts and the original token ceiling.
+
+Compatible original GAAP/non-GAAP selections render in one period-labeled comparison,
+with source units and reconciliation labels. Dangling presentation markers are
+omitted while the complete original cells remain archived. After all substantive
+criteria pass, unambiguous reviewer-quoted sentence deletions and assessment
+shortenings can be applied in code with zero correction-model tokens. A fresh
+review still assesses the full candidate and every criterion against the prior
+review's original sources, complete call, exact edit proof and unchanged-data
+proof. Unchanged claims retain their previous independent original-source review;
+this bounded presentation check is not a new full-document research pass.

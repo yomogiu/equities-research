@@ -72,47 +72,65 @@ def validate(analysis):
         raise ValueError('Every finding requires a supported report section')
 
 
+def instructions(*,financial_analysis=False):
+    if not financial_analysis:return INSTRUCTIONS
+    return INSTRUCTIONS.replace('Preserve a substantive textual summary and material narrative. Tables\nsupport the prose; they do not replace it. Explain drivers, mechanisms, management\ncommentary, qualifications and unresolved details in multiple paragraphs as needed.\nDo not reduce analysis to captions. Source material determines depth; no word or\nparagraph quota. Existing reviewers must flag material narrative omissions.',
+        'The source-computed financial analysis tables are primary. Current values,\nprior-quarter and prior-year values, QoQ/YoY, margins and cash/debt arithmetic\nare immutable compiled data. Do not re-author their numbers, labels, sign conventions\nor formulas. No financial model prose is required to make those tables usable.\nAdd narrative only for source-backed drivers, mechanisms, qualifications or gaps\nthat the tables cannot convey. There is no paragraph or word quota.').replace(
+        'Earnings & Efficiency;', 'Profits & Margins;').replace(
+        'Outlook covers company guidance. Optional valuation requires supplied, cited dated\nprice and forecast estimates, listing/currency/share-or-ADR basis and forecast\nperiod. Otherwise omit it; do not request additional data to fill the template.',
+        'Outlook covers company guidance. Valuation is limited to supplied, cited dated\nprice divided by matching annual/TTM or forward annual diluted EPS. Match issuer,\nsecurity, currency, share/ADR and split basis and show the earnings period. No\nquarterly EPS annualization, invented forecasts, DCF, target price or other valuation.\nIf inputs are missing, name the gap briefly; do not request data to fill the template.')
+
+
 def exchange_ids(finding, index):
     """Resolve explicit exchange or member-turn citations, never topic matching."""
     cited = set(finding['citations'])
     cited.update(q['scope_id'] for q in finding.get('quotes', []) if 'scope_id' in q)
     selected = {x['id'] for x in index['exchanges']
                 if x['id'] in cited or cited.intersection(x['turn_ids'])}
-    # Preserve linked parent questions and follow-ups as one contextual exchange.
-    while True:
-        linked = {x['id'] for x in index['exchanges'] if x.get('followup_of') in selected}
-        linked.update(x['followup_of'] for x in index['exchanges']
-                      if x['id'] in selected and x.get('followup_of'))
-        if linked <= selected:
-            break
-        selected.update(linked)
     return [x['id'] for x in index['exchanges'] if x['id'] in selected]
+
+
+def original_bindings(finding, index):
+    """Bind explicit turns exactly; provisional exchange grouping is not evidence."""
+    import hashlib
+    cited=set(finding['citations']) | {q['scope_id'] for q in finding.get('quotes',[]) if 'scope_id' in q}
+    turns={t['id'] for t in index['turns']}
+    explicit=[e for e in index['exchanges'] if e['id'] in cited]
+    covered={tid for e in explicit for tid in e['turn_ids']}
+    result=[(e['id'],e['turn_ids']) for e in explicit]
+    exact=[t['id'] for t in index['turns'] if t['id'] in cited and t['id'] not in covered]
+    if exact:
+        key='qa-turns-'+hashlib.sha256(('\n'.join(exact)).encode()).hexdigest()[:24]
+        result.append((key,exact))
+    return result
 
 
 def original_exchanges(state, bundle):
     """Copy original turn spans after verifying the frozen transcript hash/index."""
     from . import earnings_compact_evidence as evidence
     index = bundle['transcript_index']
-    selected = set()
-    for finding in state['artifacts']['analysis']['findings']:
-        if finding.get('section') == 'qa':
-            selected.update(exchange_ids(finding, index))
-    if not selected:
-        return {}
+    from . import earnings_passages as passages
+    import copy
+    bound=copy.deepcopy(state)
+    parent={p['passage_id']:p['scope_id'] for p in passages.catalog(bundle['manifest'])['passages']}
+    for f in bound['artifacts']['analysis']['findings']:
+        for q in f.get('quotes',[]):
+            if q.get('passage_id') in parent:q['scope_id']=parent[q['passage_id']]
+    bindings={key:ids for finding in bound['artifacts']['analysis']['findings']
+              if finding.get('section')=='qa' for key,ids in original_bindings(finding,index)}
+    if not bindings:return {}
     view = evidence.transcript_view(bundle['manifest'])
     turns = {t['id']: t for t in index['turns']}
     result = {}
-    for exchange in index['exchanges']:
-        if exchange['id'] not in selected:
-            continue
-        rows = []
-        for tid in exchange['turn_ids']:
-            turn = turns[tid]
-            rows.append({k: turn[k] for k in ('id', 'speaker', 'role', 'start', 'end')} |
-                        {'text': view['text'][turn['start']:turn['end']]})
-        rows.sort(key=lambda t: t['start'])
-        result[exchange['id']] = {'id': exchange['id'], 'turns': rows,
-                                  'transcript_sha256': view['sha256']}
+    for key, ids in bindings.items():
+        rows=[]
+        for tid in ids:
+            turn=turns[tid]
+            rows.append({k:turn[k] for k in ('id','speaker','role','start','end')} |
+                        {'text':view['text'][turn['start']:turn['end']]})
+        rows.sort(key=lambda t:t['start'])
+        result[key]={'id':key,'turns':rows,'transcript_sha256':view['sha256']}
+
     return result
 
 
@@ -174,6 +192,9 @@ def comparisons(group, row):
 
 
 def financial_sections(financial, bundle, formatting):
+    if 'financial_analysis' in bundle:
+        from . import earnings_financial_analysis_report as computed
+        return computed.sections(computed.verified(bundle))
     from . import earnings_financial_display as display
     from . import earnings_mixed_runner as base
     from . import earnings_report_repair as repair
@@ -217,7 +238,7 @@ def financial_sections(financial, bundle, formatting):
 
 def report(state, bundle, catalog, pack=None):
     from . import earnings_passages as passages, earnings_signals as signals
-    from .earnings_markdown import refs
+    from .earnings_markdown import refs, quote_markdown
     analysis = state['artifacts']['analysis']
     validate(analysis)
     out = passages.hydrate('analysis', analysis, catalog)
@@ -231,6 +252,7 @@ def report(state, bundle, catalog, pack=None):
         for signal in pack['signals']:
             by_finding.setdefault(fc[signal['finding_id']]['index'], []).append(signal)
     for key, heading in SECTIONS.items():
+        if 'financial_analysis' in bundle and key=='earnings':heading='Profits & Margins'
         lines.extend(['## ' + heading, '', *tables[key]])
         findings = [(i, f) for i, f in enumerate(out['findings']) if f['section'] == key]
         for i, finding in findings:
@@ -240,9 +262,9 @@ def report(state, bundle, catalog, pack=None):
                               ' · ' + signal['period'] + ' ' + refs(signal['citations']), ''])
             lines.extend([finding['text'] + ' ' + refs(finding['citations']), ''])
             for quote in finding['quotes']:
-                lines.extend(['\n'.join('> ' + line for line in quote['text'].splitlines()) + ' ' + refs([quote['scope_id']]), ''])
+                lines.extend([quote_markdown(quote,bundle), ''])
             if key == 'qa':
-                for identifier in exchange_ids(finding, bundle['transcript_index']):
+                for identifier, _ in original_bindings(finding, bundle['transcript_index']):
                     # Only an ID enters review context. Full text is copied into
                     # HTML from the verified source bundle, not sent to a model again.
                     lines.extend([':::original-qa ' + identifier, ''])

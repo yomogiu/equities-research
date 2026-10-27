@@ -9,7 +9,7 @@ from research import financial_reviewed_proposals as a, financial_evidence as f,
 class ReviewedProposalTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.job=Path(self.tmp.name)
-        for name in ('request.json','output.json'):(self.job/name).write_text('{}')
+        for name in ('request.json','output.json'):(self.job/name).write_text(json.dumps({'context_index':str(self.job/'index.json')} if name=='request.json' else {}))
         self.raw=b'%PDF fictitious fixture';self.text=b'Revenue 10'
         self.source={'document_id':'fictional','issuer_id':'sec:fictional','raw_sha256':f.digest(self.raw),'text_sha256':f.digest(self.text)}
         row=f.propose_fact(self.text.decode(),self.source,concept='us-gaap:Revenues',value='10',context={'id':'c','entity':'sec:fictional','entity_scheme':'SEC CIK','start_date':'2026-01-01','end_date':'2026-03-31','instant':None,'dimensions':[]},unit={'id':'u','numerator':['iso4217:USD'],'denominator':[]},quote=self.text.decode(),start=0)
@@ -21,7 +21,7 @@ class ReviewedProposalTests(unittest.TestCase):
         reader=SimpleNamespace(artifacts={'financial_proposals':self.profile},records={'D001':{'spans':[{'document_id':'fictional'}]}})
         result={'content':self.verdict,'receipt':{'session':{'id':'reviewer'}}}
         with ExitStack() as stack:
-            stack.enter_context(patch.object(r,'verify_job',return_value=result));stack.enter_context(patch.object(b,'read',return_value={'context_index':str(self.job/'index.json')}))
+            stack.enter_context(patch.object(r,'verify_job',return_value=result))
             stack.enter_context(patch.object(c,'Evidence',return_value=reader));stack.enter_context(patch.object(c,'audit',return_value=self.entries));stack.enter_context(patch.object(c,'delivered_entries',return_value=self.entries))
             return a.approve(self.profile,self.source,self.job,self.auth)
     def test_replay_preserves_proposals_and_other_review_findings(self):

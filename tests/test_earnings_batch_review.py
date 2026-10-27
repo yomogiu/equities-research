@@ -33,6 +33,22 @@ class BatchTests(PassageFixture, unittest.TestCase):
         edit['before']=[]
         with self.assertRaises(ValueError):b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
 
+    def test_retrieval_quote_deletion_cannot_exhaust_required_selection(self):
+        items=self.items();key='retrieval'
+        quotes=[{'passage_id':'fictional-'+str(i)} for i in range(5)]
+        items[key]['value']['quotes']=copy.deepcopy(quotes)
+        original=copy.deepcopy(items)
+        for remaining in (0,1,3):
+            review=self.editorial_decision(items,key,'mixed',['quotes'],quotes,quotes[:remaining])
+            with self.assertRaisesRegex(ValueError,'retain four to eighteen'):
+                b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+            self.assertEqual(items,original)
+        review=self.editorial_decision(items,key,'mixed',['quotes'],quotes,quotes[:4])
+        accepted,findings=b.adjudicate(items,{key},{},review,self.catalog,'receipt',b.EDITORIAL_VERSION)
+        self.assertNotIn(key,accepted)
+        self.assertIn('EDITORIAL REPAIRS',findings[key])
+        self.assertEqual(items,original)
+
     def test_adjacent_hash_resolution_keeps_values_and_rejects_unbound_batches(self):
         items=self.items();plan=self.plan(items,['analysis:1'])
         plan['changes'][0]['before_sha256']=b.runner.digest(items['analysis:0']['value'])
@@ -45,6 +61,26 @@ class BatchTests(PassageFixture, unittest.TestCase):
             with self.assertRaises(ValueError):b.resolve_correction_hashes(items,bad)
         bad=copy.deepcopy(plan);bad['before_sha256']='stale'
         with self.assertRaises(ValueError):b.resolve_correction_hashes(items,bad)
+
+    def test_bound_addresses_require_exact_authenticated_batch_and_preserve_values(self):
+        items=self.items();plan=self.plan(items,['analysis:1']);plan['before_sha256']='bound'
+        plan['changes'][0]['before_sha256']='bound';original=copy.deepcopy(plan)
+        for authority in (None,'stale'):
+            with self.assertRaisesRegex(ValueError,'Authenticated job batch'):
+                b.resolve_correction_hashes(items,plan,bound_batch_sha256=authority)
+        fixed,note=b.resolve_correction_hashes(items,plan,bound_batch_sha256=b.runner.digest(items))
+        self.assertEqual(plan,original)
+        self.assertEqual(fixed['before_sha256'],b.runner.digest(items))
+        self.assertEqual(fixed['changes'][0]['before_sha256'],b.runner.digest(items['analysis:1']['value']))
+        self.assertEqual(fixed['changes'][0]['value'],original['changes'][0]['value'])
+        self.assertEqual(note['version'],'bound-context-correction-address-v1')
+        b.apply(items,fixed,b.EDITORIAL_VERSION)
+        for field,bad_value in [('before_sha256','stale'),('unit_id','unknown')]:
+            bad=copy.deepcopy(plan)
+            if field=='unit_id':bad['changes'][0][field]=bad_value
+            else:bad[field]=bad_value
+            with self.assertRaises(ValueError):
+                b.resolve_correction_hashes(items,bad,bound_batch_sha256=b.runner.digest(items))
 
     def test_basis_citation_binding_only_uses_exact_compiled_label(self):
         items=self.items();value=copy.deepcopy(items['format']['value'])
@@ -62,6 +98,16 @@ class BatchTests(PassageFixture, unittest.TestCase):
             self.assertEqual(fixed['changes'][0]['value']['basis']['citations'],['F001','F002'])
             self.assertEqual(fixed['changes'][0]['value']['basis']['text'],value['basis']['text'])
             self.assertEqual(len(notes),1)
+            generic=copy.deepcopy(plan)
+            generic['changes'][0]['value']['basis']['text']='Financial tables present reported GAAP figures; periods and units are shown in their headers.'
+            resolved,audit=b.resolve_basis_citations(items,generic,bundle)
+            self.assertEqual(resolved['changes'][0]['value']['basis']['citations'],['F001','F002'])
+            self.assertEqual(audit[0]['label'],generic['changes'][0]['value']['basis']['text'])
+            self.assertEqual(generic['changes'][0]['value']['basis']['citations'],[])
+            display['groups'].append({'unit':'million shares'})
+            self.assertTrue(b.resolve_basis_citations(items,generic,bundle)[1])
+            self.assertEqual(b.resolve_basis_citations(items,plan,bundle),(plan,[]))
+            display['groups'].pop()
             bad=copy.deepcopy(plan);bad['changes'][0]['value']['basis']['text']='Unrelated unsupported claim'
             self.assertEqual(b.resolve_basis_citations(items,bad,bundle),(bad,[]))
             bundle['financial']['observations'][0]['concept']='fake:AdjustedRevenue'

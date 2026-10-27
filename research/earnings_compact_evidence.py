@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import re
 
-from research import earnings_experiment as base
+from research import earnings_source_case as base
 from research import financial_evidence as financial
 
 VERSION = 'earnings-compact-evidence-v1'
@@ -100,6 +100,8 @@ def prepare(case_path, output_dir):
     protected = {Path(s['path']).resolve() for s in sources + case.get('artifacts', [])}
     protected.add(case_path)
     names = ('financial', 'financial_view', 'documents', 'transcript_index')
+    if case.get('financial_inventory_version'):
+        names += ('packet_inventory','valuation_inventory')
     files = {name: str(output / (name + '.json')) for name in names}
     if any(Path(p).resolve() in protected for p in [*files.values(), output / 'manifest.json']):
         raise ValueError('Evidence output would overwrite an original input')
@@ -114,6 +116,19 @@ def prepare(case_path, output_dir):
         from . import financial_html_tables
         html_inputs = financial_html_tables.case_inputs(case, Path(raw_source['path']).read_bytes(), source)
     financial.validate_artifact(artifact, {source['document_id']: source}, html_table_inputs=html_inputs)
+    inventory = None
+    if case.get('financial_inventory_version'):
+        from . import earnings_packet_inventory as packet_inventory
+        if case['financial_inventory_version'] != packet_inventory.VERSION:
+            raise ValueError('Unknown packet inventory version')
+        inventory = packet_inventory.build(sources)
+        # The legacy selected-filing artifact stays frozen for historical audit.
+        # The new path uses every raw packet document and never promotes proposals.
+        all_observations = [o for a in inventory['artifacts'] for o in a['observations']]
+        artifact = {**artifact, 'observations':all_observations,
+                    'gaps':[{'document_id':a['source']['document_id'], **g}
+                            for a in inventory['artifacts'] for g in a['gaps']]}
+        files['packet_inventory'] = str(output/'packet_inventory.json')
     approval = None
     if case.get('financial_proposal_approval'):
         from . import financial_reviewed_proposals
@@ -140,7 +155,7 @@ def prepare(case_path, output_dir):
         support = obs['support']
         if support.get('offset_unit') not in ('unicode_codepoint', 'unicode_character'):
             raise ValueError('Unsupported financial offset unit')
-        support_source = raw_source if obs['method'] in ('inline_xbrl', 'reviewed_html_table') else _unique_source(
+        support_source = _unique_source(sources, obs['source_document_id'], obs['source_raw_sha256']) if obs['method'] in ('inline_xbrl', 'reviewed_html_table') else _unique_source(
             sources, obs['source_document_id'], support['text_sha256'])
         raw = source_text(support_source)
         snippet = _span(raw, support['start'], support['end'])
@@ -214,6 +229,10 @@ def prepare(case_path, output_dir):
             'chunks': documents, 'excluded_representations': excluded,
             'notice': 'Previews truncate. Retrieve full D spans before relying on context. All text characters in indexed non-transcript representations are covered.'}
     payloads = {'financial': facts, 'financial_view': view, 'documents': docs, 'transcript_index': index}
+    if inventory is not None:
+        payloads['packet_inventory'] = inventory
+        from . import earnings_valuation_inventory
+        payloads['valuation_inventory'] = earnings_valuation_inventory.build({'manifest':{'sources':sources}})
     # Recheck before writing; do not silently accept a source changed during preparation.
     base.validate_case(case)
     output.mkdir(parents=True, exist_ok=True)
@@ -276,7 +295,14 @@ def _scopes(bundle):
             'document_id': obs['source_document_id'], 'start': obs['support']['start'], 'end': obs['support']['end']}]
     for chunk in bundle['documents']['chunks']:
         scopes[chunk['id']] = [{k: chunk[k] for k in ('path', 'sha256', 'document_id', 'start', 'end')}]
+    from .earnings_valuation_inventory import source_id
+    for item in manifest['sources']:
+        if item['kind'] != 'transcript' and item['representation']=='text':
+            scopes[source_id(item['document_id'])]=[{k:item[k] for k in ('path','sha256','document_id')} | {'start':0,'end':len(Path(item['path']).read_bytes().decode('utf-8'))}]
     index = bundle['transcript_index']
+    scopes['transcript-source'] = [{'path':manifest['transcript_path'],'sha256':manifest['transcript_sha256'],
+        'document_id':index['source']['document_id'],'start':0,
+        'end':len(Path(manifest['transcript_path']).read_bytes().decode('utf-8'))}]
     turns = {t['id']: t for t in index['turns']}
     def span(item):
         return {'path': manifest['transcript_path'], 'sha256': manifest['transcript_sha256'],

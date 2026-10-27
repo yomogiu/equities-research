@@ -113,17 +113,27 @@ def apply(items,plan,policy=VERSION):
     return candidate,changed | affected(candidate,invalidating)
 
 
-def resolve_correction_hashes(items,plan):
-    """Rebind an adjacent analysis-unit hash only within the exact bound batch.
+def resolve_correction_hashes(items,plan,*,bound_batch_sha256=None):
+    """Resolve authenticated context addresses or adjacent analysis-unit hashes.
 
     Call only after authenticating the correction role and its request/context.
+    Literal 'bound' additionally requires the exact batch digest supplied by the
+    host from that authenticated job's immutable metadata, never author input.
     Proposed values and reasons are unchanged and still need a fresh reviewer.
     Unknown/stale batch hashes, arbitrary hashes and ambiguous values fail shut.
     """
-    require(plan.get('before_sha256')==runner.digest(items),'Stale batch')
+    batch_hash=runner.digest(items)
+    uses_bound=plan.get('before_sha256')=='bound' or any(x.get('before_sha256')=='bound' for x in plan.get('changes',[]))
+    if uses_bound:
+        require(bound_batch_sha256==batch_hash,'Authenticated job batch required for bound addresses')
+    require(plan.get('before_sha256')==batch_hash or (uses_bound and plan.get('before_sha256')=='bound'),'Stale batch')
     result=copy.deepcopy(plan);hashes={k:runner.digest(v['value']) for k,v in items.items()};changes=[]
+    result['before_sha256']=batch_hash
     for op in result.get('changes',[]):
         key=op['unit_id'];require(key in hashes,'Unknown correction target')
+        if op['before_sha256']=='bound':
+            changes.append({'unit_id':key,'original_hash_unit_id':key,'original_sha256':'bound','resolved_sha256':hashes[key]})
+            op['before_sha256']=hashes[key];continue
         if op['before_sha256']==hashes[key]:continue
         origins=[k for k,v in hashes.items() if v==op['before_sha256']]
         require(len(origins)==1,'Correction hash must identify one original bound unit')
@@ -133,7 +143,7 @@ def resolve_correction_hashes(items,plan):
             'Only an adjacent analysis-unit hash may be rebound')
         changes.append({'unit_id':key,'original_hash_unit_id':origin,'original_sha256':op['before_sha256'],'resolved_sha256':hashes[key]})
         op['before_sha256']=hashes[key]
-    return result,{'version':'bound-adjacent-correction-hash-v1','batch_sha256':runner.digest(items),
+    return result,{'version':'bound-context-correction-address-v1' if uses_bound else 'bound-adjacent-correction-hash-v1','batch_sha256':runner.digest(items),
         'original_plan_sha256':runner.digest(plan),'resolved_plan_sha256':runner.digest(result),'changes':changes}
 
 
@@ -152,7 +162,7 @@ def resolve_basis_citations(items,plan,bundle):
     facts=[observations[k] for k in rendered['selected_fact_ids']]
     units={g['unit'] for g in rendered['groups']}
     currencies=[u.split()[0] for u in units if re.fullmatch(r'[A-Z]{3} millions',u)]
-    if len(currencies)!=1 or units!={currencies[0]+' millions',currencies[0]+'/share'}:return result,changes
+    if len(currencies)!=1 or not units<={currencies[0]+' millions',currencies[0]+'/share','million shares'}:return result,changes
     if not facts or not all(o['concept'].startswith('us-gaap:') for o in facts):return result,changes
     if not isinstance(bundle['financial']['units'],dict):return result,changes
     eps=[o for o in facts if display.scaled_value(o,bundle['financial']['units'][o['unit_id']])[1].endswith('/share')]
@@ -160,10 +170,10 @@ def resolve_basis_citations(items,plan,bundle):
     expected='Financial tables: GAAP; '+currencies[0]+' millions except diluted EPS in '+currencies[0]+'/share.'
     for op in result['changes']:
         basis=op['value'].get('basis') if op['unit_id']=='format' else None
-        if isinstance(basis,dict) and basis.get('text')==expected and basis.get('citations')==[]:
+        if isinstance(basis,dict) and (basis.get('text')!=expected or units=={currencies[0]+' millions',currencies[0]+'/share'}) and basis.get('text') in (expected, 'Financial tables present reported GAAP figures; periods and units are shown in their headers.') and basis.get('citations')==[]:
             basis['citations']=rendered['selected_fact_ids'][:]
             changes.append({'unit_id':'format','field_path':['basis','citations'],
-                'selected_fact_ids':rendered['selected_fact_ids'],'label':expected,
+                'selected_fact_ids':rendered['selected_fact_ids'],'label':basis['text'],
                 'financial_sha256':runner.digest(items['financial']['value'])})
     return result,changes
 
@@ -325,6 +335,9 @@ def adjudicate(items,pending,accepted,review,catalog,receipt,policy=VERSION,fina
                         'Quote repair must delete from the exact original selections')
                     cursor=iter(value)
                     require(all(any(old==q for old in cursor) for q in after),'Quote repair cannot add or reorder selections')
+                    if d['unit_id']=='retrieval':
+                        require(4<=len(after)<=18,
+                            'Retrieval quote deletion must retain four to eighteen selections; propose a source-supported factual revision instead of an impossible deletion')
                     require(isinstance(repair['reason'],str) and repair['reason'].strip(),'Specific quote deletion reason required')
                     continue
                 require(isinstance(value,str) and isinstance(repair['before'],str) and

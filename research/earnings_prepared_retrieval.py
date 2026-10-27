@@ -48,7 +48,41 @@ def prepare(previous,case,output):
 
 
 def verify(path,case,catalog):
-    a=base.read(path);context.require(a['version']==VERSION and a['case_sha256']==base.sha(case),'Preparation case changed')
+    a=base.read(path)
+    if a.get('version')=='authenticated-exact-retrieval-identity-transport-v1':
+        from . import earnings_retrieval_identity_transport
+        return earnings_retrieval_identity_transport.verify(path,case,catalog)
+    if a.get('version')=='authenticated-pending-author-retrieval-preparation-v1':
+        from . import earnings_pending_author
+        return earnings_pending_author.verify(path,case,catalog)
+    if a.get('version')=='authenticated-linked-bare-json-preparation-v1':
+        from . import earnings_linked_bare_json
+        return earnings_linked_bare_json.verify(path,case,catalog)
+    if a.get('version')=='authenticated-single-retrieval-answer-quote-preparation-v1':
+        from . import earnings_single_retrieval_answer_quote
+        return earnings_single_retrieval_answer_quote.verify(path,case,catalog)
+    if a.get('version')=='authenticated-single-retrieval-question-address-preparation-v1':
+        from . import earnings_single_retrieval_questions
+        return earnings_single_retrieval_questions.verify(path,case,catalog)
+    if a.get('version') in ('authenticated-single-retrieval-address-preparation-v1','authenticated-single-retrieval-quoted-address-preparation-v1'):
+        from . import earnings_single_retrieval_addresses
+        return earnings_single_retrieval_addresses.verify(path,case,catalog)
+    if a.get('version')=='authenticated-reference-retrieval-preparation-v1':
+        from . import earnings_retrieval_reference_repair
+        return earnings_retrieval_reference_repair.verify(path,case,catalog)
+    if a.get('version')=='authenticated-final-cardinality-resume-preparation-v1':
+        from . import earnings_final_cardinality_resume
+        return earnings_final_cardinality_resume.verify(path,case,catalog)
+    if a.get('version')=='authenticated-final-cardinality-retrieval-preparation-v1':
+        from . import earnings_final_cardinality_retrieval
+        return earnings_final_cardinality_retrieval.verify(path,case,catalog)
+    if a.get('version')=='authenticated-two-charged-retrieval-preparation-v1':
+        from . import earnings_second_retrieval_repair
+        return earnings_second_retrieval_repair.verify(path,case,catalog)
+    if a.get('version')=='authenticated-charged-retrieval-preparation-v1':
+        from . import earnings_retrieval_repair
+        return earnings_retrieval_repair.verify(path,case,catalog)
+    context.require(a['version']==VERSION and a['case_sha256']==base.sha(case),'Preparation case changed')
     old=Path(a['previous_root']);context.require(a['protocol_sha256']==base.sha(old/'protocol.json') and a['output_sha256']==base.sha(old/'jobs/retrieval/output.json'),'Preparation ancestor changed')
     v=replay(old)
     context.require(a['content']==normalize(v['raw']) and all(a[k]==v[k] for k in ('tokens','session_id','max_tokens','case_sha256','catalog_sha256')) and a['catalog_sha256']==base.digest(catalog),'Preparation derivation changed')

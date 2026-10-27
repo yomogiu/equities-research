@@ -14,6 +14,32 @@ def html(quote='100 At close:', block=BLOCK):
     return ('<html><head><title>Fictional Q2 2026</title></head><body><div class="mb-5 flex flex-row items-end">'+quote+'</div><h1>Earnings Call: Q2 2026</h1>'+block+'<footer>Fictional attribution</footer></body></html>').encode()
 
 class CurrentnessTest(unittest.TestCase):
+    def test_exact_filing_labels_and_forecast_control(self):
+        link = '<a href="/filings/FAKE/123/" class="pill"><span>Registration statement</span></a>'
+        nav = '<ul class="navmenu"><li>Overview</li></ul>'
+        forecast = '<li><a href="/stocks/fake/forecast/" data-title="Forecast">Forecast<!--[-1--><!--]--></a></li>'
+        before = html().replace(b'<h1>', (nav+link+link+'<h1>').encode())
+        after = before.replace(b'<li>Overview</li>', ('<li>Overview</li>'+forecast).encode()).replace(b'Registration statement', b'MD&amp;A')
+        scope.compare(before, after, URL)
+        with self.assertRaises(ValueError):
+            scope.compare(before, after, URL, allow_publisher_links=False)
+        mutations = [after.replace(b'/123/', b'/124/'), after.replace(b'MD&amp;A', b'New profit claim'),
+                     after.replace(b'FAKE/123', b'OTHER/123'), after.replace(b'dialogue', b'new claim'),
+                     after.replace(b'data-title="Forecast"', b'data-title="New Claim"'),
+                     after.replace(b'/stocks/fake/forecast/', b'/stocks/fake/earnings/'),
+                     after.replace(b'class="navmenu"', b'class="report"'),
+                     after.replace(forecast.encode(), (forecast+forecast).encode()),
+                     after.replace(b'Overview', b'New outlook'), after.replace(b'Q2', b'Q3')]
+        for changed in mutations:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                scope.compare(before, changed, URL)
+        with self.assertRaises(ValueError):
+            scope.compare(before, after.replace(b'<footer>', forecast.encode()+b'<footer>'), URL)
+        # Evidence paragraphs never become an allowlisted control region.
+        with self.assertRaises(ValueError):
+            scope.compare(html(block=BLOCK.replace('Fictional dialogue.', link+'Fictional dialogue.')),
+                          html(block=BLOCK.replace('Fictional dialogue.', link.replace('Registration statement','Report')+'Fictional dialogue.')), URL)
+
     def test_market_only(self):
         proof = scope.compare(html(),html('99 Pre-market:'),URL)
         self.assertFalse(proof['whole_page_bytes_equal'])
@@ -87,7 +113,7 @@ class CurrentnessTest(unittest.TestCase):
         with self.assertRaises(ValueError):scope.compare(before,after.replace(b'</ul>',BLOCK.encode()+b'</ul>'),URL)
 
     def test_old_receipt_versions_replay_original_rules(self):
-        for version in (scope.LEGACY_VERSION,scope.APP_COUNTER_VERSION):
+        for version in (scope.LEGACY_VERSION,scope.APP_COUNTER_VERSION,scope.COUNTRY_VERSION,scope.MOBILE_VERSION):
             with tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp).resolve();ref,doc=self.fixture(root)
                 value=library.read_json(root/ref['path']);value['version']=version
@@ -184,3 +210,25 @@ class CurrentnessTest(unittest.TestCase):
                 with self.assertRaises(ValueError):scope.replay(root,ref,doc)
 
 if __name__=='__main__':unittest.main()
+
+class TsxCurrentnessTest(unittest.TestCase):
+    def test_exact_tsx_url_and_market_widget_only(self):
+        url='https://stockanalysis.com/quote/tsx/FAKE/transcripts/123-q2-2026/'
+        before=html(quote='35.02\n-1.21 (-3.34%)\nOct 2, 2026, 4:00 PM EST')
+        after=html(quote='35.23\n+0.46 (1.32%)\nOct 16, 2026, 4:00 PM EST')
+        scope.compare(before,after,url)
+        with self.assertRaises(ValueError):scope.compare(before,after,url,allow_tsx=False)
+        for changed in [after.replace(b'Fictional dialogue',b'Changed guidance'),after.replace(b'Q2',b'Q3'),after.replace(b'Oct 16',b'Profit doubled Oct 16'),after.replace(b'4:00 PM EST',b'New forecast')]:
+            with self.assertRaises(ValueError):scope.compare(before,changed,url)
+        for other in ['https://stockanalysis.com/quote/nyse/FAKE/transcripts/123-q2-2026/','https://other.example/quote/tsx/FAKE/transcripts/123-q2-2026/','https://stockanalysis.com/quote/tsx/FAKE/news/123-q2-2026/']:
+            with self.assertRaises(ValueError):scope.compare(before,after,other)
+        with self.assertRaises(ValueError):scope.compare(before,after,URL)
+
+    def test_tsx_filing_destination_and_exchange_remain_bound(self):
+        url='https://stockanalysis.com/quote/tsx/FAKE/transcripts/123-q2-2026/'
+        link='<a href="/filings/TSX:FAKE/123/"><span>Registration statement</span></a>'
+        before=html().replace(b'<h1>',(link+'<h1>').encode());after=before.replace(b'Registration statement',b'MD&amp;A')
+        scope.compare(before,after,url)
+        for changed in [after.replace(b'TSX:FAKE/123',b'TSX:OTHER/123'),after.replace(b'TSX:FAKE/123',b'TSX:FAKE/124'),after.replace(b'TSX:FAKE/123',b'NYSE:FAKE/123')]:
+            with self.assertRaises(ValueError):scope.compare(before,changed,url)
+        with self.assertRaises(ValueError):scope.compare(before,after,url,allow_tsx=False)

@@ -1,0 +1,67 @@
+import unittest
+from research import earnings_report_identity as identity
+from research.financial_evidence import digest
+
+
+class ReportIdentityTests(unittest.TestCase):
+    def check_spans(self,text,result):
+        for item in (result['issuer_evidence'],result['report_period']['evidence']):
+            self.assertEqual(text[item['start']:item['end']],item['text'])
+            self.assertEqual(digest(item['text'].encode()),item['sha256'])
+
+    def test_combined_issuer_quarter_heading_with_audit_label(self):
+        text='[Page 1]\nFICTIONAL MICRO | Q3 REPORT 2040 (UNAUDITED)\n'
+        result=identity.recognize(text,'Fictional Micro',(2040,3))
+        self.assertEqual(result['report_period']['start'],'2040-07-01')
+        self.check_spans(text,result)
+
+    def test_wrapped_names_and_both_quarter_title_orders(self):
+        for heading in ('Q2\nREPORT\n2040','2040\nSecond-quarter results','Second quarter\n2040'):
+            with self.subTest(heading=heading):
+                text='[Page 1]\nFictional\nMicro\n'+heading+'\n'
+                result=identity.recognize(text,'Fictional Micro',(2040,2))
+                self.assertEqual(result['report_period']['start'],'2040-04-01')
+                self.assertTrue(result['report_period']['standalone_quarter'])
+                self.check_spans(text,result)
+
+    def test_image_cover_contents_and_late_legal_identity(self):
+        text='[Page 2]\nContents\nTHE HALF-YEAR FINANCIAL REPORT AT\n30 JUNE 2040\n'
+        text+='[Page 3]\n'+('body prose '*5000)
+        text+='\n[Page 15]\nGeneral information\nThe Group’s parent company is Fictional Micro SA.\n'
+        result=identity.recognize(text,'Fictional Micro',(2040,2))
+        self.assertEqual(result['issuer_evidence']['rule'],'explicit_legal_identity')
+        self.assertEqual(result['report_period']['basis'],'half_year')
+        self.assertEqual(result['report_period']['start'],'2040-01-01')
+        self.assertFalse(result['report_period']['standalone_quarter'])
+        self.check_spans(text,result)
+
+    def test_cumulative_periods_remain_distinct(self):
+        for heading,quarter,basis in [('H1 2040',2,'half_year'),('Nine-month report 2040',3,'nine_months'),('Annual report 2040',4,'full_year')]:
+            with self.subTest(heading=heading):
+                result=identity.recognize('[Page 1]\nFictional Micro\n'+heading,'Fictional Micro',(2040,quarter))
+                self.assertEqual(result['report_period']['basis'],basis)
+                self.assertEqual(result['report_period']['start'],'2040-01-01')
+                self.assertFalse(result['report_period']['standalone_quarter'])
+
+    def test_incidental_mentions_and_substrings_do_not_establish_issuer(self):
+        for mention in ('Our competitor Fictional Micro announced results.','Fictional Microsystems','We acquired Fictional Micro assets.'):
+            with self.subTest(mention=mention):
+                with self.assertRaisesRegex(ValueError,'issuer'):
+                    identity.recognize('[Page 1]\nOther Entity\nQ2 2040\n'+mention,'Fictional Micro',(2040,2))
+
+    def test_old_report_cannot_qualify_using_later_comparative_heading(self):
+        text='[Page 1]\nFictional Micro\nQ1 REPORT 2040\n\nQ2 REPORT 2040\n'
+        with self.assertRaisesRegex(ValueError,'differs'):identity.recognize(text,'Fictional Micro',(2040,2))
+
+    def test_wrong_year_quarter_and_conflicting_date_rejected(self):
+        for heading in ('Q2 2039','Half-year report 2040','Half-year financial report at 31 December 2040'):
+            with self.subTest(heading=heading):
+                expected=(2040,3) if heading=='Half-year report 2040' else (2040,2)
+                with self.assertRaises(ValueError):identity.recognize('[Page 1]\nFictional Micro\n'+heading,'Fictional Micro',expected)
+
+    def test_body_period_reference_does_not_qualify_report(self):
+        text='[Page 1]\nFictional Micro\nBusiness report\nCompared with Q2 2040, the business improved.'
+        with self.assertRaisesRegex(ValueError,'heading'):identity.recognize(text,'Fictional Micro',(2040,2))
+
+
+if __name__=='__main__':unittest.main()

@@ -1,7 +1,7 @@
 """Data-only role checkpoints; fresh contexts resume only proven closed attempts."""
 from pathlib import Path
 import json
-from . import earnings_mixed_runner as base, earnings_file_context as context
+from . import earnings_runtime_common as base, earnings_file_context as context
 
 VERSION='file-role-checkpoint-v1'
 MAX_RESUMES=2
@@ -112,7 +112,7 @@ def capture(job):
         draft=last['draft'];pending=last['pending']
     else:
         scopes=context.complete_ranges(observed,'scope','id')
-        scopes.update(x for e in observed if e['method']=='filing_batch' for x in e['ids'])
+        scopes.update(x for e in observed if e['method'] in ('filing_batch','challenge_batch') for x in e['ids'])
         call_scopes,call_files=context.inspected_call(q['context_index'],observed)
         support_scopes,handoff_files,support_rows=context.inspected_role_batches(q['context_index'],observed)
         scopes.update(call_scopes);scopes.update(support_scopes)

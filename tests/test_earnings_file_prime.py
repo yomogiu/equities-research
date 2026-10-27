@@ -46,6 +46,10 @@ class PrimeHelperTests(unittest.TestCase):
                 source=source.replace("const payload=()=>({model:q.model,reasoning:{effort:q.effort},tools:[{name:'ipython'}],input:[]});",
                     "let payloadRound=0; const payload=()=>({model:q.model,reasoning:{effort:q.effort},tools:[{name:'ipython'}],input:[{role:'user',content:"+head+".repeat(100000)}, ...(payloadRound++?[{role:'tool',content:'y'.repeat(120000)}]:[])]});")
             if capture_index:
+                # A real runner request reserves the full registered output
+                # maximum without an extra final-writing margin. Source tools
+                # must stay available below the former redundant threshold.
+                source=source.replace("followup.tool_choice!=='none'", "followup.tool_choice!=='auto'")
                 source=source.replace("import fs from 'node:fs';import path from 'node:path';", "import fs from 'node:fs';import path from 'node:path';import {spawnSync} from 'node:child_process';")
                 source=source.replace('  const followup=payload();', '''  if(q.context_index){
     await this.agent.beforeToolCall({toolCall:{id:'one'}},undefined);
@@ -107,7 +111,7 @@ class PrimeHelperTests(unittest.TestCase):
         checkpoint=json.loads(files['captured-checkpoint'])
         self.assertEqual(checkpoint['draft']['kind'],'source_progress_only')
         self.assertIn('D001',checkpoint['draft']['source_ids'])
-        self.assertEqual(json.loads(files['wire.json'])[-1]['tool_choice'],'none')
+        self.assertEqual(json.loads(files['wire.json'])[-1]['tool_choice'],'auto')
 
     def test_final_phase_refuses_unexpected_tool_execution(self):
         code,files=self.run_helper(cap=200000,work_limit=1,bad_final_tool=True)

@@ -23,15 +23,15 @@ API key, run a nested model service, or copy account authentication into this re
 
 ## Agent workflow
 
-The calendar and earnings task prompts are in `tasks/`. They are Codex instructions,
-not model API calls. Use distinct extraction and commentary subagents when delegation
-is supported. The reviewer must have a fresh context containing original sources and
-the two artifacts, without the authors' conversational reasoning. If delegation is
-unavailable, produce explicit separate-task handoffs and mark independent review
-pending; do not present a single agent rereading its own work as independent review.
-Use the role rubric, route material findings back to their author, and allow at most
-two cross-review revision rounds. Persist work and continue independently when public
-evidence can resolve a gap. Ask the user only for material missing authority or inputs.
+The user requested a replacement finite runner: use `docs/simple-runner.md` for new
+validation batches. Reuse deterministic extraction/calculation and neutral report
+utilities; do not import old orchestration into the new path. One independent review,
+one correction maximum and one final check share a fixed allowance. Editorial preferences
+are advisory; material factual errors block publication. Every company ends published
+or failed and the next company advances. Preserve old pinned reports and costs. Never
+migrate or silently rerun a historical paid job. Keep automation paused until explicitly
+resumed, independently of successful tests. Historical sequential procedures remain in
+`docs/operations.md` solely for already pinned jobs.
 
 ## Code checks
 
