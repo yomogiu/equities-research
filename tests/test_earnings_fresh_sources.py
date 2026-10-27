@@ -9,12 +9,12 @@ from research import financial_evidence as financial
 class FreshSourcesTests(unittest.TestCase):
     def test_latest_completed_ordinary_event_not_post_call_or_other_issuer(self):
         base='https://stockanalysis.com/quote/test/FAKE/transcripts/'
-        body=(''.join('<a href="'+base+v+'">call</a>' for v in ['1-q1-2040/','2-q2-2040/','3-q2-2040-post-call/','4-q3-2040/'])+
+        body=(''.join('<a href="'+base+v+'">Earnings Call: '+v.split('-')[1].upper()+' 2040</a>' for v in ['1-q1-2040/','2-q2-2040/','3-q2-2040-post-call/','4-q3-2040/'])+
               '<a href="https://stockanalysis.com/quote/test/OTHER/transcripts/5-q2-2040/">other</a>').encode()
         self.assertEqual(fresh.current_calls(body,base,date(2040,7,20)),((2040,2),base+'2-q2-2040/'))
     def test_ambiguous_current_period_does_not_select_arbitrarily(self):
         base='https://stockanalysis.com/quote/test/FAKE/transcripts/'
-        body=(''.join('<a href="'+base+v+'">call</a>' for v in ['1-q2-2040/','2-q2-2040/'])).encode()
+        body=(''.join('<a href="'+base+v+'">Earnings Call: Q2 2040</a>' for v in ['1-q2-2040/','2-q2-2040/'])).encode()
         with self.assertRaisesRegex(ValueError,'Ambiguous'):fresh.current_calls(body,base,date(2040,7,20))
     def test_filing_selection_is_exact_id_not_first_pdf(self):
         body=b'{id:1,type:"quarterly_report",fileUrl:"https://files.example.test/wrong.pdf"},{id:2,type:"quarterly_report",fileUrl:"https://files.example.test/right.pdf"}'

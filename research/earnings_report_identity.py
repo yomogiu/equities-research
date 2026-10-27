@@ -24,7 +24,8 @@ def issuer_evidence(text, issuer):
     if not words:raise ValueError('Explicit issuer name required')
     name=r'(?<!\w)'+r'[\W_]+'.join(map(re.escape,words))+r'(?!\w)'
     # Prefer affirmative legal identities anywhere in the accounting notes.
-    legal=[r"(?:the\s+)?(?:group[’']s\s+)?parent\s+company\s+is\s+"+name+r'(?:\s+(?:SA|S\.A\.|plc|Inc\.?|Ltd\.?))?\s*[.,]',
+    legal=[r'This\s+press\s+release\s+is\s+an\s+official\s+information\s+document\s+of\s+(?:the\s+)?'+name+r'(?:\s+Group)?\s*\.',
+           r"(?:the\s+)?(?:group[’']s\s+)?parent\s+company\s+is\s+"+name+r'(?:\s+(?:SA|S\.A\.|plc|Inc\.?|Ltd\.?))?\s*[.,]',
            r'(?:consolidated\s+financial\s+statements\s+of)\s+'+name+r'\s*[,\n]',
            name+r"(?:\s+Group)?[’']s\s+LEI\s+is\s+[A-Z0-9]{20}\b",
            name+r'\s+(?:(?:SA|S\.A\.|plc|Inc\.?|Ltd\.?)\s+)?is\s+(?:a\s+)?(?:company\s+)?(?:incorporated|domiciled|registered)\b']
@@ -48,7 +49,7 @@ def period_evidence(text, expected, issuer=''):
     opening=front(text)
     # A heading may wrap across a few short lines. Preserve original offsets.
     lines=list(re.finditer(r'(?m)^.*$',opening));candidates=[]
-    terms=r'(?:Q[1-4]|(?:first|second|third|fourth)[ -]quarter|(?:first[ -]half|half[ -]year(?:ly)?|H1)|(?:nine[ -]months?|9M)|(?:full[ -]year|annual))'
+    terms=r'(?:Q[1-4]|(?:first|second|third|fourth)[ -]quarter|(?:first[ -]half|half[ -]year(?:ly)?|H1)|(?:second[ -]half|H2)|(?:(?:first[ -])?nine[ -]months?|9M)|(?:full[ -]year|annual))'
     for i,line in enumerate(lines):
         if not line.group().strip() or len(line.group().strip())>160:continue
         end=line.end()
@@ -65,7 +66,7 @@ def period_evidence(text, expected, issuer=''):
             tail=chunk[match.end():]
             # Date/year must belong to this short heading, with only heading
             # vocabulary between the label and year/date. No narrative bridging.
-            heading_words=r'(?:\s|[-|,:()/]|financial|activity|interim|consolidated|condensed|report|results|statements|statement|at|as|of|for|the|period|ended|ending|to|june|september|december|march|\d{1,2})*'
+            heading_words=r'(?:\s|[-|,:()/]|financial|activity|interim|consolidated|condensed|report|results|statements|statement|at|as|of|for|the|period|ended|ending|to|june|september|december|march|\d{1,2})*?'
             after=re.match(heading_words+r'(?P<year>20\d{2})\b',tail,re.I)
             before=re.search(r'\b(20\d{2})\s*$',chunk[:match.start('label')])
             if not after and not before:continue
@@ -73,8 +74,9 @@ def period_evidence(text, expected, issuer=''):
             q=re.fullmatch(r'q([1-4])',label)
             ordinal=next((n for n,w in enumerate(('first','second','third','fourth'),1) if label.startswith(w) and 'quarter' in label),None)
             if q or ordinal:found_quarter=int(q[1]) if q else ordinal;basis='quarter'
+            elif label.startswith(('nine','first nine','first-nine','9m')):found_quarter=3;basis='nine_months'
             elif label.startswith(('half','first','h1')):found_quarter=2;basis='half_year'
-            elif label.startswith(('nine','9m')):found_quarter=3;basis='nine_months'
+            elif label.startswith(('second','h2')):found_quarter=4;basis='second_half'
             else:found_quarter=4;basis='full_year'
             stop=line.start()+match.end()+(after.end() if after else 0)
             candidates.append((line.start(),found_year,found_quarter,basis,span(text,line.start(),stop,'dated_report_heading')))
@@ -82,7 +84,7 @@ def period_evidence(text, expected, issuer=''):
     _,found_year,found_quarter,basis,evidence=min(candidates,key=lambda item:item[0])
     if (found_year,found_quarter)!=(year,quarter):
         raise ValueError('Report heading period differs from discovered event; comparative periods cannot qualify it')
-    start=f'{year}-{((quarter-1)*3+1 if basis=="quarter" else 1):02d}-01'
+    start=f'{year}-{((quarter-1)*3+1 if basis=="quarter" else 7 if basis=="second_half" else 1):02d}-01'
     end=f'{year}-{quarter*3:02d}-{monthrange(year,quarter*3)[1]}'
     explicit=re.search(r'\b(?:at|ended|ending|to)\s+(\d{1,2})\s+(March|June|September|December)\s+(20\d{2})\b',evidence['text'],re.I)
     if explicit:

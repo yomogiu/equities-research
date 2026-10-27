@@ -109,3 +109,20 @@ records its actual start/end, basis and whether it is a standalone quarter. That
 is carried into author/review scope notes. Every selected table retains its own period
 headers; six-month or nine-month flows must never be relabeled as quarterly flows.
 No normalized financial facts or quarter-only values are inferred by recognition.
+
+Event discovery accepts Q1–Q4 calls, H1/H2 calls and the provider's explicit `-tu`
+trading-update variant. It cross-checks the issuer-specific URL with the index label
+and the downloaded call heading. H1/H2 labels and event durations remain explicit;
+an H2 call does not establish second-half-only accounting figures. Future periods,
+media/post-call/AGM variants, conflicting labels and ambiguous latest events do not
+silently displace an eligible event. Retrieval exclusions apply to native half-year
+labels and their equivalent quarter ends.
+
+The selected event supplies its own attached quarterly/annual report. A trading
+update may instead supply an earnings release, bound to the exact attachment ID
+and document type. This route retains the `release` source kind and a frozen
+`limited_trading_update` qualification; it is not a filed-statement waiver for
+ordinary earnings calls. The release must have explicit issuer/period evidence
+and substantive financial disclosure. Missing financial-statement coverage is
+carried into the author/review context, with unavailable figures left as gaps.
+There is no post-draft search, old-period substitution or additional model stage.

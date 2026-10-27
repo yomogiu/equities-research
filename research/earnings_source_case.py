@@ -38,5 +38,15 @@ def validate_case(case):
     if case.get('writing_standard_path') and str(Path(case['writing_standard_path']).resolve()) not in frozen:
         raise ValueError('Writing standard is not frozen')
     kinds = {s['kind'] for s in case['sources']}
-    if 'transcript' not in kinds or 'filing' not in kinds:
+    release_case=False
+    if 'filing' not in kinds and case.get('source_mode')=='trading_update_release' and 'release' in kinds:
+        qualification=case.get('qualification_path','')
+        if str(Path(qualification).resolve()) not in frozen:raise ValueError('Trading-update qualification not frozen')
+        q=read(qualification)
+        releases={(s['document_id'],s['sha256']) for s in case['sources'] if s['kind']=='release' and s['representation']=='raw'}
+        qualified={(d['document_id'],d['raw_sha256']) for d in q.get('documents',[]) if d['kind']=='release'}
+        release_case=(q.get('event',{}).get('kind')=='trading_update' and q.get('completeness')=='limited_trading_update'
+                      and q.get('issuer_id')==case.get('issuer_id') and q.get('period')==case.get('period')
+                      and bool(q.get('source_gaps')) and bool(releases) and releases==qualified)
+    if 'transcript' not in kinds or ('filing' not in kinds and not release_case):
         raise ValueError('Transcript-led case requires transcript and filing')
