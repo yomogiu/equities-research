@@ -94,7 +94,8 @@
     "test_transcript_evidence",
     "test_transcript_listing_transition",
     "test_transcript_paragraphs",
-    "test_unused_continuation_links"
+    "test_unused_continuation_links",
+    "test_earnings_source_verification"
   ],
   "legacy_compatibility": [
     "test_analysis_address_repair",

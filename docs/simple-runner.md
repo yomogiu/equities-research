@@ -154,3 +154,19 @@ Issuer identity also accepts opening report headers with printed page counters a
 line-anchored statutory publication statements naming the issuer. These rules retain
 exact original evidence spans and bounded legal names. They do not accept arbitrary
 body mentions, ticker substrings or change the reporting-period requirements.
+
+Source qualification now combines the verified issuer index, matched call/event and
+exact attached report with document identity and period evidence. Recognized evidence
+uses the deterministic path. Unrecognized layouts are ambiguous rather than automatic
+identity mismatches. Exactly one tool-free Sol medium source-verification call may
+resolve ambiguity using bounded original excerpts and exact quotes. Its 220,000-token
+ceiling (including the transport's registered output reservation) is part of the existing
+1.2-million-token company budget, not an additional allowance. Realized usage, source
+hashes, raw response and decision are persisted before authoring. Contradictory dates,
+broken provenance, missing financial coverage, unverifiable quotations, rejection and
+uncertainty still terminate. No source searching, financial inference or paid retry is
+introduced. Independent report review remains required.
+
+A frozen validation profile may set `source_verification: "always"` to exercise the
+model path even for recognized documents. Normal profiles omit it and invoke the
+model only for ambiguity. The same citation, contradiction and budget checks apply.

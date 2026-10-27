@@ -99,6 +99,39 @@ class SimpleRunnerTests(unittest.TestCase):
         simple.run_batch(self.root/'scheduled',manifest,self.prepare,self.publish,lambda p:None,invoke=self.invoke)
         self.assertEqual(simple.read(self.root/'scheduled/summary.json')['automation'],'ACTIVE')
 
+    def test_source_verifier_shares_budget_and_report_can_continue(self):
+        self.spec['fresh_sources']={'fake':True}
+        def prepare(root,spec):
+            value=spec['_verify_source']({'instructions':'Fictional source decision','_original_files':{str(self.case):simple.storage.sha(self.case)}})
+            self.assertEqual(value,{'verdict':'accept'})
+            return self.case
+        original=self.invoke
+        def invoke(directory,prompt,model,effort,bindings,index,**options):
+            if directory.name=='0':
+                self.assertEqual(options['max_tokens'],220000)
+                self.assertTrue(options['direct_input'])
+                self.calls.append('source')
+                return {'content':{'verdict':'accept'},'receipt':{'session':{'id':'source-only','model_turns':1,'tool_calls':0,'usage':{'totalTokens':123}}}}
+            self.assertEqual(options['max_tokens'],1200000-123-(100 if len(self.calls)>=2 else 0))
+            return original(directory,prompt,model,effort,bindings,index,**options)
+        value=simple.run_company(self.job,self.spec,prepare,self.publish,invoke=invoke)
+        self.assertEqual(value['status'],'published',value.get('reason'));self.assertEqual(value['tokens_used'],323)
+        self.assertEqual([a['role'] for a in value['attempts']],['source_verification','author','review'])
+
+    def test_source_verifier_rejection_is_charged_without_author_or_retry(self):
+        self.spec['fresh_sources']={'fake':True}
+        def prepare(root,spec):
+            spec['_verify_source']({'instructions':'Fictional decision','_original_files':{str(self.case):simple.storage.sha(self.case)}})
+            raise ValueError('Source verifier uncertain')
+        calls=[]
+        def invoke(*args,**kwargs):
+            calls.append(1)
+            return {'content':{'verdict':'uncertain'},'receipt':{'session':{'id':'source-only','model_turns':1,'tool_calls':0,'usage':{'totalTokens':321}}}}
+        result=simple.run_company(self.job,self.spec,prepare,self.publish,invoke=invoke)
+        self.assertEqual(result['status'],'failed');self.assertEqual(result['tokens_used'],321)
+        simple.run_company(self.job,self.spec,prepare,self.publish,invoke=invoke)
+        self.assertEqual(len(calls),1)
+
     def test_no_old_control_modules_imported(self):
         import subprocess,sys
         code="import sys;from research import earnings_simple_runner;assert not any(n.startswith(('research.earnings_sequential','research.earnings_single_author')) for n in sys.modules)"

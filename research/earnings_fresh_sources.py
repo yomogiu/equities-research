@@ -41,8 +41,8 @@ def filing_url(body,landing,kind='quarterly_report'):
     return matches.pop().replace('\\u002F','/').replace('\\/','/')
 
 
-def qualify_report(text,issuer,period,*,trading_update=False):
-    recognized=identity.recognize(text,issuer,period)
+def qualify_report(text,issuer,period,*,trading_update=False,provenance=None,verify=None,always_verify=False):
+    recognized=None
     require(len(text)>(2500 if trading_update else 10000),'Financial document is incomplete or too short')
     checks=[r'income statement|statement of (?:profit|operations)',r'financial position|balance sheet',r'cash flow']
     if trading_update:
@@ -50,6 +50,10 @@ def qualify_report(text,issuer,period,*,trading_update=False):
                 'Trading update lacks substantive reported financial evidence')
     else:require(all(re.search(p,text,re.I) for p in checks),'Financial statements missing from quarterly report')
     require(re.search(r'\[Page \d+\]',text),'PDF page extraction unavailable')
+    if provenance is None:recognized=identity.recognize(text,issuer,period)
+    else:
+        from . import earnings_source_verification as verification
+        recognized=verification.qualify(text,issuer,period,provenance,verify,always_verify=always_verify)
     return {'issuer_and_period':'explicit_document_evidence',**recognized,
             'completeness':'limited_trading_update' if trading_update else 'financial_statements_present',
             'language':'English financial headings verified','limitations':['Mechanical source qualification; report review independently checks interpretation and attribution.']}
@@ -67,7 +71,7 @@ def prepare(output,spec,*,client=None):
     collection=output/'collection';require(not collection.exists(),'Fresh collection must start with an empty directory')
     collection.mkdir()
     client=client or Client(collection,set(profile['allowed_hosts']),PUBLIC_USER_AGENT,max_requests=24,max_bytes=64*1024*1024)
-    ledger=[];docs=[];artifacts=[]
+    ledger=[];docs=[];artifacts=[];source_model_calls=0
     def fetch(url,kind):
         try:
             body,entry=client.get(url,0)
@@ -118,7 +122,22 @@ def prepare(output,spec,*,client=None):
         require(report_body.startswith(b'%PDF'),'Quarterly report must be original PDF bytes')
         source_kind='release' if attachment_kind=='earnings_release' else 'filing'
         report,report_text=document(report_body,report_http,source_kind,report_url)
-        qualification=qualify_report(report_text,profile['issuer_name'],period,trading_update=source_kind=='release')
+        provenance={'verified_issuer_index':True,'matched_call':True,'exact_attachment':True,
+                    'issuer_id':spec['issuer_id'],'provider_index':profile['provider_index'],'call_url':call_url,
+                    'attachment_url':landing,'attachment_kind':attachment_kind,'report_url':report_url,
+                    'report_raw_sha256':report['raw_sha256'],'report_text_sha256':report['text_sha256'],
+                    'call_raw_sha256':call['raw_sha256'],'event':event}
+        verifier=spec.get('_verify_source')
+        def verify(payload):
+            nonlocal source_model_calls
+            require(source_model_calls==0,'Only one source-verification decision permitted')
+            source_model_calls+=1
+            originals={d[k+'_path']:d[k+'_sha256'] for d in docs for k in ('raw','text')}
+            originals.update({str(collection/e['body_path']):e['sha256'] for e in ledger if e['status']=='retrieved'})
+            return verifier({**payload,'_original_files':originals})
+        qualification=qualify_report(report_text,profile['issuer_name'],period,trading_update=source_kind=='release',
+                                     provenance=provenance,verify=verify if verifier else None,
+                                     always_verify=profile.get('source_verification')=='always')
         binding={k:call[k] for k in ('document_id','text_sha256','raw_sha256')}
         binding.update(issuer_id=spec['issuer_id'],issuer_names=[profile['issuer_name']])
         index=transcript.index_publisher_transcript(call_text,binding,call_body)
@@ -147,7 +166,7 @@ def prepare(output,spec,*,client=None):
                     row.update(derived_from_sha256=doc['raw_sha256'],extraction='pdftotext-layout-v1')
                 sources.append(row)
         case.save(output/'retrieval.json',{'requests':client.requests,'cache_hits':client.cache_hits,
-            'bytes_downloaded':client.bytes,'entries':ledger,'model_calls':0})
+            'bytes_downloaded':client.bytes,'entries':ledger,'model_calls':source_model_calls})
         for name in ('qualification.json','financial.json','transcript-index.json','retrieval.json'):
             artifacts.append({'path':str(output/name),'sha256':case.sha(output/name)})
         bound={a['path'] for a in artifacts}|{s['path'] for s in sources}
@@ -179,4 +198,4 @@ def prepare(output,spec,*,client=None):
     finally:
         # Failure receipts survive before any author call; no source retry state.
         case.save(output/'retrieval.json',{'requests':client.requests,'cache_hits':client.cache_hits,
-            'bytes_downloaded':client.bytes,'entries':ledger,'model_calls':0})
+            'bytes_downloaded':client.bytes,'entries':ledger,'model_calls':source_model_calls})
