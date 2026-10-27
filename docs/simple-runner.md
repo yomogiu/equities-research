@@ -149,3 +149,8 @@ or review report, and labeled registration identities under audit/corporate-info
 headings. Bounded names, legal forms, paragraph/page context and original evidence
 spans distinguish these from incidental company mentions. This uses no issuer-specific
 name or identifier allowlist and does not relax reporting-period checks.
+
+Issuer identity also accepts opening report headers with printed page counters and
+line-anchored statutory publication statements naming the issuer. These rules retain
+exact original evidence spans and bounded legal names. They do not accept arbitrary
+body mentions, ticker substrings or change the reporting-period requirements.

@@ -74,6 +74,22 @@ def issuer_evidence(text, issuer):
     for pattern in legal:
         match=re.search(pattern,text,re.I)
         if match:return span(text,*match.span(),'explicit_legal_identity')
+    # Running headers often combine the report title with a printed page counter.
+    # Accept the whole bounded title line, never an arbitrary body-name match.
+    entity=name+r'(?:[ \t]+Group)?(?:[ \t]+(?:'+LEGAL_FORM+r'))?(?:[ \t]*\(publ\.?\))?'
+    report_title=r'(?:(?:interim|annual|quarterly|financial|half[ -]year|full[ -]year)[ \t]+)*(?:report|results)'
+    counter=r'(?:[ \t]+(?:Page[ \t]+)?\d{1,3}[ \t]+(?:of|/)[ \t]+\d{1,3})?'
+    heading=(r'(?im)^[ \t]*'+entity+r'[ \t|:—–-]+'+report_title+
+             r'[ \t]+(?:Q[1-4][ \t]+20\d{2}|20\d{2}(?:[ \t]+Q[1-4])?)'+counter+r'[ \t]*$')
+    match=re.search(heading,front(text))
+    if match:return span(text,*match.span(),'issuer_report_running_heading')
+    # A named issuer's statutory publication obligation is affirmative identity.
+    obligation=(r'(?im)^[ \t]*(?:Note:[ \t]*)?'+entity+
+                r'[ \t]+is[ \t]+(?:required|obliged)[ \t]+to[ \t]+(?:publish|make[ \t]+public)[ \t]+(?:the|this)[ \t]+information\b')
+    disclosure=(r'(?im)^[ \t]*This[ \t]+(?:is[ \t]+information|information[ \t]+is[ \t]+information)[ \t]+that[ \t]+'+entity+
+                r'[ \t]+is[ \t]+(?:required|obliged)[ \t]+to[ \t]+make[ \t]+public[ \t]+pursuant\b')
+    match=re.search(obligation,text) or re.search(disclosure,text)
+    if match:return span(text,*match.span(),'statutory_publishing_issuer')
     institutional=institutional_identity(text,name)
     if institutional:return institutional
     # Short title/identity lines in the opening pages; not narrative mentions.

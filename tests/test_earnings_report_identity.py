@@ -111,6 +111,36 @@ class ReportIdentityTests(unittest.TestCase):
             with self.subTest(body=body),self.assertRaisesRegex(ValueError,'issuer'):
                 identity.recognize('[Page 1]\nQ2 2040\n[Page 9]\n'+body,'Fictional Micro',(2040,2))
 
+    def test_report_running_headers_with_page_counters(self):
+        for form in ('',' AB (publ)',' Group AB (publ.)'):
+            for counter in ('',' Page 2 of 21',' 2 / 21'):
+                text='[Page 1]\nQ2 2040\n[Page 2]\nFictional Micro'+form+' Interim Report Q2 2040'+counter+'\n'
+                result=identity.recognize(text,'Fictional Micro',(2040,2))
+                self.assertEqual(result['issuer_evidence']['rule'],'issuer_report_running_heading')
+                self.check_spans(text,result)
+
+    def test_statutory_publisher_statement(self):
+        text='[Page 1]\nQ2 2040\n[Page 20]\nNote: Fictional Micro AB (publ) is required to publish the information in this report.\n'
+        result=identity.recognize(text,'Fictional Micro',(2040,2))
+        self.assertEqual(result['issuer_evidence']['rule'],'statutory_publishing_issuer')
+        self.check_spans(text,result)
+
+    def test_statutory_disclosure_preamble(self):
+        text='[Page 1]\nQ2 2040\n[Page 20]\nThis is information that Fictional Micro AB is obliged to make public pursuant to the market rules.\n'
+        result=identity.recognize(text,'Fictional Micro',(2040,2))
+        self.assertEqual(result['issuer_evidence']['rule'],'statutory_publishing_issuer')
+        self.check_spans(text,result)
+
+    def test_running_header_rejects_competitors_and_body_mentions(self):
+        for line in ('Other Entity Interim Report Q2 2040 Page 2 of 21',
+                     'Fictional Microsystems Interim Report Q2 2040 Page 2 of 21',
+                     'We compare Fictional Micro Interim Report Q2 2040 Page 2 of 21',
+                     'Fictional Micro Holdings Interim Report Q2 2040 Page 2 of 21',
+                     'Fictional Micro is not required to publish the information',
+                     'Our supplier Fictional Micro is required to publish the information'):
+            with self.subTest(line=line),self.assertRaisesRegex(ValueError,'issuer'):
+                identity.recognize('[Page 1]\nQ2 2040\n'+line,'Fictional Micro',(2040,2))
+
     def test_new_identity_evidence_does_not_relax_period_checks(self):
         text='[Page 1]\nQ1 2040\n[Page 8]\nReview Report\nFictional Micro AB, org.no 123456-7890\n'
         with self.assertRaisesRegex(ValueError,'differs'):
