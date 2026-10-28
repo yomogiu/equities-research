@@ -72,10 +72,19 @@ def configuration(start,end,capex_conventions=None,accounting_bases=None):
     return {'version':analysis.VERSION,'current_period':['duration',start,end],'as_of':end,'capex_conventions':dict(conventions),'accounting_bases':dict(bases)}
 
 
+def unresolved_configuration(end=None):
+    """PDF tables can be reported without inventing normalized quarter dates."""
+    if end is not None:date.fromisoformat(end)
+    return {'version':analysis.VERSION,'current_period':None,'as_of':end,'capex_conventions':{},'accounting_bases':{}}
+
+
 def validate_configuration(value):
     if not isinstance(value,dict) or set(value)!={'version','current_period','as_of','capex_conventions','accounting_bases'}:
         raise ValueError('Exact deterministic financial analysis configuration required')
     period=value['current_period']
+    if period is None:
+        if value!=unresolved_configuration(value['as_of']):raise ValueError('Unresolved dates cannot carry financial assumptions')
+        return value
     if not isinstance(period,list) or len(period)!=3 or period[0]!='duration':
         raise ValueError('Explicit fiscal quarter dates required')
     if value!=configuration(period[1],period[2],value['capex_conventions'],value['accounting_bases']):raise ValueError('Financial analysis version or as-of anchor changed')
@@ -84,6 +93,8 @@ def validate_configuration(value):
 
 def compile(bundle,config):
     validate_configuration(config)
+    if config['current_period'] is None and bundle['financial']['observations']:
+        raise ValueError('Normalized financial facts require explicit quarter dates')
     value = analysis.build(bundle,current_period=config['current_period'],as_of=config['as_of'],
                           capex_conventions=config['capex_conventions'],accounting_bases=config['accounting_bases'])
     if bundle.get('financial_source_policy') == 'filed-statement-repair-v1':
@@ -448,7 +459,7 @@ def multiples_lines(value):
 def preview_markdown(value,earnings_multiples=None,selection=None):
     rendered=sections(value,selection)
     lines=['# Financial analysis','',
-           'Quarter: '+display.period_label(value['current_period'])+'. As of: '+value['as_of']+'.','',
+           'Quarter: '+display.period_label(value['current_period'])+'. As of: '+str(value['as_of'] or 'not normalized')+'.','',
            'Core consolidated metrics. Cash-flow durations and balance-sheet dates are labeled separately.','']
     for key in ('demand','earnings','cash'):
         lines.extend(['## '+FRONT_HEADINGS[key],'',*rendered[key]])

@@ -178,3 +178,26 @@ introduced. Independent report review remains required.
 A frozen validation profile may set `source_verification: "always"` to exercise the
 model path even for recognized documents. Normal profiles omit it and invoke the
 model only for ambiguity. The same citation, contradiction and budget checks apply.
+
+
+### Flexible event and fiscal-period recognition
+
+New fresh collections use the issuer index's fiscal label and published call date,
+not a calendar quarter inferred from the label. Investor-call and descriptive URL
+suffixes are eligible; a separate prerecorded interview, media call or AGM does not
+replace the full investor call. Explicit URL/label conflicts still fail. The actual
+publication date determines completion and freshness, including fiscal years that
+are ahead of the calendar year.
+
+Document headings distinguish realized results from guidance and comparative table
+columns. A verified issuer's exact attached quarterly filing can establish its period
+using the cover's dated reporting endpoint and the matched call's fiscal label;
+this avoids an extra model call merely because a regulator cover omits “Q3”. Wrong
+issuer/period evidence and future reporting endpoints remain blocking.
+
+Fresh PDF collections preserve source dates on their original tables. Unknown exact
+quarter boundaries remain null instead of being invented. Empty tagged inventories
+can render original tables with explicit date-normalization gaps; normalized financial
+facts still require exact quarter dates. Existing extraction, arithmetic, independent
+review and publication checks remain in force. These rules supersede the initial
+calendar-year-only adapter and exact event-slug restrictions described above.

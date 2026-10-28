@@ -1,10 +1,9 @@
 """Bounded fresh discovery and qualification for the finite report runner.
 
 Profiles bind verified issuer identity and approved public discovery routes. The
-current adapter supports calendar-year quarterly reports and attributable calls.
+current adapter uses published event labels and document-defined fiscal periods.
 It never promotes an old packet or silently substitutes another fiscal period.
 """
-from calendar import monthrange
 from datetime import date, datetime, timezone
 from pathlib import Path
 import re
@@ -63,7 +62,7 @@ def prepare(output,spec,*,client=None):
     profile=spec['fresh_sources'];as_of=date.fromisoformat(profile['as_of'])
     require(profile['version']==VERSION and profile['identity_verified'] is True,'Verified fresh-source profile required')
     require(profile['issuer_id']==spec['issuer_id'],'Fresh-source issuer mismatch')
-    require(profile['fiscal_calendar']=='calendar_year','Explicit supported fiscal calendar required')
+    require(profile['fiscal_calendar'] in ('calendar_year','document_defined'),'Explicit supported fiscal calendar required')
     require(isinstance(profile.get('transcript_skip_periods'),list),'Explicit transcript skip resolution required')
     require(profile['provider_index'].startswith('https://stockanalysis.com/') and profile['provider_index'].endswith('/transcripts/'),
             'Unsupported public transcript discovery route')
@@ -94,9 +93,9 @@ def prepare(output,spec,*,client=None):
         body,_=fetch(profile['provider_index'],'transcript_discovery')
         require(profile['issuer_name'].casefold() in page(body,profile['provider_index']).text.casefold(),
                 'Discovery index issuer mismatch')
-        event=events.select(body,profile['provider_index'],as_of)
+        event=events.select(body,profile['provider_index'],as_of,fiscal_calendar='document_defined')
         period=(event['year'],event['quarter']);call_url=event['url']
-        require((as_of-date(period[0],period[1]*3,monthrange(period[0],period[1]*3)[1])).days<=150,
+        require((as_of-date.fromisoformat(event['published_on'] or event['end'])).days<=150,
                 'Latest discovered quarter is stale; refuse old-period substitution')
         period_id=event['period']
         require(not events.excluded(event,profile['transcript_skip_periods']),'User skipped transcript retrieval for this issuer and period')
@@ -113,7 +112,7 @@ def prepare(output,spec,*,client=None):
             # A limited disclosure waiver belongs only to a trading-update event.
             limited=event['kind']=='trading_update' and candidate['attachment_kind']=='earnings_release'
             financial_coverage(text,trading_update=limited)
-            try:identity.period_evidence(text,period,profile['issuer_name'])
+            try:identity.period_evidence(text,period,profile['issuer_name'],fiscal_calendar='document_defined')
             except ValueError as exc:
                 if str(exc)!='Explicit dated reporting-period heading unavailable':raise
             candidate.update(report_raw_sha256=report_http['sha256'],report_text_sha256=financial.digest(text.encode()),
@@ -144,7 +143,10 @@ def prepare(output,spec,*,client=None):
         index=transcript.index_publisher_transcript(call_text,binding,call_body)
         require(index['exchanges'] and len(index['turns'])>=4,'Complete indexed earnings Q&A unavailable')
         require(not index['coverage'].get('unassigned_qa_turn_ids'),'Unassigned Q&A turns prevent source qualification')
-        gaps=['Annual background, consensus and current valuation inputs not collected by this bounded route.']
+        report_end=qualification['report_period']['end']
+        if report_end:
+            require(date.fromisoformat(report_end)<=date.fromisoformat(event['published_on']), 'Report period ends after the published call')
+        gaps=['Exact fiscal quarter boundaries are not normalized; original tables retain their reported dates. Normalized comparisons require exact source dates.', 'Annual background, consensus and current valuation inputs not collected by this bounded route.']
         if limited:gaps.append('Trading-update release and call only; no full financial statements collected. Missing earnings, cash-flow and balance-sheet metrics must remain gaps. Never infer profitability from revenue or relabel guidance as realized cash flow.')
         else:gaps.append('One qualified financial document and call collected; other releases, MD&A and presentations are not included by this bounded route.')
         qualification.update(version=VERSION,issuer_id=spec['issuer_id'],period=period_id,as_of=profile['as_of'],event=event,attachment_kind=attachment_kind,
@@ -178,18 +180,18 @@ def prepare(output,spec,*,client=None):
             if raw_path not in bound:
                 artifacts.append({'path':raw_path,'sha256':entry['sha256']});bound.add(raw_path)
         writing=Path(spec['writing_standard']);artifacts.append({'path':str(writing),'sha256':case.sha(writing)})
-        start=event['start'];end=event['end']
+        end=qualification['report_period']['end']
         value={'schema_version':1,'scope':'one_packet_experiment','authorization':spec['authorization'],
             'case_id':case.digest(qualification),'packet_id':case.digest(qualification),'issuer_id':spec['issuer_id'],'period':period_id,
             'sources':sources,'artifacts':artifacts,'financial_path':str(output/'financial.json'),
             'transcript_index_path':str(output/'transcript-index.json'),'transcript_path':call['text_path'],
             'writing_standard_path':str(writing),'financial_inventory_version':'packet-financial-inventory-v1',
-            'financial_configuration':finance.configuration(start,end),
+            'financial_configuration':finance.unresolved_configuration(end),
             'source_mode':'trading_update_release' if limited else 'financial_report',
             'qualification_path':str(output/'qualification.json'),
             'scope_notes':[
                 'Freshly collected '+period_id+' '+event['kind']+'. Source qualification binds issuer, event label, document coverage, hashes and indexed call; it is not accounting or investment approval. H2 call labels do not establish standalone second-half accounting figures.',
-                'Report document basis: '+qualification['report_period']['basis']+' ('+qualification['report_period']['start']+' to '+qualification['report_period']['end']+'). '+qualification['report_period']['interpretation'],
+                'Report document basis: '+qualification['report_period']['basis']+' ('+str(qualification['report_period']['start'] or 'start not normalized')+' to '+str(qualification['report_period']['end'] or 'end not normalized')+'). '+qualification['report_period']['interpretation'],
                 'PDF financial tables are verbatim positional extraction, not normalized tagged facts. Prefer selected original rows, include their period/unit headers, and disclose unsupported normalized comparisons. Never infer issuer nondisclosure from a missing tag.',
                 'Call and report may disagree; use the original financial report for reported accounting figures and explicitly flag material transcript conflicts.',
                 'Public provider-hosted issuer report and attributable transcript may be used when official HTTP retrieval fails. No source search after authorship.',

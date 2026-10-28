@@ -2,6 +2,7 @@
 import json,re
 from pathlib import Path
 from calendar import monthrange
+from datetime import date
 from . import earnings_report_identity as identity, earnings_source_case as case
 
 LIMIT=60000
@@ -34,13 +35,27 @@ def excerpts(text,issuer):
 def qualify(text,issuer,period,provenance,verify=None,*,always_verify=False):
     require(provenance.get('verified_issuer_index') is True and provenance.get('matched_call') is True and provenance.get('exact_attachment') is True,'Verified source chain required')
     require(provenance.get('report_text_sha256')==__import__('hashlib').sha256(text.encode()).hexdigest(),'Source text binding differs')
+    calendar=provenance.get('event',{}).get('fiscal_calendar','calendar_year')
     issue=None;basis=None
     try:issue=identity.issuer_evidence(text,issuer)
     except ValueError:pass
-    try:basis=identity.period_evidence(text,period,issuer)
+    try:basis=identity.period_evidence(text,period,issuer,fiscal_calendar=calendar)
     except ValueError as exc:
         # An unrecognized layout is ambiguous. A detected contrary date is not.
         if str(exc)!='Explicit dated reporting-period heading unavailable':raise
+    # A regulator cover supplies a real period-end date, while the exact
+    # issuer-bound call attachment supplies its fiscal Q label. Do not require
+    # a second spelling of Q3 in a filing that says "quarterly period ended".
+    if issue and basis is None and calendar=='document_defined':
+        end=identity.document_end(text)
+        published=provenance.get('event',{}).get('published_on')
+        if end and published and 0<=(date.fromisoformat(published)-date.fromisoformat(end)).days<=150:
+            from .earnings_events import DATE
+            match=re.search(r'(?:For\s+the\s+)?quarterly\s+period\s+ended\s+'+DATE,identity.front(text),re.I)
+            if match:
+                basis={'basis':'quarter','start':None,'end':end,'event_period':f'FY{period[0]}-Q{period[1]}',
+                       'standalone_quarter':True,'evidence':identity.span(text,*match.span(),'attached_filing_period_end'),
+                       'interpretation':'Quarterly filing endpoint from original cover; fiscal quarter label from the matched issuer call and exact attached filing. Each table retains its own duration and comparisons.'}
     if issue and basis and not always_verify:return {'issuer_evidence':issue,'report_period':basis,'decision_method':'deterministic','provenance':provenance}
     require(verify is not None,'Source identity/period ambiguous; bounded verification required')
     packet={'issuer':issuer,'expected_period':list(period),'provenance':provenance,'excerpts':excerpts(text,issuer),
@@ -66,6 +81,9 @@ def qualify(text,issuer,period,provenance,verify=None,*,always_verify=False):
         basis={'basis':kind,'start':f'{year}-{start:02d}-01','end':f'{year}-{quarter*3:02d}-{monthrange(year,quarter*3)[1]}','event_period':f'FY{year}-Q{quarter}',
                'standalone_quarter':kind=='quarter','evidence':dated,
                'interpretation':'Document reporting period only; selected tables retain original duration, units and comparisons. Cumulative flows are not standalone quarterly flows.'}
+    if calendar=='document_defined':
+        basis.update(start=None,end=identity.document_end(text))
+        basis['interpretation']='Fiscal reporting label verified from original evidence. Unknown dates remain unknown; preserve the dates and durations on each original table. No calendar-quarter dates have been inferred.'
     return {'issuer_evidence':issue or named,'report_period':basis,'decision_method':'bounded_model','provenance':provenance,
             'verification':{'input_sha256':case.digest(packet),'decision':answer,'issuer_quote':named,'period_quote':dated}}
 

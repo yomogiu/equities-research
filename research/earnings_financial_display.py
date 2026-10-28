@@ -106,6 +106,7 @@ def period_key(context):
 
 
 def period_label(key):
+    if key is None:return 'Dates not normalized; see original tables'
     def short(x): return date.fromisoformat(x).strftime('%b %d, %Y').replace(' 0', ' ')
     return ('As filed: ' + short(key[1])) if key[0] == 'instant' else short(key[1]) + ' – ' + short(key[2])
 

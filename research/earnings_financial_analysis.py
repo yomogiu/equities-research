@@ -421,8 +421,11 @@ def build(bundle, *, current_period=None, as_of=None, capex_conventions=None, ac
             raise ValueError('Explicit current_period must be a complete quarter')
         if as_of and as_of != current_period[2]: raise ValueError('Current quarter and as_of differ')
         as_of = current_period[2]
-    if not isinstance(as_of, str): raise ValueError('Explicit as_of reporting date required')
-    date.fromisoformat(as_of)
+    if as_of is None and current_period is None and not bundle['financial']['observations']:
+        pass  # Empty PDF normalization; original table dates remain authoritative.
+    else:
+        if not isinstance(as_of, str): raise ValueError('Explicit as_of reporting date required')
+        date.fromisoformat(as_of)
     capex_conventions = {} if capex_conventions is None else capex_conventions
     eligible = {o['id'] for o in bundle['financial']['observations'] if CONCEPTS.get(o['concept']) == 'capital_expenditure'}
     if (not isinstance(capex_conventions, dict) or not set(capex_conventions) <= eligible

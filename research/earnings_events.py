@@ -2,26 +2,59 @@
 from calendar import monthrange
 from datetime import date
 import re
-from .source_parse import page
+from .source_parse import page, Page
 
 
-def select(body,index_url,as_of):
+MONTHS = {name.lower(): i for i, name in enumerate(('January','February','March','April','May','June','July','August','September','October','November','December'), 1)}
+MONTHS.update({name[:3]: number for name, number in list(MONTHS.items())})
+DATE = r'(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.?\s+\d{1,2},?\s+20\d{2}'
+
+
+def read_date(text):
+    match=re.fullmatch(r'([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(20\d{2})',text.strip())
+    if not match:raise ValueError('Explicit publication date required')
+    return date(int(match[3]),MONTHS[match[1].lower()],int(match[2]))
+
+
+class EventIndex(Page):
+    def handle_endtag(self,tag):
+        anchor=tag=='a' and self.anchor is not None
+        super().handle_endtag(tag)
+        if anchor:self.links[-1]['following']=len(self.text_parts)
+
+
+def select(body,index_url,as_of,*,fiscal_calendar='calendar_year'):
+    parsed=EventIndex(index_url);parsed.feed(body.decode('utf-8',errors='replace'))
     found={}
-    for link in page(body,index_url).links:
-        match=re.fullmatch(re.escape(index_url)+r'\d+-(q[1-4]|h[12])-(20\d{2})(-tu)?/',link['url'])
-        if not match:continue  # AGM, media and post-call variants are not earnings events.
-        label,year,suffix=match.groups();label=label.upper();year=int(year)
-        title=re.fullmatch(r'Earnings Call:\s*(Q[1-4]|H[12])\s+(20\d{2})(?:\s+(?:TU|Trading Update))?',link['title'],re.I)
-        if not title:continue  # Duplicate "Read transcript" links carry no period metadata.
-        if (title[1].upper(),int(title[2]))!=(label,year):
+    for link in parsed.links:
+        if not link['url'].startswith(index_url):continue
+        slug=link['url'][len(index_url):].strip('/')
+        if not slug or '/' in slug:continue
+        # Investor calls and arbitrary descriptive suffixes are eligible. Separate
+        # media events and prerecorded interviews cannot replace the full call.
+        if re.search(r'(?:^|-)(?:media|post-call|pre-recorded|prerecorded|agm)(?:-|$)',slug,re.I):continue
+        title=re.fullmatch(r'(?:Earnings|Results|Investor) Call:\s*(Q[1-4]|H[12])\s+(20\d{2})(?:\s+.*)?',link['title'],re.I)
+        if not title:continue
+        label,year=title[1].upper(),int(title[2])
+        url_period=re.search(r'(?:^|-)(q[1-4]|h[12])-(20\d{2})(?:-|$)',slug,re.I)
+        if url_period and (url_period[1].upper(),int(url_period[2]))!=(label,year):
             raise ValueError('Event index label conflicts with event URL period')
+        following=''.join(parsed.text_parts[link['following']:])[:160].strip()
+        published=re.match(DATE,following,re.I)
+        published=read_date(published[0]) if published else None
         quarter=int(label[1])*(2 if label.startswith('H') else 1)
         end=date(year,quarter*3,monthrange(year,quarter*3)[1])
-        if end>as_of:continue
+        if published:
+            if published>as_of:continue
+        elif fiscal_calendar=='calendar_year':
+            if end>as_of:continue
+        else:raise ValueError('Fiscal event requires a published call date')
         start=date(year,((int(label[1])-1)*6+1) if label.startswith('H') else (quarter-1)*3+1,1)
         event={'url':link['url'],'label':label,'year':year,'quarter':quarter,
-               'period':f'FY{year}-{label}','start':start.isoformat(),'end':end.isoformat(),
-               'kind':'trading_update' if suffix else 'earnings_call','index_label':link['title']}
+               'period':f'FY{year}-{label}','start':start.isoformat() if fiscal_calendar=='calendar_year' else None,
+               'end':end.isoformat() if fiscal_calendar=='calendar_year' else None,
+               'published_on':published.isoformat() if published else None,'fiscal_calendar':fiscal_calendar,
+               'kind':'trading_update' if re.search(r'(?:-tu|-trading-update)$',slug,re.I) else 'earnings_call','index_label':link['title']}
         found.setdefault((year,quarter),{})[link['url']]=event
     if not found:raise ValueError('No completed reporting event discovered from issuer transcript index')
     choices=found[max(found)]

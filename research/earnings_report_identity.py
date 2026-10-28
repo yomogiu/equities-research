@@ -65,6 +65,8 @@ def issuer_evidence(text, issuer):
     words=re.findall(r'\w+',issuer)
     if not words:raise ValueError('Explicit issuer name required')
     name=r'(?<!\w)'+r'[\W_]+'.join(map(re.escape,words))+r'(?!\w)'
+    headline=re.search(r'(?im)^\s*'+name+r'\s+(?:reports|announces|releases)\b[^\n]{0,220}',front(text))
+    if headline:return span(text,*headline.span(),'issuer_results_headline')
     # Prefer affirmative legal identities anywhere in the accounting notes.
     legal=[r'This\s+press\s+release\s+is\s+an\s+official\s+information\s+document\s+of\s+(?:the\s+)?'+name+r'(?:\s+Group)?\s*\.',
            r"(?:the\s+)?(?:group[’']s\s+)?parent\s+company\s+is\s+"+name+r'(?:\s+(?:SA|S\.A\.|plc|Inc\.?|Ltd\.?))?\s*[.,]',
@@ -92,6 +94,8 @@ def issuer_evidence(text, issuer):
     if match:return span(text,*match.span(),'statutory_publishing_issuer')
     institutional=institutional_identity(text,name)
     if institutional:return institutional
+    cover=re.search(r'(?im)^[ \t]*'+entity+r'\.?[ \t]*$',front(text))
+    if cover:return span(text,*cover.span(),'opening_legal_name')
     # Short title/identity lines in the opening pages; not narrative mentions.
     title=r'(?:\s|[|,:()—–-]|\b(?:Q[1-4]|20\d{2}|first|second|third|fourth|quarter|quarterly|half|year|yearly|annual|interim|financial|report|results|group|SA|plc|Inc|Ltd|audited|unaudited)\b)*'
     lines=list(re.finditer(r'(?m)^.*$',front(text)))
@@ -103,14 +107,22 @@ def issuer_evidence(text, issuer):
     raise ValueError('Report issuer lacks an explicit identity heading or legal statement')
 
 
-def period_evidence(text, expected, issuer=''):
+def period_evidence(text, expected, issuer='', *, fiscal_calendar='calendar_year'):
     """Read the first dated report heading, never choose a desired body comparison."""
     year,quarter=expected
     opening=front(text)
     # A heading may wrap across a few short lines. Preserve original offsets.
     lines=list(re.finditer(r'(?m)^.*$',opening));candidates=[]
     terms=r'(?:Q[1-4]|(?:first|second|third|fourth)[ -]quarter|(?:first[ -]half|half[ -]year(?:ly)?|H1)|(?:second[ -]half|H2)|(?:(?:first[ -])?nine[ -]months?|9M)|(?:full[ -]year|annual))'
+    if issuer:
+        name=r'[\W_]+'.join(map(re.escape,re.findall(r'\w+',issuer)))
+        headline=re.search(r'(?im)^\s*'+name+r'\s+(?:reports|announces|releases)\b[^\n]{0,220}',opening)
+        if headline:
+            label=re.search(r'\bQ([1-4])\s+(20\d{2})\b',headline[0],re.I)
+            if label:candidates.append((headline.start(),int(label[2]),int(label[1]),'quarter',span(text,*headline.span(),'issuer_results_headline')))
     for i,line in enumerate(lines):
+        if re.search(r'\b(?:expects?|expected|guidance|outlook)\b',line.group(),re.I):continue
+        if len(re.findall(r'\b(?:Q[1-4]|H[12])\s+20\d{2}\b',line.group(),re.I))>1:continue
         if not line.group().strip() or len(line.group().strip())>160:continue
         end=line.end()
         for following in lines[i+1:i+5]:
@@ -126,7 +138,7 @@ def period_evidence(text, expected, issuer=''):
             tail=chunk[match.end():]
             # Date/year must belong to this short heading, with only heading
             # vocabulary between the label and year/date. No narrative bridging.
-            heading_words=r'(?:\s|[-|,:()/]|financial|activity|interim|consolidated|condensed|report|results|statements|statement|at|as|of|for|the|period|ended|ending|to|june|september|december|march|\d{1,2})*?'
+            heading_words=r'(?:fiscal|\s|[-|,:()/]|financial|activity|interim|consolidated|condensed|report|results|statements|statement|at|as|of|for|the|period|ended|ending|to|june|september|december|march|\d{1,2})*?'
             after=re.match(heading_words+r'(?P<year>20\d{2})\b',tail,re.I)
             before=re.search(r'\b(20\d{2})\s*$',chunk[:match.start('label')])
             if not after and not before:continue
@@ -144,6 +156,10 @@ def period_evidence(text, expected, issuer=''):
     _,found_year,found_quarter,basis,evidence=min(candidates,key=lambda item:item[0])
     if (found_year,found_quarter)!=(year,quarter):
         raise ValueError('Report heading period differs from discovered event; comparative periods cannot qualify it')
+    if fiscal_calendar=='document_defined':
+        return {'basis':basis,'start':None,'end':document_end(text),
+                'event_period':f'FY{year}-Q{quarter}','standalone_quarter':basis=='quarter','evidence':evidence,
+                'interpretation':'Fiscal label matched to the event. Dates come from the original report; unestablished boundaries remain unknown. Each table retains its own dates, duration, units and comparisons.'}
     start=f'{year}-{((quarter-1)*3+1 if basis=="quarter" else 7 if basis=="second_half" else 1):02d}-01'
     end=f'{year}-{quarter*3:02d}-{monthrange(year,quarter*3)[1]}'
     explicit=re.search(r'\b(?:at|ended|ending|to)\s+(\d{1,2})\s+(March|June|September|December)\s+(20\d{2})\b',evidence['text'],re.I)
@@ -158,3 +174,13 @@ def period_evidence(text, expected, issuer=''):
 
 def recognize(text,issuer,period):
     return {'issuer_evidence':issuer_evidence(text,issuer),'report_period':period_evidence(text,period,issuer)}
+
+
+def document_end(text):
+    """An explicit opening reporting endpoint, never a calendar-quarter guess."""
+    from .earnings_events import DATE, read_date
+    opening=front(text)
+    pattern=r'(?:for\s+the\s+)?(?:quarterly\s+period|(?:fiscal\s+)?quarter|(?:three|six|nine|twelve)\s+months?|year)\s+ended\s+('+DATE+r')'
+    match=re.search(pattern,opening,re.I)
+    if not match:return None
+    return read_date(match[1]).isoformat()
