@@ -29,6 +29,7 @@ all model calls share the host's cumulative budget and original costs remain sep
 def diagnose(root, payload, invoke=transport.run_role, *, max_tokens):
     root=Path(root)
     packet=deepcopy(payload)
+    packet['version']='simple-report-v1'
     packet['instructions']=INSTRUCTIONS
     packet.setdefault('_original_files', {})
     index=context_builder.assemble(packet,root/'context')

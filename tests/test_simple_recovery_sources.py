@@ -1,6 +1,8 @@
 """Fictional recovery regressions: no live issuers or model dispatch."""
 from datetime import date
 import copy,unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from research import earnings_report_identity as identity,earnings_report_support as support
 from research import earnings_report_only_sources as sources
 from research import earnings_recovery_agent as agent
@@ -39,5 +41,16 @@ class RecoverySources(unittest.TestCase):
     def test_exact_terra_high_is_authorized(self):
         runtime._validate_selection(agent.MODEL,agent.EFFORT)
         with self.assertRaises(ValueError):runtime._validate_selection(agent.MODEL,'low')
+    def test_recovery_packet_reaches_authenticated_transport_with_version(self):
+        calls=[]
+        def invoke(job,prompt,model,effort,bindings,index,**settings):
+            from research import earnings_file_runner as transport
+            transport._direct_packet(prompt,index,bindings)
+            calls.append((model,effort))
+            return {'content':{'diagnosis':'Fictional parser layout changed','action':'retry','reason':'General parser now supports it',
+                              'patch':'','tests':[],'publication_risks':[]}}
+        with TemporaryDirectory() as d:
+            result=agent.diagnose(Path(d),{'incident':{'reason':'Fictional layout'}},invoke,max_tokens=220000)
+        self.assertEqual(result['action'],'retry');self.assertEqual(calls,[(agent.MODEL,agent.EFFORT)])
 
 if __name__=='__main__':unittest.main()
