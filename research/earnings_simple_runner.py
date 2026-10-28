@@ -57,7 +57,8 @@ def packet(bundle):
             columns=list(rows[0])
             value['transcript_index'][name]={'columns':columns,'rows':[[row[k] for k in columns] for row in rows]}
     value['source_policy']='All extracted facts and captured tables; full current filing, release/presentation and call; annual financial-statement sections and appendices. Annual business/risk/MD&A prose is outside the writing context. Originals remain archived. Missingness is explicit, not evidence of issuer nondisclosure.'
-    return value
+    from . import earnings_report_display
+    return earnings_report_display.compact(value)
 
 
 def validate_review(value, known):
@@ -315,6 +316,10 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
                 'citation_rules':'Cite only exact supplied D/F/document-source/turn/exchange/section IDs or transcript-source. An exact captured table ID in citations is resolved to its original document; financial_selection.table_id and fact_ids remain unchanged. Do not use human labels or candidate locations as citations. Financial row fact_ids select existing F IDs; they are not invented numeric values.'}
         state['stage']='author';checkpoint()
         author_instructions=content.author_requirements()+'\nSelection consistency: cite original D chunk IDs or document-source IDs for basis. A selected metric cannot also be listed as a gap. Gross margin is computed when compatible revenue and gross-profit/cost inputs are selected; lack of a separately reported percentage is NOT a gap. A net-capex disclosure is not gross capex: select its original reported-table row instead and leave gross capex unavailable. Never label net spending as gross for FCF. Empty normalized inventories do not make reported table figures unavailable. Where original reported CFO and capital spending support it, state the figures and explicitly calculated FCF in the cash narrative; distinguish software-inclusive capex and separately capitalized development. Source-cited narrative arithmetic is allowed, but never invent normalized F IDs or values in financial_selection.'
+        guidance=spec.get('recovery_guidance')
+        if guidance is not None:
+            content.require(isinstance(guidance,str) and 0<len(guidance)<=6000,'Bounded recovery guidance required')
+            author_instructions+='\nPrior recovery diagnosis and review concerns follow. Verify them against the supplied originals; they are checks to resolve, never new financial evidence or report prose. Independent review receives no such guidance.\n'+guidance
         value=model_call(root,state,bundle,'author',{**original,**shared,'instructions':author_instructions},invoke,checkpoint)
         value=resolved_output(root,bundle,'author',value,original_known)
         validation_error=None

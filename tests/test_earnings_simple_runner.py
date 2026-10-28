@@ -81,6 +81,17 @@ class SimpleRunnerTests(unittest.TestCase):
             return result
         value=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=tamper)
         self.assertEqual(value['status'],'failed');self.assertFalse((self.job/'publication.json').exists())
+    def test_recovery_guidance_reaches_author_but_not_independent_reviewer(self):
+        self.spec['recovery_guidance']='Fictional recovery marker: verify quarter and cumulative basis.'
+        original=self.invoke;seen=[]
+        def invoke(directory,prompt,model,effort,bindings,index,**options):
+            packet=context.Evidence(index,self.root/'unused.jsonl',_replay=True).artifacts['single_report_packet']
+            guided='Fictional recovery marker' in packet['instructions']
+            seen.append((bindings['role'],guided))
+            return original(directory,prompt,model,effort,bindings,index,**options)
+        result=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=invoke)
+        self.assertEqual(result['status'],'published',result.get('reason'))
+        self.assertEqual(seen,[('single_report_analysis',True),('single_report_review',False)])
     def test_publication_requires_exact_receipt(self):
         value=simple.run_company(self.job,self.spec,self.prepare,lambda *a:{},invoke=self.invoke)
         self.assertEqual(value['status'],'failed');self.assertNotIn('publication',value)
