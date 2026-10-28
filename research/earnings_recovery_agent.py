@@ -24,7 +24,12 @@ Report-only mode may use verified official financial reports with explicit missi
 transcript/Q&A, original-language evidence and independently reviewed interpretation.
 Do not weaken checks to pass. Stop if evidence is contradictory or the shared budget
 cannot support a useful independent check. This is one of at most two recovery attempts;
-all model calls share the host's cumulative budget and original costs remain separate.'''
+all model calls share the host's cumulative budget and original costs remain separate.
+Budget accounting: a per-call preflight includes a temporary registered output
+reservation; it is not realized spending. The host releases that reservation when
+the authenticated usage arrives. Do not add sequential preflight requirements as
+though they were actual cumulative tokens. Distinguish insufficient next-call funding
+from uncertainty about later review funding; the host enforces the hard total cap.'''
 
 def diagnose(root, payload, invoke=transport.run_role, *, max_tokens):
     root=Path(root)
