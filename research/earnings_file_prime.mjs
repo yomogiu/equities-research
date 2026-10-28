@@ -32,13 +32,13 @@ try {
   if (auth.drainErrors().length) throw Error('auth_storage_unavailable');
   stage = 'registry';
   const registry = ModelRegistry.inMemory(auth);
-  const registeredNames = {'gpt-6.1-sol':'GPT-6.1 Sol', 'gpt-6-luna':'GPT-6 Luna'};
+  const registeredNames = {'gpt-6.1-sol':'GPT-6.1 Sol', 'gpt-6-luna':'GPT-6 Luna', 'gpt-6.1-terra':'GPT-6.1 Terra'};
   if (registeredNames[request.model] && !registry.find('openai-codex', request.model)) {
     registry.registerProvider('openai-codex', {
       oauth:getOAuthProvider('openai-codex'),
       api:'openai-codex-responses', baseUrl:'https://chatgpt.com/backend-api',
       models:[{id:request.model, name:registeredNames[request.model], reasoning:true,
-        thinkingLevelMap:{minimal:null, low:'low', medium:'medium', xhigh:'xhigh', max:'max'}, input:['text'],
+        thinkingLevelMap:{minimal:null, low:'low', medium:'medium', high:'high', xhigh:'xhigh', max:'max'}, input:['text'],
         contextWindow:272000, maxTokens:128000,
         // Unknown subscription pricing is deliberately excluded from receipts.
         cost:{input:0, output:0, cacheRead:0, cacheWrite:0}}]

@@ -297,12 +297,13 @@ def _scopes(bundle):
         scopes[chunk['id']] = [{k: chunk[k] for k in ('path', 'sha256', 'document_id', 'start', 'end')}]
     from .earnings_valuation_inventory import source_id
     for item in manifest['sources']:
-        if item['kind'] != 'transcript' and item['representation']=='text':
+        if item['kind'] not in ('transcript','source_gap') and item['representation']=='text':
             scopes[source_id(item['document_id'])]=[{k:item[k] for k in ('path','sha256','document_id')} | {'start':0,'end':len(Path(item['path']).read_bytes().decode('utf-8'))}]
     index = bundle['transcript_index']
-    scopes['transcript-source'] = [{'path':manifest['transcript_path'],'sha256':manifest['transcript_sha256'],
-        'document_id':index['source']['document_id'],'start':0,
-        'end':len(Path(manifest['transcript_path']).read_bytes().decode('utf-8'))}]
+    transcript_length=len(Path(manifest['transcript_path']).read_bytes().decode('utf-8'))
+    if transcript_length:
+        scopes['transcript-source'] = [{'path':manifest['transcript_path'],'sha256':manifest['transcript_sha256'],
+            'document_id':index['source']['document_id'],'start':0,'end':transcript_length}]
     turns = {t['id']: t for t in index['turns']}
     def span(item):
         return {'path': manifest['transcript_path'], 'sha256': manifest['transcript_sha256'],

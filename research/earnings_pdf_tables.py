@@ -22,7 +22,7 @@ def tables(text, source):
             base=marker.end()+line.start();body=line.group()
             pieces=[m for m in re.finditer(r'\S(?:\S| (?=\S))*',body)]
             values=[p for p in pieces if NUMBER.fullmatch(p.group())]
-            if len(values)>=2 and any(re.search('[A-Za-z]',p.group()) for p in pieces):
+            if len(values)>=2 and any(re.search('[A-Za-z\u3400-\u9fff]',p.group()) for p in pieces):
                 numeric.extend(p.end() for p in values)
             lines.append((base,body,pieces))
         if len(numeric)<6:continue
@@ -79,10 +79,11 @@ def render(table):
     for row in table['rows']:
         values=[cells[i] for i in row['cells']]
         numeric=sum(bool(NUMBER.fullmatch(c['text'])) for c in values)
-        label=next((c['text'] for c in values if re.search('[A-Za-z]',c['text'])),'')
+        label=next((c['text'] for c in values if re.search('[A-Za-z\u3400-\u9fff]',c['text'])),'')
         header=bool(re.search(r'^\W*(?:amounts?|note|currency|units?|USD|EUR|NOK|GBP|SEK|CHF)\b',label,re.I)
+                    or '單位' in label
                     or re.match(r'^\s*\(?in\s+(?:[€£$]|USD|EUR|NOK|GBP|SEK|CHF|thousands?|millions?|billions?|percent)',label,re.I))
-        data=not header and numeric>=2 and any(re.search('[A-Za-z]',c['text']) for c in values)
+        data=not header and numeric>=2 and any(re.search('[A-Za-z\u3400-\u9fff]',c['text']) for c in values)
         if data and row['id'] not in chosen:continue
         line=['']*width
         for c in values:line[c['column']]=c['text']

@@ -121,6 +121,10 @@ def resolve_citations(value, bundle, known):
 
 
 def resolved_output(root, bundle, role, value, known):
+    if role in ('author','correction'):
+        from . import earnings_report_support
+        value,changes=earnings_report_support.synchronize(value)
+        save(root/(role+'-support-binding.json'),{'changes':changes})
     resolved,changes=resolve_citations(value,bundle,known)
     if role in ('author','correction') and isinstance(resolved,dict) and 'financial_selection' in resolved:
         try:

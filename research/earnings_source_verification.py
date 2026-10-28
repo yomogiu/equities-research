@@ -69,8 +69,7 @@ def qualify(text,issuer,period,provenance,verify=None,*,always_verify=False):
         require(isinstance(quote,str) and 4<=len(quote)<=2000 and any(quote in x['text'] for x in packet['excerpts']),'Source-verification quote not in supplied original excerpts')
         excerpt=next(x for x in packet['excerpts'] if quote in x['text']);start=excerpt['start']+excerpt['text'].index(quote);return identity.span(text,start,start+len(quote),'model_verified_original_quote')
     named=cited('issuer_quote');dated=cited('period_quote')
-    name=r'(?<!\w)'+r'[\W_]+'.join(map(re.escape,re.findall(r'\w+',issuer)))+r'(?!\w)'
-    require(re.search(name,named['text'],re.I),'Identity quote must contain bounded expected issuer name')
+    require(identity.matches_issuer(named['text'],issuer),'Identity quote must contain bounded expected issuer name')
     year,quarter=period;kind=answer.get('basis')
     require(kind in ('quarter','half_year','nine_months','full_year','second_half'),'Unknown report duration')
     require(kind=='quarter' or {'half_year':2,'nine_months':3,'full_year':4,'second_half':4}[kind]==quarter,'Report duration contradicts event')

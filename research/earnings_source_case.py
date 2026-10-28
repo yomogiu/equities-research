@@ -49,5 +49,18 @@ def validate_case(case):
         release_case=(coverage
                       and q.get('issuer_id')==case.get('issuer_id') and q.get('period')==case.get('period')
                       and bool(q.get('source_gaps')) and bool(releases) and releases==qualified)
+    if case.get('source_mode')=='report_only':
+        qpath=str(Path(case.get('qualification_path','')).resolve())
+        if qpath not in frozen:raise ValueError('Report-only qualification not frozen')
+        q=read(qpath);index=read(case['transcript_index_path'])
+        reports={(s['document_id'],s['sha256']) for s in case['sources'] if s['kind']=='filing' and s['representation']=='raw'}
+        qualified={(d['document_id'],d['raw_sha256']) for d in q.get('documents',[])}
+        gap_sources=[s for s in case['sources'] if s['kind']=='source_gap' and s['path']==case['transcript_path']]
+        if (q.get('source_mode')!='report_only' or q.get('issuer_id')!=case['issuer_id'] or q.get('period')!=case['period']
+            or q.get('completeness')!='financial_statements_present' or not q.get('source_gaps') or not reports or reports!=qualified
+            or 'transcript' in kinds or len(gap_sources)!=1 or Path(case['transcript_path']).read_text()!=''
+            or any(index.get(k) for k in ('sections','turns','exchanges')) or index.get('coverage',{}).get('status')!='unavailable'):
+            raise ValueError('Explicit report-only financial binding and absent call required')
+        return
     if 'transcript' not in kinds or ('filing' not in kinds and not release_case):
         raise ValueError('Transcript-led case requires transcript and filing')

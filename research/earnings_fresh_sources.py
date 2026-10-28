@@ -58,6 +58,9 @@ def qualify_report(text,issuer,period,*,trading_update=False,provenance=None,ver
 
 
 def prepare(output,spec,*,client=None):
+    if spec['fresh_sources'].get('source_mode')=='report_only':
+        from . import earnings_report_only_sources
+        return earnings_report_only_sources.prepare(output,spec,client=client)
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     profile=spec['fresh_sources'];as_of=date.fromisoformat(profile['as_of'])
     require(profile['version']==VERSION and profile['identity_verified'] is True,'Verified fresh-source profile required')
@@ -91,7 +94,7 @@ def prepare(output,spec,*,client=None):
         try:fetch(profile['official_index'],'official_discovery')
         except FetchError:pass
         body,_=fetch(profile['provider_index'],'transcript_discovery')
-        require(profile['issuer_name'].casefold() in page(body,profile['provider_index']).text.casefold(),
+        require(identity.matches_issuer(page(body,profile['provider_index']).text,profile['issuer_name']),
                 'Discovery index issuer mismatch')
         event=events.select(body,profile['provider_index'],as_of,fiscal_calendar='document_defined')
         period=(event['year'],event['quarter']);call_url=event['url']

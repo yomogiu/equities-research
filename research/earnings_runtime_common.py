@@ -11,7 +11,7 @@ from pathlib import Path
 import shutil
 
 PROVIDER = 'openai-codex'
-ALLOWED = {'gpt-6-luna': {'max'}, 'gpt-5.6-luna': {'xhigh', 'max'}, 'gpt-6.1-sol': {'low', 'medium'}}
+ALLOWED = {'gpt-6-luna': {'max'}, 'gpt-5.6-luna': {'xhigh', 'max'}, 'gpt-6.1-sol': {'low', 'medium'}, 'gpt-6.1-terra': {'high'}}
 
 
 def digest(value):

@@ -8,6 +8,23 @@ from calendar import monthrange
 from .financial_evidence import digest
 
 
+def issuer_pattern(issuer):
+    """Match the distinctive name despite punctuation and terminal legal forms.
+
+    Do not infer acronyms, discard distinctive words or match ticker fragments.
+    A short name and a wholly different issuer must still fail.
+    """
+    words=re.findall(r'\w+',issuer.casefold())
+    legal={'co','company','corp','corporation','inc','incorporated','ltd','limited','plc'}
+    while words and words[-1] in legal:words.pop()
+    if not words:raise ValueError('Distinctive issuer name required')
+    return r'(?<!\w)'+r'[\W_]+'.join(map(re.escape,words))+r'(?!\w)'
+
+
+def matches_issuer(text,issuer):
+    return bool(re.search(issuer_pattern(issuer),text,re.I))
+
+
 def span(text, start, end, rule):
     return {'start': start, 'end': end, 'text': text[start:end],
             'sha256': digest(text[start:end].encode()), 'rule': rule}
