@@ -55,9 +55,10 @@ on a frozen version, without operator edits or extensions; fake tests alone do n
 Fresh-source tests may provide an explicit verified-issuer source profile instead of
 an archived packet. `earnings_fresh_sources` uses the existing bounded HTTPS client,
 text/PDF extraction and native transcript index. It discovers the latest completed
-ordinary quarter from an approved public issuer index, fetches the call and its exact
-attached report, prefers an available official PDF, and permits an explicitly approved
-provider mirror. It verifies issuer/quarter, financial-statement coverage and indexed
+ordinary quarter from an approved public issuer index, fetches the call and examines its exact
+attached filing records, using explicitly approved provider mirrors. The official
+archive retrieval remains recorded; it cannot silently replace an attachment with a
+different PDF. It verifies issuer/quarter, financial-statement coverage and indexed
 Q&A before passing an immutable source case directly to the finite runner. Retrieval
 failures and every source hash remain in the case; source failures terminate before
 paid authorship. It creates no global library acceptance or legacy qualification handoff.
@@ -118,14 +119,21 @@ media/post-call/AGM variants, conflicting labels and ambiguous latest events do 
 silently displace an eligible event. Retrieval exclusions apply to native half-year
 labels and their equivalent quarter ends.
 
-The selected event supplies its own attached quarterly/annual report. A trading
-update may instead supply an earnings release, bound to the exact attachment ID
-and document type. This route retains the `release` source kind and a frozen
-`limited_trading_update` qualification; it is not a filed-statement waiver for
-ordinary earnings calls. The release must have explicit issuer/period evidence
-and substantive financial disclosure. Missing financial-statement coverage is
-carried into the author/review context, with unavailable figures left as gaps.
-There is no post-draft search, old-period substitution or additional model stage.
+Document discovery collects up to eight distinct provider filing links from the selected
+event, independent of their visible labels. It resolves each exact filing-ID record,
+uses document type only to order candidates, and checks the original PDF's coverage
+and reporting period. Unrecognized provider types remain eligible. Failed candidates
+and reasons are retained; a bad attachment does not prevent trying the next one.
+The chosen document still undergoes issuer/period verification and independent report
+review. Retrieval stays within the existing request and byte limits. There is no
+post-draft search or extra model stage.
+
+An earnings release for an ordinary call must contain the same full financial-statement
+coverage as a report. Only an explicit trading-update event can use the limited-release
+route. Source kind, document basis, coverage and unavailable data remain explicit.
+Discovery does not claim exhaustive coverage: one qualifying financial document and
+the call are included; other attachments remain discovery evidence rather than report
+inputs. Original financial extraction and calculations are unchanged.
 
 Repeated valid selections of the same source table are combined before compilation:
 the union of selected original rows is rendered once in source order, under the

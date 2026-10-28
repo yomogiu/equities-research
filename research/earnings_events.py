@@ -41,14 +41,3 @@ def excluded(event,periods):
     aliases={event['period'],f"FY{event['year']}-Q{event['quarter']}"}
     if event['quarter'] in (2,4):aliases.add(f"FY{event['year']}-H{event['quarter']//2}")
     return bool(aliases&set(periods))
-
-
-def attachment(body,url,event):
-    links=page(body,url).links
-    for title,kind in [('Quarterly report','quarterly_report'),('Annual report','annual_report'),('Earnings release','earnings_release')]:
-        if kind=='annual_report' and event['quarter']!=4:continue
-        if kind=='earnings_release' and event['kind']!='trading_update':continue
-        choices={v['url'] for v in links if v['title'].strip().lower()==title.lower()}
-        if len(choices)>1:raise ValueError('Ambiguous attached '+title.lower())
-        if choices:return next(iter(choices)),kind
-    raise ValueError('Selected event lacks a supported attributable financial document')

@@ -39,13 +39,14 @@ def validate_case(case):
         raise ValueError('Writing standard is not frozen')
     kinds = {s['kind'] for s in case['sources']}
     release_case=False
-    if 'filing' not in kinds and case.get('source_mode')=='trading_update_release' and 'release' in kinds:
+    if 'filing' not in kinds and case.get('source_mode') in ('trading_update_release','financial_report') and 'release' in kinds:
         qualification=case.get('qualification_path','')
-        if str(Path(qualification).resolve()) not in frozen:raise ValueError('Trading-update qualification not frozen')
+        if str(Path(qualification).resolve()) not in frozen:raise ValueError('Financial-release qualification not frozen')
         q=read(qualification)
         releases={(s['document_id'],s['sha256']) for s in case['sources'] if s['kind']=='release' and s['representation']=='raw'}
         qualified={(d['document_id'],d['raw_sha256']) for d in q.get('documents',[]) if d['kind']=='release'}
-        release_case=(q.get('event',{}).get('kind')=='trading_update' and q.get('completeness')=='limited_trading_update'
+        coverage=(case['source_mode']=='trading_update_release' and q.get('event',{}).get('kind')=='trading_update' and q.get('completeness')=='limited_trading_update') or (case['source_mode']=='financial_report' and q.get('completeness')=='financial_statements_present')
+        release_case=(coverage
                       and q.get('issuer_id')==case.get('issuer_id') and q.get('period')==case.get('period')
                       and bool(q.get('source_gaps')) and bool(releases) and releases==qualified)
     if 'transcript' not in kinds or ('filing' not in kinds and not release_case):

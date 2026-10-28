@@ -40,13 +40,6 @@ class EventTests(unittest.TestCase):
         body=link('1-h1-2040/','Earnings Call: H1 2040')+link('2-q2-2040/','Earnings Call: Q2 2040')
         with self.assertRaisesRegex(ValueError,'Ambiguous'):events.select(body,BASE,date(2040,7,30))
 
-    def test_release_only_route_is_limited_to_trading_updates(self):
-        body=b'<a href="https://example.test/filings/2/">Earnings release</a>'
-        self.assertEqual(events.attachment(body,BASE,{'quarter':3,'kind':'trading_update'})[1],'earnings_release')
-        with self.assertRaises(ValueError):events.attachment(body,BASE,{'quarter':3,'kind':'earnings_call'})
-        annual=b'<a href="https://example.test/filings/3/">Annual report</a>'
-        self.assertEqual(events.attachment(annual,BASE,{'quarter':4,'kind':'earnings_call'})[1],'annual_report')
-
     def test_attachment_type_and_exact_id_must_both_match(self):
         body=b'{id:2,type:"earnings_release",fileUrl:"https://example.test/release.pdf"},{id:3,type:"quarterly_report",fileUrl:"https://example.test/report.pdf"}'
         self.assertEqual(fresh.filing_url(body,'https://example.test/filings/2/','earnings_release'),'https://example.test/release.pdf')
@@ -75,6 +68,13 @@ class EventTests(unittest.TestCase):
             for changes in [{'source_mode':'financial_report'},{'issuer_id':'other'},{'period':'FY2040-Q2'},{'artifacts':[]}]:
                 with self.subTest(changes=changes):
                     with self.assertRaises(ValueError):case.validate_case({**value,**changes})
+            q['completeness']='financial_statements_present'
+            q['event']['kind']='earnings_call'
+            qpath.unlink();case.save(qpath,q)
+            value['artifacts'][0]['sha256']=case.sha(qpath)
+            case.validate_case({**value,'source_mode':'financial_report'})
+            with self.assertRaises(ValueError):case.validate_case({**value,'source_mode':'financial_report','issuer_id':'wrong'})
+
 
 
 if __name__=='__main__':unittest.main()

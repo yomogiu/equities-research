@@ -8,13 +8,13 @@ from calendar import monthrange
 from datetime import date, datetime, timezone
 from pathlib import Path
 import re
-from urllib.parse import urlsplit
 from . import earnings_source_case as case
 from . import financial_evidence as financial
 from . import transcript_evidence as transcript
 from . import earnings_financial_analysis_report as finance
 from . import earnings_report_identity as identity
 from . import earnings_events as events
+from . import earnings_document_discovery as discovery
 from .fetch import Client, FetchError, PUBLIC_USER_AGENT
 from .source_parse import extract, page
 
@@ -31,25 +31,24 @@ def current_calls(body,url,as_of):
 
 
 def filing_url(body,landing,kind='quarterly_report'):
-    """Read the exact filing-ID object, never evaluate embedded JavaScript."""
-    identifier=urlsplit(landing).path.strip('/').split('/')[-1]
-    require(identifier.isdigit(),'Unrecognized provider filing identifier')
-    require(kind in {'quarterly_report','annual_report','earnings_release'},'Unsupported attachment type')
-    pattern=r'\{id:'+re.escape(identifier)+r',type:"'+re.escape(kind)+r'"[^{}]{0,1500}?fileUrl:"([^"\n]+)"'
-    matches=set(re.findall(pattern,body.decode('utf-8')))
-    require(len(matches)==1,'Exact financial-document download binding unavailable')
-    return matches.pop().replace('\\u002F','/').replace('\\/','/')
+    """Compatibility API for callers that already know the attachment type."""
+    value=discovery.binding(body,landing)
+    require(value['attachment_kind']==kind,'Exact financial-document download binding unavailable')
+    return value['pdf_url']
 
 
-def qualify_report(text,issuer,period,*,trading_update=False,provenance=None,verify=None,always_verify=False):
-    recognized=None
+def financial_coverage(text,*,trading_update=False):
     require(len(text)>(2500 if trading_update else 10000),'Financial document is incomplete or too short')
-    checks=[r'income statement|statement of (?:profit|operations)',r'financial position|balance sheet',r'cash flow']
+    checks=[r'income\s+statements?|statements?\s+of\s+(?:profit|operations|income|earnings|comprehensive income)',r'financial\s+position|balance\s+sheets?',r'cash\s+flows?']
     if trading_update:
         require(re.search(r'\brevenue\b',text,re.I) and len(re.findall(r'\d[\d ,.]*\d',text))>=3,
                 'Trading update lacks substantive reported financial evidence')
     else:require(all(re.search(p,text,re.I) for p in checks),'Financial statements missing from quarterly report')
     require(re.search(r'\[Page \d+\]',text),'PDF page extraction unavailable')
+
+
+def qualify_report(text,issuer,period,*,trading_update=False,provenance=None,verify=None,always_verify=False):
+    financial_coverage(text,trading_update=trading_update)
     if provenance is None:recognized=identity.recognize(text,issuer,period)
     else:
         from . import earnings_source_verification as verification
@@ -71,7 +70,7 @@ def prepare(output,spec,*,client=None):
     collection=output/'collection';require(not collection.exists(),'Fresh collection must start with an empty directory')
     collection.mkdir()
     client=client or Client(collection,set(profile['allowed_hosts']),PUBLIC_USER_AGENT,max_requests=24,max_bytes=64*1024*1024)
-    ledger=[];docs=[];artifacts=[];source_model_calls=0
+    ledger=[];docs=[];artifacts=[];source_model_calls=0;attachment_decisions=[]
     def fetch(url,kind):
         try:
             body,entry=client.get(url,0)
@@ -90,8 +89,7 @@ def prepare(output,spec,*,client=None):
         docs.append(doc);return doc,text
     try:
         # Record the official archive attempt even if an attributable mirror is needed.
-        official=None
-        try:official=fetch(profile['official_index'],'official_discovery')[0]
+        try:fetch(profile['official_index'],'official_discovery')
         except FetchError:pass
         body,_=fetch(profile['provider_index'],'transcript_discovery')
         require(profile['issuer_name'].casefold() in page(body,profile['provider_index']).text.casefold(),
@@ -105,21 +103,24 @@ def prepare(output,spec,*,client=None):
         call_body,call_http=fetch(call_url,'transcript')
         call,call_text=document(call_body,call_http,'transcript',call_url)
         events.qualify_call(call_text,profile['issuer_name'],event)
-        landing,attachment_kind=events.attachment(call_body,call_url,event)
-        landing_body,_=fetch(landing,'report_landing')
-        pdf_url=filing_url(landing_body,landing,attachment_kind)
-        # Prefer official PDFs when the index exposes the same explicit quarter.
-        report_body=report_http=report_url=None
-        if official and attachment_kind=='quarterly_report':
-            candidates={l['url'] for l in page(official,profile['official_index']).links
-                if re.search(r'(?i)q'+str(period[1])+r'[-_ ]?'+str(period[0]),l['url']) and
-                   re.search(r'(?i)report.*\.pdf',l['url'])}
-            if len(candidates)==1:
-                url=candidates.pop()
-                try:report_body,report_http=fetch(url,'official_report');report_url=url
-                except FetchError:pass
-        if report_body is None:report_body,report_http=fetch(pdf_url,'issuer_report_mirror');report_url=pdf_url
-        require(report_body.startswith(b'%PDF'),'Quarterly report must be original PDF bytes')
+        def inspect_attachment(candidate):
+            report_url=candidate['pdf_url']
+            report_body,report_http=fetch(report_url,'issuer_report_mirror')
+            require(report_body.startswith(b'%PDF'),'Financial report must be original PDF bytes')
+            text,_,status=extract(report_body,report_http['content_type'],report_url)
+            require(status=='extracted','Source text extraction failed: '+status)
+            # A release for an ordinary earnings call must contain full statements.
+            # A limited disclosure waiver belongs only to a trading-update event.
+            limited=event['kind']=='trading_update' and candidate['attachment_kind']=='earnings_release'
+            financial_coverage(text,trading_update=limited)
+            try:identity.period_evidence(text,period,profile['issuer_name'])
+            except ValueError as exc:
+                if str(exc)!='Explicit dated reporting-period heading unavailable':raise
+            candidate.update(report_raw_sha256=report_http['sha256'],report_text_sha256=financial.digest(text.encode()),
+                             coverage='limited_trading_update' if limited else 'financial_statements_present')
+            return report_body,report_http,report_url,limited
+        selected,(report_body,report_http,report_url,limited)=discovery.select(call_body,call_url,fetch,inspect_attachment,attachment_decisions)
+        landing=selected['landing_url'];attachment_kind=selected['attachment_kind']
         source_kind='release' if attachment_kind=='earnings_release' else 'filing'
         report,report_text=document(report_body,report_http,source_kind,report_url)
         provenance={'verified_issuer_index':True,'matched_call':True,'exact_attachment':True,
@@ -135,7 +136,7 @@ def prepare(output,spec,*,client=None):
             originals={d[k+'_path']:d[k+'_sha256'] for d in docs for k in ('raw','text')}
             originals.update({str(collection/e['body_path']):e['sha256'] for e in ledger if e['status']=='retrieved'})
             return verifier({**payload,'_original_files':originals})
-        qualification=qualify_report(report_text,profile['issuer_name'],period,trading_update=source_kind=='release',
+        qualification=qualify_report(report_text,profile['issuer_name'],period,trading_update=limited,
                                      provenance=provenance,verify=verify if verifier else None,
                                      always_verify=profile.get('source_verification')=='always')
         binding={k:call[k] for k in ('document_id','text_sha256','raw_sha256')}
@@ -144,10 +145,10 @@ def prepare(output,spec,*,client=None):
         require(index['exchanges'] and len(index['turns'])>=4,'Complete indexed earnings Q&A unavailable')
         require(not index['coverage'].get('unassigned_qa_turn_ids'),'Unassigned Q&A turns prevent source qualification')
         gaps=['Annual background, consensus and current valuation inputs not collected by this bounded route.']
-        if source_kind=='release':gaps.append('Trading-update release and call only; no full financial statements collected. Missing earnings, cash-flow and balance-sheet metrics must remain gaps. Never infer profitability from revenue or relabel guidance as realized cash flow.')
-        else:gaps.append('Separate earnings release and presentation not collected by this bounded route.')
+        if limited:gaps.append('Trading-update release and call only; no full financial statements collected. Missing earnings, cash-flow and balance-sheet metrics must remain gaps. Never infer profitability from revenue or relabel guidance as realized cash flow.')
+        else:gaps.append('One qualified financial document and call collected; other releases, MD&A and presentations are not included by this bounded route.')
         qualification.update(version=VERSION,issuer_id=spec['issuer_id'],period=period_id,as_of=profile['as_of'],event=event,attachment_kind=attachment_kind,
-            documents=docs,discovery_complete=False,transcript_exchanges=len(index['exchanges']),
+            documents=docs,attachment_decisions=attachment_decisions,discovery_complete=False,transcript_exchanges=len(index['exchanges']),
             discovery_scope='Latest completed quarterly or semiannual reporting event in configured public issuer index. URL and index/call labels agree; attached document has explicit issuer and period evidence. Official-source failures are retained; no exhaustive web coverage claimed.',
             source_gaps=gaps)
         case.save(output/'qualification.json',qualification)
@@ -167,7 +168,8 @@ def prepare(output,spec,*,client=None):
                 sources.append(row)
         case.save(output/'retrieval.json',{'requests':client.requests,'cache_hits':client.cache_hits,
             'bytes_downloaded':client.bytes,'entries':ledger,'model_calls':source_model_calls})
-        for name in ('qualification.json','financial.json','transcript-index.json','retrieval.json'):
+        case.save(output/'attachment-discovery.json',{'candidates':attachment_decisions,'maximum_candidates':discovery.MAX_CANDIDATES})
+        for name in ('qualification.json','financial.json','transcript-index.json','retrieval.json','attachment-discovery.json'):
             artifacts.append({'path':str(output/name),'sha256':case.sha(output/name)})
         bound={a['path'] for a in artifacts}|{s['path'] for s in sources}
         for entry in ledger:
@@ -183,7 +185,7 @@ def prepare(output,spec,*,client=None):
             'transcript_index_path':str(output/'transcript-index.json'),'transcript_path':call['text_path'],
             'writing_standard_path':str(writing),'financial_inventory_version':'packet-financial-inventory-v1',
             'financial_configuration':finance.configuration(start,end),
-            'source_mode':'trading_update_release' if source_kind=='release' else 'financial_report',
+            'source_mode':'trading_update_release' if limited else 'financial_report',
             'qualification_path':str(output/'qualification.json'),
             'scope_notes':[
                 'Freshly collected '+period_id+' '+event['kind']+'. Source qualification binds issuer, event label, document coverage, hashes and indexed call; it is not accounting or investment approval. H2 call labels do not establish standalone second-half accounting figures.',
@@ -197,5 +199,6 @@ def prepare(output,spec,*,client=None):
         return output/'case.json'
     finally:
         # Failure receipts survive before any author call; no source retry state.
+        case.save(output/'attachment-discovery.json',{'candidates':attachment_decisions,'maximum_candidates':discovery.MAX_CANDIDATES})
         case.save(output/'retrieval.json',{'requests':client.requests,'cache_hits':client.cache_hits,
             'bytes_downloaded':client.bytes,'entries':ledger,'model_calls':source_model_calls})
