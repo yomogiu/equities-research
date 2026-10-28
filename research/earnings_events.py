@@ -65,7 +65,7 @@ def select(body,index_url,as_of,*,fiscal_calendar='calendar_year'):
 def qualify_call(text,issuer,event):
     name=r'(?<!\w)'+r'\s+'.join(map(re.escape,issuer.split()))+r'(?!\w)'
     if not re.search(name,text[:1600],re.I):raise ValueError('Transcript issuer mismatch')
-    headings=re.findall(r'(?m)^Earnings Call:\s*(Q[1-4]|H[12])\s+(20\d{2})(?:\s+(?:TU|Trading Update))?\s*$',text[:2500],re.I)
+    headings=re.findall(r'(?m)^(?:Earnings|Results|Investor) Call:\s*(Q[1-4]|H[12])\s+(20\d{2})(?:\s+(?:TU|Trading Update))?\s*$',text[:2500],re.I)
     if [(label.upper(),year) for label,year in headings]!=[(event['label'],str(event['year']))]:raise ValueError('Transcript heading differs from selected event')
 
 

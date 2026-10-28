@@ -27,6 +27,11 @@ class FiscalDiscoveryTests(unittest.TestCase):
         self.assertEqual(e['period'],'FY2041-Q2')
         self.assertIsNone(e['start'])
 
+    def test_call_heading_accepts_the_same_event_label_variants(self):
+        for prefix in ('Earnings','Results','Investor'):
+            e=events.select(card('32-q3-2040-webcast',prefix+' Call: Q3 2040','Sep 2, 2040'),BASE,date(2040,10,28),fiscal_calendar='document_defined')
+            events.qualify_call('Fictional Micro\n'+prefix+' Call: Q3 2040\n','Fictional Micro',e)
+
     def test_future_publication_is_not_eligible(self):
         with self.assertRaisesRegex(ValueError,'No completed'):
             events.select(card('32-q1-2041-investor-call','Earnings Call: Q1 2041','Dec 1, 2040'),BASE,date(2040,10,28),fiscal_calendar='document_defined')
