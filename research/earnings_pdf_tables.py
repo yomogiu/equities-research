@@ -6,6 +6,13 @@ from . import financial_evidence as financial
 NUMBER = re.compile(r'[($+\-−]?(?:\d[\d ,.]*\d|\d)(?:[%)]|\.\d+)?|[—–-]')
 
 
+def _data_line(body):
+    pieces=re.findall(r'\S(?:\S| (?=\S))*',body)
+    numbers=[p for p in pieces if NUMBER.fullmatch(p)]
+    return (len(numbers)>=2 and any(re.search('[A-Za-z\u3400-\u9fff]',p) for p in pieces)
+            and not all(re.fullmatch(r'20\d{2}',p) for p in numbers))
+
+
 def tables(text, source):
     """Capture page rows with original offsets and stable horizontal columns.
 
@@ -65,7 +72,8 @@ def tables(text, source):
             # A PDF sometimes places the statement title/units on an otherwise
             # empty page immediately before its numbers. Preserve that heading
             # as quoted context, never infer a currency or scale from it.
-            if len(previous_text)<3500 and not re.search(r'\d[\d,.]*[ \t]{2,}\(?[\d,]+\.\d',previous_text):
+            heading=re.search(r'statements?|balance sheets?|cash flows?|\(?in (?:thousands?|millions?|billions?)|單位|单位|資產負債表|资产负债表|現金流量表|现金流量表',previous_text,re.I)
+            if len(previous_text)<3500 and heading and not any(_data_line(line) for line in previous_text.splitlines()):
                 preceding=[{'text':previous_text.strip(),'start':previous.end(),'end':marker.start(),
                             'raw_span_sha256':financial.digest(previous_text.encode())}]
         result.append({'id':'T-'+storage.digest([source['document_id'],source['sha256'],marker.start()])[:20],
@@ -87,8 +95,13 @@ def render(table):
     """
     from . import earnings_markdown_render as markdown
     cells={c['id']:c for c in table['cells']};chosen=set(table['selected_row_ids'])
+    last=max((i for i,row in enumerate(table['rows']) if row['id'] in chosen),default=-1)
+    original_lines={s['row_id']:s['text'] for s in table.get('source_lines',[])}
     width=max(c['column']+c['colspan'] for c in cells.values());rows=[];kept=[]
-    for row in table['rows']:
+    for position,row in enumerate(table['rows']):
+        # Parent labels and period/unit headers precede their selected values.
+        # Do not append unrelated footnotes, dangling labels or page footers.
+        if position>last:break
         values=[cells[i] for i in row['cells']]
         numeric=sum(bool(NUMBER.fullmatch(c['text'])) for c in values)
         label=next((c['text'] for c in values if re.search('[A-Za-z\u3400-\u9fff]',c['text'])),'')
@@ -97,7 +110,8 @@ def render(table):
                     or re.match(r'^\s*\(?in\s+(?:[€£$]|USD|EUR|NOK|GBP|SEK|CHF|thousands?|millions?|billions?|percent)',label,re.I))
         numeric_cells=[c['text'] for c in values if NUMBER.fullmatch(c['text'])]
         header=header or bool(numeric_cells and all(re.fullmatch(r'20\d{2}',s) for s in numeric_cells)) or bool(re.search(r'民國|民国|年度|months? ended|quarter ended|year ended',label,re.I))
-        data=not header and numeric>=2 and any(re.search('[A-Za-z\u3400-\u9fff]',c['text']) for c in values)
+        data=not header and ((numeric>=2 and any(re.search('[A-Za-z\u3400-\u9fff]',c['text']) for c in values))
+                              or _data_line(original_lines.get(row['id'],'')))
         if data and row['id'] not in chosen:continue
         kept.append(row['id'])
         line=['']*width

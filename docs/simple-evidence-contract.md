@@ -7,12 +7,17 @@ correction and final check reuse this compact original view instead of expanding
 document citations into uncompressed duplicate filings. No new source search occurs
 after authorship. Frozen sources, hashes and numerical extraction are unchanged.
 
-For positional PDF tables, the author receives every selectable row ID with its
-original visible source-line address. Original page text is supplied once, with
+For positional PDF tables, the author receives every selectable row ID printed
+beside its original source line, avoiding a separate mental row-number join.
+Original page text is supplied once, with
 horizontal whitespace compacted and blank layout lines omitted. The published
 table uses the original selected lines in a scrollable preformatted block, keeping
 printed year, unit, duration and sparse-column alignment. An otherwise empty prior
-page containing a detached statement heading is retained as quoted context. No
+page containing a detached statement heading is retained as quoted context;
+another statement's integer-valued data cannot qualify as a detached heading.
+Selected excerpts omit unrelated trailing prose and unselected ambiguous data
+lines. Review checks that available requested core figures are actually present
+in the selected table rows, rather than supplied only in the narrative. No
 currency, scale, accounting period or financial amount is inferred by rendering.
 
 Known optional metric gaps use the same metric vocabulary as selections. Required
