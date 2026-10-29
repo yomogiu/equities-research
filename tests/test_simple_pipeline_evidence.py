@@ -8,6 +8,46 @@ from test_earnings_simple_runner import SimpleRunnerTests
 
 
 class SourceParity(unittest.TestCase):
+    def test_native_delivery_keeps_source_once_without_json_escaping(self):
+        from research import earnings_report_display as display
+        source='Original "quoted" values\nRevenue\t100\t90\n``` in source'
+        packet={'version':'simple-report-v1','documents':[{'source_id':'S1','start':0,'text':source}],
+                'transcript':'Complete original call.','instructions':'Return the required object.'}
+        raw=copy.deepcopy(packet);body=display.native_packet(packet)
+        self.assertIn(source.replace('\t',' '),body);self.assertEqual(body.count('Complete original call.'),1)
+        self.assertIn('````text',body);self.assertNotIn('Original \\"quoted',body)
+        self.assertEqual(packet,raw)
+
+    def test_quarterly_financial_view_keeps_legal_proceedings_and_every_table(self):
+        from research import earnings_report_display as display
+        text=('[Page 1]\nFORM 10-Q\n[Page 2]\nCover\n[Page 3]\nITEM 1. FINANCIAL STATEMENTS\n'
+              'Revenue             100          90\nCost                 60          55\nProfit               40          35\n'
+              '[Page 4]\nITEM 2. MANAGEMENT DISCUSSION\nComplete financial discussion.\n'
+              '[Page 5]\nPART II. OTHER INFORMATION\nITEM 1. LEGAL PROCEEDINGS\nMaterial pending litigation.\n'
+              '[Page 6]\nITEM 1A. RISK FACTORS\n'+('Generic risk prose. '*25000)+'\n'
+              '[Page 7]\nITEM 2. UNREGISTERED SALES\nComplete current update.\n')
+        tables=pdf.tables(text,{'document_id':'fictional','sha256':financial.digest(text.encode())})
+        allowed,omitted=display.quarterly_lines(text,tables)
+        shown='\n'.join(line for i,line in enumerate(text.splitlines(),1) if i in allowed)
+        self.assertIn('Material pending litigation.',shown);self.assertIn('Complete financial discussion.',shown)
+        self.assertIn('Revenue             100',shown);self.assertNotIn('Generic risk prose.',shown)
+        self.assertTrue(omitted)
+
+    def test_incorporated_annual_statements_keep_the_complete_appended_notes(self):
+        from research import earnings_report_display as display
+        text=('[Page 1]\nFORM 10-K\n[Page 2]\nCover\n[Page 3]\nITEM 7. Management Discussion\n'+('Financial discussion. '*400)+'\n'
+              '[Page 4]\nITEM 8. Financial Statements\nIncorporated by reference below.\nITEM 9. Changes\n'
+              '[Page 5]\n'+('Governance text. '*15000)+'\n'
+              '[Page 6]\nReport of Independent Registered Public Accounting Firm\nAudit opinion.\n'
+              '[Page 7]\nConsolidated Balance Sheets\nCash                 100          90\nDebt                  60          55\nEquity                40          35\n'
+              '[Page 8]\nNotes to Consolidated Financial Statements\n'+('Complete financial notes. '*400)+'\n'
+              '[Page 9]\nExhibit 4.1\n'+('Legal exhibit prose. '*15000)+'\n')
+        tables=pdf.tables(text,{'document_id':'fictional','sha256':financial.digest(text.encode())})
+        allowed,omitted=display.annual_lines(text,tables)
+        shown='\n'.join(line for i,line in enumerate(text.splitlines(),1) if i in allowed)
+        self.assertIn('Financial discussion.',shown);self.assertIn('Complete financial notes.',shown)
+        self.assertIn('Cash                 100',shown);self.assertNotIn('Legal exhibit prose.',shown)
+        self.assertNotIn('Governance text.',shown);self.assertTrue(omitted)
     def test_scope_is_reader_facing_and_retains_specific_missing_source(self):
         notes=['Freshly collected FY2040-Q2 earnings_call. Never infer approval.',
                'PDF financial tables are verbatim positional extraction. Prefer selected original rows.',
@@ -185,6 +225,26 @@ class SourceParity(unittest.TestCase):
 
 
 class LiveContractRegressions(SimpleRunnerTests):
+    def test_verified_completed_author_gets_a_new_independent_review_without_author_replay(self):
+        first=self.run_one();original_hash=simple.storage.sha(self.job/'author.json')
+        seed={'path':str(self.job/'author.json'),'sha256':original_hash,'case_sha256':simple.storage.sha(self.case),
+              'session_id':first['attempts'][0]['session_id']}
+        spec={**self.spec,'completed_author':seed,'budget_tokens':1_000_000}
+        result=simple.run_company(self.root/'continued',spec,self.prepare,self.publish,invoke=self.invoke)
+        self.assertEqual(result['status'],'published',result.get('reason'))
+        self.assertEqual([a['role'] for a in result['attempts']],['review'])
+        self.assertEqual(result['tokens_used'],100)
+        self.assertEqual(simple.storage.sha(self.job/'author.json'),original_hash)
+        self.assertNotEqual(result['attempts'][0]['session_id'],seed['session_id'])
+
+    def test_completed_author_cannot_be_moved_to_a_different_source_case(self):
+        first=self.run_one();calls=len(self.calls)
+        seed={'path':str(self.job/'author.json'),'sha256':simple.storage.sha(self.job/'author.json'),
+              'case_sha256':'0'*64,'session_id':first['attempts'][0]['session_id']}
+        result=simple.run_company(self.root/'rejected',{**self.spec,'completed_author':seed},self.prepare,self.publish,invoke=self.invoke)
+        self.assertEqual(result['status'],'failed');self.assertIn('source case changed',result['reason'])
+        self.assertEqual(len(self.calls),calls);self.assertEqual(result['tokens_used'],0)
+
     def test_financial_correction_cannot_introduce_unrequested_qa_rewrite(self):
         self.finding='blocking';invoke=self.invoke
         def output(*args,**kwargs):

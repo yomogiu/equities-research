@@ -6,6 +6,11 @@ present even when an index repeats Item 8 near the end of a filing. Large SEC
 annual views retain every captured table page and the complete substantive Item 7
 and Item 8 sections; other annual pages may be omitted explicitly. A substantive
 Item 7 -> Item 8 -> Item 9 chain is required; unrecognized layouts retain full text.
+An incorporated-by-reference layout instead requires an appended audit heading,
+consolidated balance sheets and an explicit next-exhibit page boundary. Large
+quarterly views can omit a substantive Item 1A risk section while retaining the
+complete financial sections, legal proceedings and every captured table. These
+boundaries reject table-of-contents entries and always preserve complete originals.
 This is an earnings update, not a full annual risk review. Complete originals and
 all extracted financial cells remain frozen. A
 correction and final check reuse this compact original view instead of expanding
@@ -27,6 +32,9 @@ Selected excerpts omit unrelated trailing prose and unselected ambiguous data
 lines. Review checks that available requested core figures are actually present
 in the selected table rows, rather than supplied only in the narrative. No
 currency, scale, accounting period or financial amount is inferred by rendering.
+The model receives source text in fenced blocks rather than JSON strings nested
+inside another serialized message. Task metadata remains structured and bound to
+the same artifact; source characters are unchanged apart from layout whitespace.
 
 Known optional metric gaps use the same metric vocabulary as selections. Required
 coverage, unknown-ID rejection, source citations and selected-versus-missing checks
@@ -73,5 +81,10 @@ All live tests remain new immutable runs. A historical failure is never edited o
 re-entered. New explicitly authorized retests bind historical outcome and cost
 receipts, retain the standard company ceiling, independent review, one correction
 and exact private publication, and do not reset the Terra campaign ledger.
+For a proven preflight stop before authoring or review was dispatched, a newly
+authorized component test may reuse authenticated completed stages against their
+identical source case. It never replays those paid stages. A completed author is
+hash-bound to its raw response and source case; its independent review must use a
+new session. Every earlier cost reduces the remaining original test allowance.
 Recurring automation remains paused during validation and after successful tests
 until separately authorized.

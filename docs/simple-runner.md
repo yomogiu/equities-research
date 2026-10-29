@@ -7,6 +7,7 @@ headings cannot truncate MD&A. Explicitly bounded large annual views omit other
 pages while retaining the complete original archive. PDF rows have short bound
 selection IDs printed beside their values and publish in their original alignment;
 numerical columns are never repositioned heuristically.
+Structured metadata and plainly fenced source text avoid nested JSON escaping.
 See `docs/simple-evidence-contract.md` for the current contract.
 
 `research.earnings_simple_runner` is the default execution path for new reports. It does not import

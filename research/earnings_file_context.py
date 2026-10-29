@@ -198,6 +198,9 @@ class Evidence:
         value=self.artifacts.get('single_report_packet')
         require(isinstance(value,dict) and value.get('version')==metadata.get('single_report_version'), 'Bound report packet required')
         body=json.dumps(value,ensure_ascii=False,separators=(',',':'))
+        if metadata.get('single_report_version')=='simple-report-v1':
+            from .earnings_report_display import native_packet
+            body=native_packet(value)
         maximum=1050000 if metadata.get('single_report_version')=='simple-report-v1' else 900000
         require(len(body.encode())<=maximum,'Report packet exceeds context bound')
         return body

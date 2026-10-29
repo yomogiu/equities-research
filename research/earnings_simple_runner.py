@@ -47,7 +47,7 @@ def packet(bundle):
         if rows and all(set(row)==set(rows[0]) for row in rows):
             columns=list(rows[0])
             value['transcript_index'][name]={'columns':columns,'rows':[[row[k] for k in columns] for row in rows]}
-    value['source_policy']='All extracted facts and captured tables; complete call, financial statements, notes and annual MD&A. Large SEC annual model views may omit other pages explicitly while retaining every captured table; this is an earnings update, not a full annual risk review. Complete originals remain frozen. Author and independent reviewer receive the same document view. Missingness is explicit, not evidence of issuer nondisclosure.'
+    value['source_policy']='All extracted facts and captured tables; complete call, financial statements, notes and MD&A. Large SEC report views may omit other pages explicitly while retaining every captured table; this is an earnings update, not a full risk review. Complete originals remain frozen. Author and independent reviewer receive the same financial document view. Missingness is explicit, not evidence of issuer nondisclosure.'
     from . import earnings_report_display
     return earnings_report_display.compact(value,bundle)
 
@@ -256,6 +256,15 @@ def known_sources(payload,bundle):
 def model_call(root, state, bundle, role, payload, invoke, checkpoint):
     """One immutable paid attempt. Any uncertain execution ends this company."""
     payload={**payload,'version':VERSION}
+    if role in ('review','check'):
+        # Rendered candidate values and the reproduced financial hash replace
+        # duplicate selector JSON. Keep only chunk addresses actually cited;
+        # complete document bodies and all canonical source IDs remain present.
+        payload=deepcopy(payload)
+        cited=content.cited(payload)
+        cited.update(re.findall(r'\[\^([A-Za-z0-9_-]+)\]',payload.get('candidate','')))
+        payload['document_scopes']=[r for r in payload.get('document_scopes',[]) if r[0] in cited]
+        payload.pop('financial_selection',None)
     number=len(state['attempts']);directory=root/'roles'/str(number)
     if role=='source_verification':
         from . import earnings_source_verification
@@ -283,7 +292,9 @@ def model_call(root, state, bundle, role, payload, invoke, checkpoint):
         state['tokens_used']+=tokens;attempt.update(status='completed',tokens=tokens,session_id=session['id'])
         checkpoint()  # Charge before interpreting or validating the response.
         content.require(session['model_turns']==1 and session['tool_calls']==0,'One tool-free model output required')
-        content.require(session['id'] not in [a.get('session_id') for a in state['attempts'][:-1]],'Fresh independent sessions required')
+        prior_sessions=[a.get('session_id') for a in state['attempts'][:-1]]
+        if state.get('completed_author'):prior_sessions.append(state['completed_author']['session_id'])
+        content.require(session['id'] not in prior_sessions,'Fresh independent sessions required')
         value=response['content'];save(root/f'{role}.json',value)
         return value
     except Exception:
@@ -345,7 +356,15 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
         if guidance is not None:
             content.require(isinstance(guidance,str) and 0<len(guidance)<=6000,'Bounded recovery guidance required')
             author_instructions+='\nPrior recovery diagnosis and review concerns follow. Verify them against the supplied originals; they are checks to resolve, never new financial evidence or report prose. Independent review receives no such guidance.\n'+guidance
-        value=model_call(root,state,bundle,'author',{**original,**shared,'instructions':author_instructions},invoke,checkpoint)
+        completed=spec.get('completed_author')
+        if completed:
+            content.require(set(completed)=={'path','sha256','case_sha256','session_id'},'Exact verified completed-author binding required')
+            content.require(storage.sha(completed['path'])==completed['sha256'] and storage.sha(case)==completed['case_sha256'],
+                            'Completed author or its exact source case changed')
+            value=read(completed['path']);save(root/'author.json',value)
+            state['completed_author']=completed;checkpoint()
+        else:
+            value=model_call(root,state,bundle,'author',{**original,**shared,'instructions':author_instructions},invoke,checkpoint)
         value=resolved_output(root,bundle,'author',value,original_known)
         validation_error=None
         try:candidate,financial=compile_report(root,bundle,config,value,0,known=original_known)

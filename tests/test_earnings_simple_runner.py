@@ -19,7 +19,7 @@ class SimpleRunnerTests(unittest.TestCase):
     def invoke(self,directory,prompt,model,effort,bindings,index,**options):
         role='review' if bindings['role']=='single_report_review' else 'correction' if bindings['revision'] else 'author'
         self.calls.append(role);packet=context.Evidence(index,self.root/'unused.jsonl',_replay=True).artifacts['single_report_packet']
-        self.assertTrue(prompt.endswith(json.dumps(packet,ensure_ascii=False,separators=(',',':'))))
+        self.assertTrue(prompt.endswith(context.Evidence(index,self.root/'unused.jsonl',_replay=True)._report_packet()))
         self.assertTrue(options['direct_input']);self.assertEqual(options['max_tool_calls'],1)
         b=simple.evidence.load_bundle(directory.parents[1]/'sources/manifest.json');exchange=b['transcript_index']['exchanges'][0]['id'];refs=[exchange]
         if role=='author':
