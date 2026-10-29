@@ -263,3 +263,9 @@ canonical call-citation bindings. Report-only packets explicitly enumerate avail
 document scopes and prohibit transcript placeholders when no transcript exists.
 Share-basis disclosures distinguish basic/unspecified EPS and closing shares from
 diluted EPS and weighted-average diluted shares.
+
+PDF continuations quote the last source-bound statement header from the preceding
+page, including exact dates and units, when the current page starts with continued
+data. New current-page statements prevent stale header inheritance. Selected source
+qualifications are rendered in the report's source/calculation notes, not left only
+in hidden selector metadata. Neither path infers values or changes arithmetic.

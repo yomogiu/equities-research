@@ -67,6 +67,35 @@ class GeneralRepairs(unittest.TestCase):
         self.assertEqual(reports.qualify(text,{'issuer_name':'FICTIONAL DEVICES'},event)['language'],'English')
         with self.assertRaisesRegex(ValueError,'heading'):
             reports.qualify(text,{'issuer_name':'FICTIONAL DEVICES'},{**event,'end':'2040-09-30'})
+    def test_split_page_headers_are_exact_and_new_statements_do_not_inherit(self):
+        from research import earnings_pdf_tables as pdf
+        previous='[Page 1]\nFICTIONAL CONSOLIDATED BALANCE SHEETS\n(In millions)\nDecember 31, 2040 and 2039\nCash                  40           30\nReceivables           12           10\n'
+        current='[Page 2]\nLiabilities           20           15\nDebt                  10            8\nEquity                22           17\n'
+        text=previous+current
+        rows=pdf.continuation_header(text,9,len(previous),len(text))
+        self.assertEqual(len(rows),1);self.assertIn('December 31, 2040',rows[0]['text']);self.assertNotIn('Cash ',rows[0]['text'])
+        self.assertEqual(rows[0]['text'],text[rows[0]['start']:rows[0]['end']])
+        self.assertEqual(rows[0]['raw_span_sha256'],hashlib.sha256(rows[0]['text'].encode()).hexdigest())
+        tables=pdf.tables(text,SOURCE);second=next(t for t in tables if t['ordinal']==2)
+        rendered='\n'.join(pdf.render({**second,'selected_row_ids':['R1','R2','R3']}))
+        self.assertIn('December 31, 2040',rendered);self.assertIn('(In millions)',rendered)
+        fresh='[Page 2]\nFICTIONAL CONSOLIDATED INCOME STATEMENTS\n(In thousands)\nYear ended 2040\nRevenue           100           90\nCosts              60           55\n'
+        self.assertEqual(pdf.continuation_header(previous+fresh,9,len(previous),len(previous+fresh)),[])
+        unrelated='[Page 1]\nShares issued (in thousands)           100           90\n'
+        self.assertEqual(pdf.continuation_header(unrelated+current,9,len(unrelated),len(unrelated+current)),[])
+        undated='[Page 1]\n(In thousands)\nCurrency             Rate             Value\nUSD                   30                100\n'
+        self.assertEqual(pdf.continuation_header(undated+current,9,len(undated),len(undated+current)),[])
+        orphan=previous+'FICTIONAL Reconciliation of adjusted measures\n(In millions except per-share data)   Three Months Ended August 31,\n'
+        rows=pdf.continuation_header(orphan+current,9,len(orphan),len(orphan+current))
+        self.assertEqual(len(rows),1);self.assertIn('Three Months Ended',rows[0]['text']);self.assertNotIn('BALANCE SHEETS',rows[0]['text'])
+
+    def test_selected_source_notes_are_rendered_without_numeric_reinterpretation(self):
+        from research import earnings_financial_analysis_report as finance
+        value={'financial_selection':{'rows':[],'notes':[{'text':'Fictional balances are in millions as at June 30.','citations':['document-source-fake']}]}}
+        with __import__('unittest.mock',fromlist=['patch']).patch.object(finance,'front_rows',return_value={'cash':[],'earnings':[],'demand':[],'outlook':[]}):
+            notes=finance.notes(value)
+        self.assertIn('- Fictional balances are in millions as at June 30. [^document-source-fake]',notes)
+
     def test_report_only_packet_does_not_advertise_a_transcript_scope(self):
         known={'D001','F001','document-source-fictional'}
         self.assertEqual(runner.source_availability(known),{'transcript_present':False,'document_citation_ids':['document-source-fictional'],'call_citation_id':None})

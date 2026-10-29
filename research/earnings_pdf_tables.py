@@ -13,6 +13,41 @@ def _data_line(body):
             and not all(re.fullmatch(r'20\d{2}',p) for p in numbers))
 
 
+_UNITS=re.compile(r"(?im)^[ \t]*(?:\(\s*in\s+(?:thousands?|millions?|billions?)|(?:amounts?|units?)\s+in\s+(?:thousands?|millions?|billions?))[^\n]*$")
+_TITLE=re.compile(r"(?im)^[^\n]{0,90}(?:consolidated|condensed|reconciliation|balance sheets?|statements? of)[^\n]{0,100}$")
+
+
+def continuation_header(text,previous_start,page_start,page_end):
+    """Quote the last preceding statement header for a split-page continuation.
+
+    No period, scale or financial value is inferred. Only an exact bounded span
+    between an original unit heading and its first numeric data row is carried.
+    A new statement heading before current-page data prevents stale inheritance.
+    """
+    previous=text[previous_start:page_start]
+    units=list(_UNITS.finditer(previous))
+    if not units:return []
+    unit=units[-1];start=unit.start()
+    titles=list(_TITLE.finditer(previous[max(0,start-600):start]))
+    if titles:start=max(0,start-600)+titles[-1].start()
+    after=previous[unit.end():]
+    data=next((line for line in re.finditer(r'[^\n]+',after) if _data_line(line.group())),None)
+    stop=unit.end()+data.start() if data else len(previous)
+    if stop-start>1800:return []
+    # A scale mention alone cannot identify the period of a continued table.
+    header=previous[start:stop]
+    if not re.search(r'months? ended|quarters? ended|years? ended|(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b',header,re.I):return []
+    current=text[page_start:page_end]
+    first=next((line for line in re.finditer(r'[^\n]+',current) if _data_line(line.group())),None)
+    if first is None:return []
+    before=current[:first.start()]
+    if data and (_UNITS.search(before) or _TITLE.search(before)):return []
+    start+=previous_start;stop+=previous_start
+    raw=text[start:stop]
+    return [{'text':raw,'start':start,'end':stop,
+             'raw_span_sha256':financial.digest(raw.encode()),'kind':'preceding_statement_header'}]
+
+
 def tables(text, source):
     """Capture page rows with original offsets and stable horizontal columns.
 
@@ -69,11 +104,12 @@ def tables(text, source):
         if ordinal>1:
             previous=pages[ordinal-2]
             previous_text=text[previous.end():marker.start()]
+            preceding=continuation_header(text,previous.end(),marker.start(),end)
             # A PDF sometimes places the statement title/units on an otherwise
             # empty page immediately before its numbers. Preserve that heading
             # as quoted context, never infer a currency or scale from it.
             heading=re.search(r'statements?|balance sheets?|cash flows?|\(?in (?:thousands?|millions?|billions?)|單位|单位|資產負債表|资产负债表|現金流量表|现金流量表',previous_text,re.I)
-            if len(previous_text)<3500 and heading and not any(_data_line(line) for line in previous_text.splitlines()):
+            if not preceding and len(previous_text)<3500 and heading and not any(_data_line(line) for line in previous_text.splitlines()):
                 preceding=[{'text':previous_text.strip(),'start':previous.end(),'end':marker.start(),
                             'raw_span_sha256':financial.digest(previous_text.encode())}]
         result.append({'id':'T-'+storage.digest([source['document_id'],source['sha256'],marker.start()])[:20],
