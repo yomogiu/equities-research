@@ -172,6 +172,9 @@ def resolved_output(root, bundle, role, value, known):
         from . import earnings_report_support
         value,changes=earnings_report_support.synchronize(value)
         save(root/(role+'-support-binding.json'),{'changes':changes})
+        from . import earnings_pdf_valuation
+        value,changes=earnings_pdf_valuation.complete(value,bundle)
+        save(root/(role+'-valuation-completion.json'),{'changes':changes})
     resolved,changes=resolve_citations(value,bundle,known)
     if role in ('author','correction') and isinstance(resolved,dict) and 'financial_selection' in resolved:
         try:
@@ -265,6 +268,9 @@ def model_call(root, state, bundle, role, payload, invoke, checkpoint):
         cited.update(re.findall(r'\[\^([A-Za-z0-9_-]+)\]',payload.get('candidate','')))
         payload['document_scopes']=[r for r in payload.get('document_scopes',[]) if r[0] in cited]
         payload.pop('financial_selection',None)
+        if role=='check' and payload.get('deterministic_valuation_repair'):
+            payload.pop('transcript',None);payload.pop('transcript_index',None)
+            payload['instructions']+='\nThis is a deterministic valuation-only repair. All other author content is unchanged from the bound initial independent review. The original dated quote is supplied verbatim in valuation_inventory; verify it with the annual EPS, share class, currency, accounting basis and Decimal multiple against the original financial report. Use the prior review for unchanged call-based claims. Do not waive any unresolved material error.'
     number=len(state['attempts']);directory=root/'roles'/str(number)
     if role=='source_verification':
         from . import earnings_source_verification
@@ -294,6 +300,7 @@ def model_call(root, state, bundle, role, payload, invoke, checkpoint):
         content.require(session['model_turns']==1 and session['tool_calls']==0,'One tool-free model output required')
         prior_sessions=[a.get('session_id') for a in state['attempts'][:-1]]
         if state.get('completed_author'):prior_sessions.append(state['completed_author']['session_id'])
+        if state.get('completed_review'):prior_sessions.append(state['completed_review']['session_id'])
         content.require(session['id'] not in prior_sessions,'Fresh independent sessions required')
         value=response['content'];save(root/f'{role}.json',value)
         return value
@@ -373,9 +380,17 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
         if validation_error is None:
             state['stage']='review';checkpoint()
             review_input={k:v for k,v in original.items() if k!='financial_inventory'}
-            review=model_call(root,state,bundle,'review',{**review_input,**shared,'instructions':review_requirements(),
-                'candidate':candidate,'financial_verification':{'status':'reproduced','financial_sha256':storage.digest(financial)},
-                'financial_selection':value['financial_selection']},invoke,checkpoint)
+            completed=spec.get('completed_review')
+            if completed:
+                content.require(spec.get('completed_author') and set(completed)=={'path','sha256','case_sha256','session_id','author_sha256'},'Exact completed-review binding required')
+                content.require(storage.sha(completed['path'])==completed['sha256'] and storage.sha(case)==completed['case_sha256']
+                    and completed['author_sha256']==spec['completed_author']['sha256'],'Completed review or its original draft changed')
+                review=read(completed['path']);content.require(review['verdict']=='revise','Only a pending material correction may reuse a completed review')
+                save(root/'review.json',review);state['completed_review']=completed;checkpoint()
+            else:
+                review=model_call(root,state,bundle,'review',{**review_input,**shared,'instructions':review_requirements(),
+                    'candidate':candidate,'financial_verification':{'status':'reproduced','financial_sha256':storage.digest(financial)},
+                    'financial_selection':value['financial_selection']},invoke,checkpoint)
             review=resolved_output(root,bundle,'review',review,known_sources(review_input,bundle))
             validate_review(review,known_sources(review_input,bundle))
         if validation_error is not None or review['verdict']=='revise':
@@ -385,8 +400,17 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
             else:
                 needs_tables=any(f['severity']=='blocking' and f['location']=='financial_tables' for f in review['findings'])
                 correction_input=revision_packet(bundle,original,value,review,needs_tables);fault={'review':review}
-            corrected=model_call(root,state,bundle,'correction',{**correction_input,**shared,**fault,'current_output':value,
-                'instructions':author_instructions+'\nCORRECTION: This is the sole correction allowance. Return the complete two-key output, correcting blocking findings or the compiler error. Make only changes necessary to resolve the blocking findings. Preserve unrelated title, prose, Q&A and financial selections. A finding in a narrative section may require a source-backed financial note or basis clarification; reviewer locations are navigation labels, not edit permissions. Financial selections may change only against supplied original facts and tables. Do not change sources, invent numbers, or act on advisory preferences. Keep the report-support excerpts synchronized.'},invoke,checkpoint)
+            compiler_valuation=bool(spec.get('completed_review') and validation_error is None
+                and read(root/'author-valuation-completion.json')['changes']
+                and all(f['location']=='valuation' for f in review['findings'] if f['severity']=='blocking')
+                and review['criteria']['qa_fidelity']['status'] in ('pass','warning')
+                and all(q['status']!='fail' for name,q in review['questions'].items() if name!='valuation'))
+            if compiler_valuation:
+                corrected=deepcopy(value);save(root/'correction.json',corrected)
+                save(root/'correction-origin.json',{'kind':'deterministic_valuation_completion','source_changes':read(root/'author-valuation-completion.json')['changes']})
+            else:
+                corrected=model_call(root,state,bundle,'correction',{**correction_input,**shared,**fault,'current_output':value,
+                    'instructions':author_instructions+'\nCORRECTION: This is the sole correction allowance. Return the complete two-key output, correcting blocking findings or the compiler error. Make only changes necessary to resolve the blocking findings. Preserve unrelated title, prose, Q&A and financial selections. A finding in a narrative section may require a source-backed financial note or basis clarification; reviewer locations are navigation labels, not edit permissions. Financial selections may change only against supplied original facts and tables. Do not change sources, invent numbers, or act on advisory preferences. Keep the report-support excerpts synchronized.'},invoke,checkpoint)
             # Corrections can retain initially supplied sources even when their
             # text is omitted from this smaller repair packet. Changed claims
             # receive complete original evidence in the independent final check.
@@ -401,6 +425,8 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
                          revision_packet(bundle,original,corrected,review,before=value))
             final=model_call(root,state,bundle,'check',{**check_input,**shared,'instructions':review_requirements(),
                 'candidate':candidate,'prior_review':review,'changes':changed_claims(value,corrected),'financial_selection':corrected['financial_selection'],
+                **({'deterministic_valuation_repair':{'source_changes':read(root/'author-valuation-completion.json')['changes'],
+                    'original_author_sha256':spec['completed_author']['sha256'],'original_review_sha256':spec['completed_review']['sha256']}} if compiler_valuation else {}),
                 'financial_verification':{'status':'reproduced','financial_sha256':storage.digest(financial)}},invoke,checkpoint)
             check_known=known_sources(check_input,bundle)|content.cited(review or {})
             final=resolved_output(root,bundle,'check',final,check_known)

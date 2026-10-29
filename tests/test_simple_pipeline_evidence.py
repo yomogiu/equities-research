@@ -225,6 +225,35 @@ class SourceParity(unittest.TestCase):
 
 
 class LiveContractRegressions(SimpleRunnerTests):
+    def test_deterministic_completion_still_requires_a_passing_fresh_check(self):
+        first=self.run_one();review=simple.read(self.job/'review.json')
+        review['verdict']='revise';review['findings']=[{'severity':'blocking','location':'valuation','problem':'Fictional missing indexing input.','fix':'Use the supplied original input.','citations':['D001']}]
+        seed_review=self.root/'seed-review.json';simple.save(seed_review,review)
+        author={'path':str(self.job/'author.json'),'sha256':simple.storage.sha(self.job/'author.json'),
+                'case_sha256':simple.storage.sha(self.case),'session_id':first['attempts'][0]['session_id']}
+        checked={'path':str(seed_review),'sha256':simple.storage.sha(seed_review),'case_sha256':simple.storage.sha(self.case),
+                 'session_id':first['attempts'][1]['session_id'],'author_sha256':author['sha256']}
+        def completed(value,bundle):
+            value=copy.deepcopy(value);value['analysis']['report_support']['valuation']['gap']='Fictional deterministic source repair.'
+            return value,[{'rule':'fictional-qualified-input'}]
+        self.finding='blocking';self.repeated=True
+        with patch('research.earnings_pdf_valuation.complete',side_effect=completed):
+            result=simple.run_company(self.root/'checked',{**self.spec,'completed_author':author,'completed_review':checked},self.prepare,self.publish,invoke=self.invoke)
+        self.assertEqual(result['status'],'failed');self.assertIn('Material errors remain',result['reason'])
+        self.assertEqual([a['role'] for a in result['attempts']],['check'])
+        self.assertEqual(result['tokens_used'],100)
+        self.assertFalse((self.root/'checked/report.html').exists())
+
+    def test_completed_passing_review_cannot_be_reused_for_a_changed_candidate(self):
+        first=self.run_one();author={'path':str(self.job/'author.json'),'sha256':simple.storage.sha(self.job/'author.json'),
+            'case_sha256':simple.storage.sha(self.case),'session_id':first['attempts'][0]['session_id']}
+        review={'path':str(self.job/'review.json'),'sha256':simple.storage.sha(self.job/'review.json'),
+            'case_sha256':simple.storage.sha(self.case),'session_id':first['attempts'][1]['session_id'],'author_sha256':author['sha256']}
+        calls=len(self.calls)
+        result=simple.run_company(self.root/'rejected-pass',{**self.spec,'completed_author':author,'completed_review':review},self.prepare,self.publish,invoke=self.invoke)
+        self.assertEqual(result['status'],'failed');self.assertIn('pending material correction',result['reason'])
+        self.assertEqual(len(self.calls),calls)
+
     def test_verified_completed_author_gets_a_new_independent_review_without_author_replay(self):
         first=self.run_one();original_hash=simple.storage.sha(self.job/'author.json')
         seed={'path':str(self.job/'author.json'),'sha256':original_hash,'case_sha256':simple.storage.sha(self.case),

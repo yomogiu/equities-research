@@ -96,15 +96,31 @@ invent a fact, or waive source-table review. Partially tagged packets retain exp
 per-metric selection and gap checks. Compiler errors enumerate missing roles.
 
 A new explicitly scoped development retest may reduce its ceiling by exact prior failed
-usage. It cannot increase the fixed ceiling, mutate the failed job, reuse paid outputs,
-or reset costs. The private manifest binds prior terminal receipts and the remaining
-allowance; the retest still starts with fresh sources and its own one-correction limit.
+usage. It cannot increase the fixed ceiling, mutate the failed job or reset costs.
+The private manifest binds prior terminal receipts and the remaining allowance.
+Ordinary retests collect fresh sources. A separately authorized component test after
+a proven zero-dispatch context preflight stop may bind authenticated completed sources,
+author and a pending revise review to the identical source case. Completed paid stages
+are never replayed. A passing review cannot authorize a changed candidate; every repair
+requires a fresh independent final check, within the original remaining allowance.
 
 Empty explicit price and annual-EPS inventories also receive deterministic gap labels;
 this never supplies a valuation input or overrides an existing qualified value. PDF
 unit/year/date header rows are retained even when authors select only metric rows.
 Source-backed narrative FCF arithmetic remains required when reported inputs permit it,
 with cash-capex/software/development conventions stated separately from normalization.
+
+Original audited USD Form 10-K PDF statements can also supply annual diluted EPS to
+the supplemental valuation inventory. Qualification requires explicit annual headings,
+comparative columns, currency, US GAAP basis and the quoted security's exact cover
+ticker and share class. ADRs, ambiguous columns and unqualified inputs stay absent.
+No quarterly EPS is annualized. Only an empty valuation slot with one eligible dated
+quote and one uniquely qualified latest annual input is filled by code; Decimal
+calculates the multiple and source spans remain inspectable. Other author content is
+unchanged. For a bound prior review whose sole blockers concern that valuation slot,
+code may perform the repair and submit the full candidate and original financial and
+quote evidence to a fresh independent check. Unchanged call claims retain their bound
+initial review; unresolved material findings still prohibit publication.
 
 Report recognition uses opening identity headings or affirmative legal identity
 statements in the accounting notes, with exact original text spans and hashes.

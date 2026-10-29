@@ -68,13 +68,17 @@ def build(bundle):
     sources=bundle['manifest']['sources']
     inputs=[s for s in sources if (s['kind']=='filing' and s['representation']=='raw') or (s['kind']=='transcript' and s['representation']=='text')]
     # Recheck bytes even when the parsed result is cached in this process.
-    for s in inputs:
+    text_sources=[s for s in sources if s['kind']=='filing' and s['representation']=='text']
+    for s in [*inputs,*text_sources]:
         if storage.sha(s['path'])!=s['sha256']:raise ValueError('Valuation source changed')
-    key=storage.digest(inputs)
+    key=storage.digest([*inputs,*text_sources])
     if key in _CACHE:return deepcopy(_CACHE[key])
-    prices=[];earnings=[]
+    prices=[];earnings=[];pdf_sources=[]
     for s in inputs:
-        try:raw=Path(s['path']).read_bytes().decode('utf-8')
+        data=Path(s['path']).read_bytes()
+        if s['kind']=='filing' and data.startswith(b'%PDF'):
+            pdf_sources.append(s);continue
+        try:raw=data.decode('utf-8')
         except UnicodeDecodeError:continue
         if s['kind']=='transcript':
             url=urlsplit(s.get('url',''));ticker=re.fullmatch(r'/stocks/([^/]+)/transcripts/[^/]+/?',url.path)
@@ -120,6 +124,12 @@ def build(bundle):
             if k not in grouped:grouped[k]={**row,'id':'E-'+k[:20],'observations':[]}
             grouped[k]['observations'].append({'id':obs['observation_id'],'support':obs['support']})
         earnings.extend(grouped.values())
+    from . import earnings_pdf_valuation
+    for source in pdf_sources:
+        matching=[s for s in text_sources if s['document_id']==source['document_id']]
+        if len(matching)==1:
+            text_source=matching[0]
+            earnings.extend(earnings_pdf_valuation.annual_eps(Path(text_source['path']).read_bytes().decode('utf-8'),text_source,prices))
     result={'prices':prices,'annual_eps':earnings,'scope':'Reparsed frozen filings and recognized dated source headers. Core financial facts are unchanged. Selection and interpretation remain independently reviewed.'}
     _CACHE[key]=result
     return deepcopy(result)
