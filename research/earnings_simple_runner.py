@@ -47,7 +47,7 @@ def packet(bundle):
         if rows and all(set(row)==set(rows[0]) for row in rows):
             columns=list(rows[0])
             value['transcript_index'][name]={'columns':columns,'rows':[[row[k] for k in columns] for row in rows]}
-    value['source_policy']='All extracted facts and captured tables; complete captured filing, release/presentation and call, including annual MD&A, financial statements and notes. Author and independent reviewer receive the same original document view. Missingness is explicit, not evidence of issuer nondisclosure.'
+    value['source_policy']='All extracted facts and captured tables; complete call, financial statements, notes and annual MD&A. Large SEC annual model views may omit other pages explicitly while retaining every captured table; this is an earnings update, not a full annual risk review. Complete originals remain frozen. Author and independent reviewer receive the same document view. Missingness is explicit, not evidence of issuer nondisclosure.'
     from . import earnings_report_display
     return earnings_report_display.compact(value,bundle)
 
@@ -90,6 +90,8 @@ Verdict revise if and only if a blocking finding exists. Every failed check requ
 def resolve_citations(value, bundle, known):
     """Resolve exact bound table/row/full-document IDs; never change facts or prose."""
     tables={t['id']:t for t in bundle['packet_inventory']['tables'] if t['source_id'] in known}
+    from .earnings_report_display import pdf_names
+    table_aliases={alias:tables[identifier] for identifier,alias in pdf_names(bundle).items() if identifier in tables}
     document_ids={}
     for source in bundle['manifest']['sources']:
         if source['kind'] in ('transcript','source_gap') or source['representation']!='text':continue
@@ -107,6 +109,10 @@ def resolve_citations(value, bundle, known):
             identifier=table['id']+'/'+row['id']
             aliases[identifier]={'alias':identifier,'table_id':table['id'],'row_id':row['id'],
                 'source_id':table['source_id'],'raw_span_sha256':table['raw_span_sha256']}
+    for alias,table in table_aliases.items():
+        aliases[alias]={'alias':alias,'table_id':table['id'],'source_id':table['source_id'],'raw_span_sha256':table['raw_span_sha256']}
+        for row in table['rows']:
+            aliases[alias+'/'+row['id']]={**aliases[alias],'alias':alias+'/'+row['id'],'row_id':row['id']}
     def hash_reference(identifier):
         # Resolve a literal >=64-bit prefix or one omitted interior hex span,
         # with >=6 original hex characters on both ends. No character changes,
@@ -151,6 +157,13 @@ def resolve_citations(value, bundle, known):
         elif isinstance(node,list):
             for index,child in enumerate(node):visit(child,path+'/'+str(index))
     visit(resolved)
+    selection=resolved.get('financial_selection') if isinstance(resolved,dict) else None
+    if isinstance(selection,dict) and isinstance(selection.get('reported_tables'),list):
+        for index,pick in enumerate(selection['reported_tables']):
+            alias=pick.get('table_id') if isinstance(pick,dict) else None
+            if isinstance(alias,str) and alias in table_aliases:
+                table=table_aliases[alias];pick['table_id']=table['id']
+                changes.append({'path':'/financial_selection/reported_tables/'+str(index)+'/table_id',**aliases[alias]})
     return resolved,changes
 
 
@@ -199,6 +212,22 @@ def changed_claims(before, after):
     return {**{key:changed_claims(before.get(key),value) for key,value in after.items()
                if key not in before or before[key]!=value},
             **{key:{'removed':before[key]} for key in before.keys()-after.keys()}}
+
+
+def preserve_reviewed_qa(before,after,review,bundle):
+    """A financial repair cannot silently rewrite independently passed Q&A."""
+    if not review or not isinstance(after,dict) or not isinstance(after.get('analysis'),dict):return after,[]
+    findings=[f for f in review['findings'] if f['severity']=='blocking']
+    citations=content.cited(findings)
+    if any(f['location']=='qa' for f in findings) or 'transcript-source' in citations:return after,[]
+    if review.get('criteria',{}).get('qa_fidelity',{}).get('status') not in ('pass','warning'):return after,[]
+    exchanges=bundle['transcript_index']['exchanges']
+    if any(x['id'] in citations or set(x.get('turn_ids',[]))&citations for x in exchanges):return after,[]
+    original=before['analysis']['qa']
+    if after['analysis'].get('qa')==original:return after,[]
+    result=deepcopy(after);result['analysis']['qa']=deepcopy(original)
+    return result,[{'path':'/analysis/qa','rule':'preserve-independent-review-no-blocking-qa-finding-v1',
+                   'before_sha256':storage.digest(original),'ignored_rewrite_sha256':storage.digest(after['analysis'].get('qa'))}]
 
 
 def revision_packet(bundle, original, value, review, include_inventory=False, before=None):
@@ -343,6 +372,8 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
             # text is omitted from this smaller repair packet. Changed claims
             # receive complete original evidence in the independent final check.
             correction_known=known_sources(correction_input,bundle)|original_known
+            corrected,preserved=preserve_reviewed_qa(value,corrected,review,bundle)
+            save(root/'correction-preservation.json',{'changes':preserved})
             corrected=resolved_output(root,bundle,'correction',corrected,correction_known)
             candidate,financial=compile_report(root,bundle,config,corrected,1,known=correction_known)
             state['stage']='check';checkpoint()

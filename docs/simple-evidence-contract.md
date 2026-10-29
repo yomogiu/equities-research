@@ -1,14 +1,22 @@
 # Common report evidence
 
-The finite runner supplies every captured document body and the complete call to
-both author and independent reviewer. Annual MD&A, financial statements and notes
-remain present even when an index repeats Item 8 near the end of a filing. A
+The finite runner supplies the same source view and complete call to both author
+and independent reviewer. Annual MD&A, financial statements and notes remain
+present even when an index repeats Item 8 near the end of a filing. Large SEC
+annual views retain every captured table page and the complete substantive Item 7
+and Item 8 sections; other annual pages may be omitted explicitly. A substantive
+Item 7 -> Item 8 -> Item 9 chain is required; unrecognized layouts retain full text.
+This is an earnings update, not a full annual risk review. Complete originals and
+all extracted financial cells remain frozen. A
 correction and final check reuse this compact original view instead of expanding
 document citations into uncompressed duplicate filings. No new source search occurs
 after authorship. Frozen sources, hashes and numerical extraction are unchanged.
 
 For positional PDF tables, the author receives every selectable row ID printed
 beside its original source line, avoiding a separate mental row-number join.
+Short P-number table aliases bind exactly to the frozen original table IDs. They
+are expanded before selection validation, with an audit record. Unused dictionary
+strings and duplicate row-address lists are omitted from the model view.
 Original page text is supplied once, with
 horizontal whitespace compacted and blank layout lines omitted. The published
 table uses the original selected lines in a scrollable preformatted block, keeping
@@ -30,6 +38,17 @@ scope, with a raw-to-resolved audit record. Abbreviations require at least 16
 unchanged hex characters; an interior elision must retain at least six characters
 at both ends and omit no more than eight. Changed characters, ambiguous matches and
 unsupplied sources remain invalid. Claim support still requires independent review.
+
+A correction preserves Q&A that already passed independent review when no blocking
+finding concerns Q&A or cites one of its exchanges/turns. Its unrequested rewrite is
+retained in the raw response but not applied to the candidate, with a separate
+preservation audit. A real Q&A finding still permits repair. Final independent
+review and the exact-candidate publication checks remain required.
+
+Reader-facing scope notes describe source coverage, missing materials and reporting
+periods. Preparer instructions are not published. A report-only run does not show an
+empty call-question heading, and original table excerpts do not repeat internal
+normalization-gap notices before every section.
 
 Full-year EPS guidance ranges may enter the supplemental valuation inventory only
 when quoted from the bound call with an explicit annual scope, fiscal label,

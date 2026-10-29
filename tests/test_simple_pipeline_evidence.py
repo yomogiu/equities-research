@@ -8,6 +8,17 @@ from test_earnings_simple_runner import SimpleRunnerTests
 
 
 class SourceParity(unittest.TestCase):
+    def test_scope_is_reader_facing_and_retains_specific_missing_source(self):
+        notes=['Freshly collected FY2040-Q2 earnings_call. Never infer approval.',
+               'PDF financial tables are verbatim positional extraction. Prefer selected original rows.',
+               'Call and report may disagree; use the original financial report.',
+               'One qualified financial document and call collected; other releases, MD&A and presentations are not included by this bounded route.',
+               'The prior-quarter filing is unavailable.']
+        rendered='\n'.join(simple.content._reader_scope(notes))
+        self.assertIn('FY2040-Q2',rendered);self.assertIn('prior-quarter filing is unavailable',rendered)
+        self.assertNotIn('Never infer',rendered);self.assertNotIn('Prefer selected',rendered)
+        self.assertNotIn('MD&A',rendered);self.assertNotIn('bounded route',rendered)
+
     def test_full_document_alias_requires_exact_unique_bound_identity(self):
         identifier='a'*20+'b'*44;other='a'*20+'c'*44;canonical='document-source-'+identifier[:20]
         bundle={'packet_inventory':{'tables':[]},'manifest':{'sources':[
@@ -30,6 +41,16 @@ class SourceParity(unittest.TestCase):
         resolved,trace=simple.resolve_citations(value,bundle,{table['source_id']})
         self.assertEqual(resolved['citations'],[table['source_id'],'T-fictional/R8'])
         self.assertEqual(trace[0]['row_id'],'R7')
+
+    def test_short_pdf_table_alias_binds_selection_and_citation_without_changing_rows(self):
+        table={'id':'T-fictional','representation':'pdf_layout_text','source_id':'document-source-fictional','raw_span_sha256':'f'*64,'rows':[{'id':'R7'}]}
+        bundle={'packet_inventory':{'tables':[table]},'manifest':{'sources':[]}}
+        value={'financial_selection':{'reported_tables':[{'table_id':'P1','row_ids':['R7'],'section':'cash'}]},'citations':['P1/R7']}
+        resolved,trace=simple.resolve_citations(value,bundle,{table['source_id']})
+        self.assertEqual(resolved['financial_selection']['reported_tables'][0],{'table_id':'T-fictional','row_ids':['R7'],'section':'cash'})
+        self.assertEqual(resolved['citations'],[table['source_id']])
+        self.assertEqual(value['financial_selection']['reported_tables'][0]['table_id'],'P1')
+        self.assertEqual(len(trace),2)
 
     def test_hash_prefix_alias_requires_long_unique_literal_known_scope(self):
         bundle={'packet_inventory':{'tables':[]},'manifest':{'sources':[]}}
@@ -61,10 +82,37 @@ class SourceParity(unittest.TestCase):
                 'financial_inventory':{'original_tables':{'tables':[{'id':table['id'],'source_id':table['source_id'],'rows':[]} ]}}}
         original=copy.deepcopy(table)
         result=display.compact(packet,{'packet_inventory':{'tables':[table]}})
-        for row in result['financial_inventory']['original_tables']['tables'][0]['rows']:
-            rid,number=row
-            self.assertIn('L'+str(number)+' ['+table['id']+'/'+rid+']: '+__import__('re').sub(r'[ \t]{2,}','\t',text.splitlines()[number-1]),result['documents'][0]['text'])
+        self.assertEqual(result['financial_inventory']['original_tables']['tables'][0]['row_count'],len(table['rows']))
+        cells={c['id']:c for c in table['cells']}
+        for row in table['rows']:
+            rid=row['id'];number=text[:min(cells[i]['start'] for i in row['cells'])].count('\n')+1
+            self.assertIn('[P1/'+rid+'] '+__import__('re').sub(r'[ \t]{2,}','\t',text.splitlines()[number-1]),result['documents'][0]['text'])
         self.assertEqual(table,original)
+
+    def test_large_annual_projection_ignores_toc_and_preserves_mda_notes_and_all_tables(self):
+        text=('[Page 1]\nFORM 10-K\nItem 7. Management Discussion\nItem 8. Financial Statements\nItem 9. Changes\n'
+              '[Page 2]\nCover facts\n[Page 3]\nItem 1. Business\n'+('Business prose. '*5000)+'\n'
+              '[Page 4]\nItem 1A. Risk Factors\n'+('Material risk. '*500)+'\nItem 1B. Unresolved Comments\n'
+              '[Page 5]\nItem 7. Management Discussion\n'+('Financial operating explanation. '*500)+'\n'
+              '[Page 6]\nItem 8. Financial Statements\n'+('Complete financial notes. '*500)+'\n'
+              '[Page 7]\nItem 9. Changes\n'+('Governance prose. '*25000)+'\n'
+              '[Page 8]\nOutside financial section\nRevenue             100          90\nCost                 60          55\nProfit               40          35\n')
+        tables=pdf.tables(text,{'document_id':'fictional','sha256':financial.digest(text.encode())})
+        packet={'documents':[{'source_id':tables[0]['source_id'],'start':0,'text':text}],
+                'document_scopes':[['D001',0,text.index('[Page 7]'),text.index('[Page 8]')]],'source_policy':'Original',
+                'financial_inventory':{'original_tables':{'shared_text':['unused duplicate'], 'tables':[{'id':t['id'],'source_id':t['source_id'],'rows':[]} for t in tables]}}}
+        from research import earnings_report_display as display
+        value=display.compact(packet,{'packet_inventory':{'tables':tables}})
+        shown=value['documents'][0]['text']
+        self.assertNotIn('Material risk.',shown);self.assertIn('Financial operating explanation.',shown)
+        self.assertIn('Complete financial notes.',shown);self.assertIn('Revenue\t100\t90',shown)
+        self.assertNotIn('Governance prose.',shown);self.assertNotIn('Business prose.',shown)
+        self.assertTrue(value['documents'][0]['display_projection']['omitted_original_spans'])
+        self.assertEqual(value['document_scopes'],[])
+        self.assertEqual(value['financial_inventory']['original_tables']['shared_text'],[])
+        self.assertEqual(packet['documents'][0]['text'],text)
+        unknown=text.replace('Item 8. Financial Statements','Unrecognized statement heading')
+        self.assertEqual(display.annual_lines(unknown,tables),(None,[]))
 
     def test_sparse_pdf_rows_have_their_actual_selection_ids_beside_the_values(self):
         from research import earnings_report_display as display
@@ -79,7 +127,7 @@ class SourceParity(unittest.TestCase):
             line=min(cells[c]['start'] for c in row['cells'])
             number=text[:line].count('\n')+1
             expected=text.splitlines()[number-1].strip(' \t')
-            self.assertIn('['+table['id']+'/'+row['id']+']: '+__import__('re').sub(r'[ \t]{2,}','\t',expected),shown)
+            self.assertIn('[P1/'+row['id']+'] '+__import__('re').sub(r'[ \t]{2,}','\t',expected),shown)
         self.assertEqual(shown.count('1.2'),1)
         self.assertEqual(packet['documents'][0]['text'],text)
 
@@ -137,6 +185,31 @@ class SourceParity(unittest.TestCase):
 
 
 class LiveContractRegressions(SimpleRunnerTests):
+    def test_financial_correction_cannot_introduce_unrequested_qa_rewrite(self):
+        self.finding='blocking';invoke=self.invoke
+        def output(*args,**kwargs):
+            response=invoke(*args,**kwargs)
+            if self.calls[-1]=='review' and self.calls.count('review')==1:
+                response['content']['findings'][0]['citations']=['D001']
+            if self.calls[-1]=='correction':
+                response['content']['analysis']['qa'][0]['assessment']='Unrequested fictional analyst attribution.'
+                simple.save(__import__('pathlib').Path(args[0])/'output.json',response['content'])
+            return response
+        result=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=output)
+        self.assertEqual(result['status'],'published',result.get('reason'))
+        original=simple.read(self.job/'author-resolved.json')['analysis']['qa']
+        self.assertEqual(simple.read(self.job/'correction-resolved.json')['analysis']['qa'],original)
+        self.assertNotEqual(simple.read(self.job/'correction.json')['analysis']['qa'],original)
+        self.assertTrue(simple.read(self.job/'correction-preservation.json')['changes'])
+        self.assertEqual(result['tokens_used'],400)
+
+    def test_qa_blocking_finding_still_permits_a_real_qa_repair(self):
+        before={'analysis':{'qa':[{'assessment':'Old fictional answer.'}]}}
+        after={'analysis':{'qa':[{'assessment':'Corrected fictional answer.'}]}}
+        review={'findings':[{'severity':'blocking','location':'qa','citations':['Q1']}]}
+        resolved,changes=simple.preserve_reviewed_qa(before,after,review,{'transcript_index':{'exchanges':[]}})
+        self.assertEqual(resolved,after);self.assertEqual(changes,[])
+
     def test_full_document_citation_in_correction_uses_the_same_final_review(self):
         self.finding='blocking';invoke=self.invoke
         def output(*args,**kwargs):
