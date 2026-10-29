@@ -261,6 +261,14 @@ def known_sources(payload,bundle):
     return {i for i in evidence._scopes(bundle) if not i.startswith('D')}|{r[0] for r in payload['document_scopes']}
 
 
+def source_availability(known):
+    """Only source scopes actually bound to the immutable packet are advertised."""
+    present='transcript-source' in known
+    return {'transcript_present':present,
+            'document_citation_ids':sorted(i for i in known if i.startswith('document-source-')),
+            'call_citation_id':'transcript-source' if present else None}
+
+
 def model_call(root, state, bundle, role, payload, invoke, checkpoint):
     """One immutable paid attempt. Any uncertain execution ends this company."""
     payload={**payload,'version':VERSION}
@@ -280,7 +288,9 @@ def model_call(root, state, bundle, role, payload, invoke, checkpoint):
     if role!='source_verification':
         from . import earnings_call_aliases
         payload=earnings_call_aliases.project(payload,bundle)
-        payload['citation_rules']=payload.get('citation_rules','')+' Call turns use exact CALL-number addresses and Q&A exchanges use exact QA-number addresses. Copy these short addresses from the supplied call index; they resolve to frozen original IDs. Never reconstruct or alter a hash.'
+        if role in ('review','check'):
+            payload['compiled_call_citations']=earnings_call_aliases.compiled_bindings(payload.get('candidate',''),bundle)
+        payload['citation_rules']=payload.get('citation_rules','')+' Call turns use exact CALL-number addresses and Q&A exchanges use exact QA-number addresses. Copy these short addresses from the supplied call index; they resolve to frozen original IDs. Never reconstruct or alter a hash. The candidate intentionally retains canonical citation IDs. compiled_call_citations gives their exact short-address bindings: these are valid compiler expansions, not unsupported sources. Assess the cited claim against its original evidence; use short addresses in your response.'
     if role=='source_verification':
         from . import earnings_source_verification
         index=earnings_source_verification.assemble(payload,root/'contexts'/str(number))
@@ -365,7 +375,8 @@ def run_company(root, spec, prepare, publish, *, invoke=transport.run_role, pers
                     'coverage':[{**{k:v for k,v in row.items() if k!='limitations'},
                         'limitations':list(dict.fromkeys(str(v.get('reason')) if isinstance(v,dict) else str(v) for v in row['limitations']))}
                         for row in bundle['packet_inventory']['coverage']]},
-                'citation_rules':'Cite only exact supplied D/F/document-source/turn/exchange/section IDs or transcript-source. An exact captured table ID in citations is resolved to its original document; financial_selection.table_id and fact_ids remain unchanged. Do not use human labels or candidate locations as citations. Financial row fact_ids select existing F IDs; they are not invented numeric values.'}
+                'source_availability':source_availability(original_known),
+                'citation_rules':'Cite only exact supplied D/F/document-source/turn/exchange/section IDs. Use transcript-source only if source_availability.transcript_present is true. When no transcript is supplied, keep Q&A empty and cite an available document scope for your assessment of the report-only packet; never invent transcript-source as a citation for an absence. An exact captured table ID in citations is resolved to its original document; financial_selection.table_id and fact_ids remain unchanged. Do not use human labels or candidate locations as citations. Financial row fact_ids select existing F IDs; they are not invented numeric values.'}
         state['stage']='author';checkpoint()
         author_instructions=content.author_requirements()+'\nSelection consistency: cite original D chunk IDs or document-source IDs for basis. A selected metric cannot also be listed as a gap. Gross margin is computed when compatible revenue and gross-profit/cost inputs are selected; lack of a separately reported percentage is NOT a gap. A net-capex disclosure is not gross capex: select its original reported-table row instead and leave gross capex unavailable. Never label net spending as gross for FCF. Empty normalized inventories do not make reported table figures unavailable. Where original reported CFO and capital spending support it, state the figures and explicitly calculated FCF in the cash narrative; distinguish software-inclusive capex and separately capitalized development. Source-cited narrative arithmetic is allowed, but never invent normalized F IDs or values in financial_selection.'
         guidance=spec.get('recovery_guidance')

@@ -16,3 +16,11 @@ def project(payload,bundle):
         if isinstance(value,dict):return {k:visit(v) for k,v in value.items()}
         return value
     return visit(deepcopy(payload))
+
+
+def compiled_bindings(candidate,bundle):
+    """Expose exact compiler expansions without rewriting the reviewed candidate."""
+    import re
+    cited=set(re.findall(r'\[\^([A-Za-z0-9_-]+)\]',candidate))
+    return [{'address':short,'canonical_id':canonical} for short,canonical in aliases(bundle).items()
+            if canonical in cited]

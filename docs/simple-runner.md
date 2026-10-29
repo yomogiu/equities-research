@@ -257,3 +257,9 @@ The same request and role budget apply; the sanitized rejection is retained. Net
 errors, SSE errors, partial responses, timeouts and missing final receipts remain
 uncertain and never authorize retry. Historical uncertain runs are not reconciled to
 zero or relaunched by this change.
+
+Review packets preserve the exact compiled candidate and provide short-address to
+canonical call-citation bindings. Report-only packets explicitly enumerate available
+document scopes and prohibit transcript placeholders when no transcript exists.
+Share-basis disclosures distinguish basic/unspecified EPS and closing shares from
+diluted EPS and weighted-average diluted shares.

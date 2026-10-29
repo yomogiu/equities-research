@@ -67,6 +67,11 @@ class GeneralRepairs(unittest.TestCase):
         self.assertEqual(reports.qualify(text,{'issuer_name':'FICTIONAL DEVICES'},event)['language'],'English')
         with self.assertRaisesRegex(ValueError,'heading'):
             reports.qualify(text,{'issuer_name':'FICTIONAL DEVICES'},{**event,'end':'2040-09-30'})
+    def test_report_only_packet_does_not_advertise_a_transcript_scope(self):
+        known={'D001','F001','document-source-fictional'}
+        self.assertEqual(runner.source_availability(known),{'transcript_present':False,'document_citation_ids':['document-source-fictional'],'call_citation_id':None})
+        self.assertEqual(runner.source_availability(known|{'transcript-source'})['call_citation_id'],'transcript-source')
+
     def test_call_aliases_are_exact_and_do_not_modify_original_payload_or_prose(self):
         turn='turn-'+'a'*24;exchange='exchange-'+'b'*24
         bundle={'transcript_index':{'turns':[{'id':turn}],'exchanges':[{'id':exchange}]},'packet_inventory':{'tables':[]},'manifest':{'sources':[]}}
@@ -75,6 +80,13 @@ class GeneralRepairs(unittest.TestCase):
         self.assertEqual(raw['qa'][0]['exchange_id'],exchange)
         self.assertEqual(projected['qa'][0],{'exchange_id':'QA1','citations':['CALL1','QA1']})
         self.assertEqual(projected['text'],raw['text'])
+        candidate='Claim [^'+turn+'] and Q&A [^'+exchange+']. Unknown [^turn-unknown].'
+        snapshot=candidate
+        bindings=calls.compiled_bindings(candidate,bundle)
+        self.assertEqual(bindings,[{'address':'CALL1','canonical_id':turn},{'address':'QA1','canonical_id':exchange}])
+        self.assertEqual(candidate,snapshot)
+        self.assertEqual(calls.compiled_bindings('No citations',bundle),[])
+
         restored,changes=runner.resolve_citations(projected,bundle,{turn,exchange})
         self.assertEqual(restored,raw);self.assertTrue(changes)
         changed,_=runner.resolve_citations({'citations':['CALL9','turn-'+'c'*24]},bundle,{turn,exchange})

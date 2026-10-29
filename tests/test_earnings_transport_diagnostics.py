@@ -13,6 +13,10 @@ if(events.filter(e=>e.phase==='explicit_provider_rejection').length!==1)throw Er
 for(const value of [new Response('data: partial',{{status:200,headers:{{'content-type':'text/event-stream'}}}}),new Response('{{"error":{{"code":"unknown"}}}}',{{status:503,headers:{{'content-type':'application/json'}}}}),new Response('{{"error":{{"code":"server_overloaded"}},"usage":1}}',{{status:503,headers:{{'content-type':'application/json'}}}})]){{
 let n=0;const g=instrumentFetch(async()=>{{n++;return value}},()=>{{}},()=>{{}},true);if(await g('endpoint')!==value||n!==1||value.bodyUsed)throw Error('Unsafe retry or consumed response');
 }}
+for(const input of [new Request('https://fictional.example'), 'endpoint']){{
+let n=0;const g=instrumentFetch(async()=>{{n++;return refused()}},()=>{{}},()=>{{}},true);
+await g(input,{{body:new ReadableStream()}});if(n!==1)throw Error('Unreplayable request retried');
+}}
 let n=0;const g=instrumentFetch(async()=>{{n++;throw new Error('unknown execution')}},()=>{{}},()=>{{}},true);try{{await g('endpoint')}}catch{{}}if(n!==1)throw Error('Network retry');'''
   subprocess.run(['node','--input-type=module','-e',program],check=True)
  def test_codes_only_no_secrets_and_no_retry(self):

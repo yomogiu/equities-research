@@ -42,6 +42,9 @@ class SimpleRunnerTests(unittest.TestCase):
                 for k,(location,_) in contract.COVERAGE.items():
                     if location=='cash':value['analysis']['report_support']['coverage'][k]['report_excerpt']=value['analysis']['sections']['cash']['text']
         else:
+            self.assertTrue(packet['source_availability']['transcript_present'])
+            self.assertIn({'address':'QA1','canonical_id':exchange},packet['compiled_call_citations'])
+            self.assertEqual(packet['candidate'],(directory.parents[1]/('candidate-1.md' if bindings['revision'] else 'candidate-0.md')).read_text())
             value={'verdict':'pass','criteria':{k:{'status':'pass','evidence':'Fictional support verified.','citations':refs} for k in simple.content.CRITERIA},
                 'questions':{k:{'status':'disclosed_gap','evidence':'Fictional limitation disclosed.','gap':'Fictional gap.','citations':refs} for k in simple.questions.QUESTIONS},'findings':[]}
             if self.finding and (self.calls.count('review')==1 or self.repeated):

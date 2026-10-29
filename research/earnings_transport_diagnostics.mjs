@@ -46,7 +46,10 @@ export function instrumentFetch(fetchImpl, record, lifecycle = () => {}, rejecti
       emit({request_sequence, phase:'headers_received',
         ...(Number.isInteger(response.status)?{http_status:response.status}:{}),
         execution_certainty:'unknown', retry_authorized:false});
-      if (rejectionRetry && rejectedRetries===0 && await rejected(response)) {
+      const body=args[1]?.body;
+      const replayable=(typeof args[0]==='string' || args[0] instanceof URL) &&
+        (body==null || typeof body==='string' || body instanceof Uint8Array || body instanceof ArrayBuffer);
+      if (rejectionRetry && replayable && rejectedRetries===0 && await rejected(response)) {
         rejectedRetries++;
         emit({request_sequence,phase:'explicit_provider_rejection',http_status:response.status,
           execution_certainty:'rejected_without_output',retry_authorized:true});
