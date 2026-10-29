@@ -28,7 +28,7 @@ def guidance_eps(text,source,prices):
     symbol,currency=next(iter(quotes))
     if currency!='USD':return []
     result=[]
-    annual=r'\bFor\s+the\s+full[ -]year(?:\s+(?:of\s+|fiscal\s+)?(20\d{2}))?'
+    annual=r'\bFor\s+(?:the\s+full[ -]year(?:\s+(?:of\s+|fiscal\s+)?(20\d{2}))?|(?:the\s+)?fiscal\s+(?:year\s+)?(20\d{2}))'
     eps=r'(?:(non[- ]GAAP|GAAP)\s+)?(?:diluted\s+)?(?:earnings per (?:diluted )?share|EPS)\s+(?:of\s+|in the range of\s+|to be\s+|is expected to be\s+)?(?:approximately\s+)?\$([0-9]+\.[0-9]+)\s*(?:[-–—]|to)\s*\$?([0-9]+\.[0-9]+)'
     for scope in re.finditer(annual,text,re.I):
         body=text[scope.end():scope.end()+1600]
@@ -46,7 +46,7 @@ def guidance_eps(text,source,prices):
         if not 0<low<=high:continue
         end=scope.end()+match.end();start=scope.start()
         row={'kind':'annual_guidance','symbol':symbol,'currency':currency,'value':str((low+high)/2),
-             'low':str(low),'high':str(high),'fiscal_year':int(scope[1] or header[1]),
+             'low':str(low),'high':str(high),'fiscal_year':int(scope[1] or scope[2] or header[1]),
              'guidance_date':read_date(header[2]).isoformat(),'basis':basis,'source_id':'transcript-source',
              'document_id':source['document_id'],'source_sha256':source['sha256'],'start':start,'end':end,
              'text':text[start:end],'period_start':None,'period_end':None,

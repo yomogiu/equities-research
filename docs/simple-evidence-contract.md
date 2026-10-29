@@ -24,6 +24,13 @@ Known optional metric gaps use the same metric vocabulary as selections. Require
 coverage, unknown-ID rejection, source citations and selected-versus-missing checks
 remain enforced. Missing normalization is distinct from missing disclosure.
 
+Citation formatting is resolved before output validation. Exact bound full-document
+IDs, table/row IDs and unique hexadecimal abbreviations map to the supplied original
+scope, with a raw-to-resolved audit record. Abbreviations require at least 16
+unchanged hex characters; an interior elision must retain at least six characters
+at both ends and omit no more than eight. Changed characters, ambiguous matches and
+unsupplied sources remain invalid. Claim support still requires independent review.
+
 Full-year EPS guidance ranges may enter the supplemental valuation inventory only
 when quoted from the bound call with an explicit annual scope, fiscal label,
 accounting basis, call date and recognized matching USD security. The renderer

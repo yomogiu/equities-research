@@ -8,6 +8,50 @@ from test_earnings_simple_runner import SimpleRunnerTests
 
 
 class SourceParity(unittest.TestCase):
+    def test_full_document_alias_requires_exact_unique_bound_identity(self):
+        identifier='a'*20+'b'*44;other='a'*20+'c'*44;canonical='document-source-'+identifier[:20]
+        bundle={'packet_inventory':{'tables':[]},'manifest':{'sources':[
+            {'document_id':identifier,'kind':'filing','representation':'text','sha256':'d'*64}]}}
+        value={'text':'Fictional source claim.','citations':['document-source-'+identifier,'document-source-'+other]}
+        resolved,trace=simple.resolve_citations(value,bundle,{canonical})
+        self.assertEqual(resolved['citations'],[canonical,'document-source-'+other])
+        self.assertEqual(len(trace),1);self.assertEqual(trace[0]['source_sha256'],'d'*64)
+        self.assertEqual(value['citations'][0],'document-source-'+identifier)
+        bundle['manifest']['sources'].append({'document_id':other,'kind':'filing','representation':'text','sha256':'e'*64})
+        ambiguous,trace=simple.resolve_citations(value,bundle,{canonical})
+        self.assertEqual(ambiguous,value);self.assertEqual(trace,[])
+        absent,trace=simple.resolve_citations(value,bundle,set())
+        self.assertEqual(absent,value);self.assertEqual(trace,[])
+
+    def test_inline_row_citation_alias_rejects_nonexistent_rows(self):
+        table={'id':'T-fictional','source_id':'document-source-fictional','raw_span_sha256':'f'*64,'rows':[{'id':'R7'}]}
+        bundle={'packet_inventory':{'tables':[table]},'manifest':{'sources':[]}}
+        value={'citations':['T-fictional/R7','T-fictional/R8']}
+        resolved,trace=simple.resolve_citations(value,bundle,{table['source_id']})
+        self.assertEqual(resolved['citations'],[table['source_id'],'T-fictional/R8'])
+        self.assertEqual(trace[0]['row_id'],'R7')
+
+    def test_hash_prefix_alias_requires_long_unique_literal_known_scope(self):
+        bundle={'packet_inventory':{'tables':[]},'manifest':{'sources':[]}}
+        canonical='turn-'+'a'*18+'b'*6;prefix='turn-'+'a'*18
+        unknown='turn-'+'c'*18;too_short='turn-'+'a'*8
+        value={'citations':[prefix,unknown,too_short,canonical+'f']}
+        resolved,trace=simple.resolve_citations(value,bundle,{canonical})
+        self.assertEqual(resolved['citations'],[canonical,unknown,too_short,canonical+'f'])
+        self.assertEqual(len(trace),1)
+        ambiguous,trace=simple.resolve_citations(value,bundle,{canonical,'turn-'+'a'*18+'c'*6})
+        self.assertEqual(ambiguous,value);self.assertEqual(trace,[])
+
+    def test_hash_middle_elision_requires_unique_unchanged_prefix_and_suffix(self):
+        bundle={'packet_inventory':{'tables':[]},'manifest':{'sources':[]}}
+        canonical='turn-0123456789ababcdef012345';abbreviated='turn-0123456789ab012345'
+        value={'citations':[abbreviated,'turn-0123456789ab012346']}
+        resolved,trace=simple.resolve_citations(value,bundle,{canonical})
+        self.assertEqual(resolved['citations'],[canonical,'turn-0123456789ab012346'])
+        self.assertEqual(len(trace),1)
+        ambiguous,trace=simple.resolve_citations(value,bundle,{canonical,'turn-0123456789abfedcba012345'})
+        self.assertEqual(ambiguous,value);self.assertEqual(trace,[])
+
     def test_pdf_row_addresses_preserve_the_complete_original_values_once(self):
         from research import earnings_report_display as display
         text='[Page 1]\nRevenue             100          90\nCost                 60          55\nProfit               40          35\n'
@@ -93,6 +137,22 @@ class SourceParity(unittest.TestCase):
 
 
 class LiveContractRegressions(SimpleRunnerTests):
+    def test_full_document_citation_in_correction_uses_the_same_final_review(self):
+        self.finding='blocking';invoke=self.invoke
+        def output(*args,**kwargs):
+            response=invoke(*args,**kwargs)
+            if self.calls[-1]=='correction':
+                bundle=simple.evidence.load_bundle(self.job/'sources/manifest.json')
+                source=next(s for s in bundle['manifest']['sources'] if s['kind']=='filing' and s['representation']=='text')
+                response['content']['analysis']['sections']['demand']['citations']=['document-source-'+source['document_id']]
+                simple.save(__import__('pathlib').Path(args[0])/'output.json',response['content'])
+            return response
+        result=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=output)
+        self.assertEqual(result['status'],'published',result.get('reason'))
+        self.assertEqual([a['role'] for a in result['attempts']],['author','review','correction','check'])
+        self.assertEqual(result['corrections'],1)
+        self.assertEqual(result['tokens_used'],400)
+
     def test_optional_known_gap_does_not_consume_the_correction_allowance(self):
         invoke=self.invoke
         def output(*args,**kwargs):

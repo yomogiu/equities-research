@@ -88,8 +88,40 @@ Verdict revise if and only if a blocking finding exists. Every failed check requ
 
 
 def resolve_citations(value, bundle, known):
-    """Resolve exact, source-bound table aliases; never change facts or prose."""
+    """Resolve exact bound table/row/full-document IDs; never change facts or prose."""
     tables={t['id']:t for t in bundle['packet_inventory']['tables'] if t['source_id'] in known}
+    document_ids={}
+    for source in bundle['manifest']['sources']:
+        if source['kind'] in ('transcript','source_gap') or source['representation']!='text':continue
+        canonical='document-source-'+source['document_id'][:20]
+        document_ids.setdefault(canonical,set()).add(source['document_id'])
+    aliases={}
+    for source in bundle['manifest']['sources']:
+        canonical='document-source-'+source['document_id'][:20]
+        if (canonical in known and len(document_ids.get(canonical,set()))==1
+                and source['representation']=='text' and source['kind'] not in ('transcript','source_gap')):
+            aliases['document-source-'+source['document_id']]={'alias': 'document-source-'+source['document_id'],
+                'source_id':canonical,'document_id':source['document_id'],'source_sha256':source['sha256']}
+    for table in tables.values():
+        for row in table['rows']:
+            identifier=table['id']+'/'+row['id']
+            aliases[identifier]={'alias':identifier,'table_id':table['id'],'row_id':row['id'],
+                'source_id':table['source_id'],'raw_span_sha256':table['raw_span_sha256']}
+    def hash_reference(identifier):
+        # Resolve a literal >=64-bit prefix or one omitted interior hex span,
+        # with >=6 original hex characters on both ends. No character changes,
+        # inserted text, semantic matching or ambiguous candidates qualify.
+        if not re.fullmatch(r'(?:turn|exchange|document-source)-[a-f0-9]{16,24}',identifier):return None
+        matches=[candidate for candidate in known if candidate.startswith(identifier)]
+        if matches:return matches[0] if len(matches)==1 else None
+        namespace,fragment=identifier.rsplit('-',1);matches=[]
+        for candidate in known:
+            prefix,_,original=candidate.rpartition('-')
+            omitted=len(original)-len(fragment)
+            if prefix!=namespace or not 1<=omitted<=8 or not re.fullmatch('[a-f0-9]+',original):continue
+            if any(original[:i]+original[i+omitted:]==fragment for i in range(6,len(fragment)-5)):
+                matches.append(candidate)
+        return matches[0] if len(matches)==1 else None
     resolved=deepcopy(value);changes=[]
     def visit(node,path=''):
         if isinstance(node,dict):
@@ -102,6 +134,16 @@ def resolve_citations(value, bundle, known):
                             changes.append({'path':path+'/citations/'+str(index),'table_id':identifier,
                                 'source_id':table['source_id'],'raw_span_sha256':table['raw_span_sha256']})
                             identifier=table['source_id']
+                        elif isinstance(identifier,str) and identifier not in known and identifier in aliases:
+                            bound=aliases[identifier]
+                            changes.append({'path':path+'/citations/'+str(index),**bound})
+                            identifier=bound['source_id']
+                        elif isinstance(identifier,str) and identifier not in known:
+                            canonical=hash_reference(identifier)
+                            if canonical:
+                                changes.append({'path':path+'/citations/'+str(index),'alias':identifier,
+                                                'source_id':canonical,'rule':'unique-bound-hash-abbreviation-v1'})
+                                identifier=canonical
                         # Two valid aliases may identify the same original source.
                         if identifier not in citations:citations.append(identifier)
                     node[key]=citations
