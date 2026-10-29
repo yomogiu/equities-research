@@ -28,8 +28,8 @@ def guidance_eps(text,source,prices):
     symbol,currency=next(iter(quotes))
     if currency!='USD':return []
     result=[]
-    annual=r'\bFor\s+(?:the\s+full[ -]year(?:\s+(?:of\s+|fiscal\s+)?(20\d{2}))?|(?:the\s+)?fiscal\s+(?:year\s+)?(20\d{2}))'
-    eps=r'(?:(non[- ]GAAP|GAAP)\s+)?(?:diluted\s+)?(?:earnings per (?:diluted )?share|EPS)\s+(?:of\s+|in the range of\s+|to be\s+|is expected to be\s+)?(?:approximately\s+)?\$([0-9]+\.[0-9]+)\s*(?:[-–—]|to)\s*\$?([0-9]+\.[0-9]+)'
+    annual=r'\bFor\s+(?:the\s+full[ -](?:fiscal[ -])?year(?:\s+(?:of\s+|fiscal\s+)?(20\d{2}))?|(?:the\s+)?fiscal\s+(?:year\s+)?(20\d{2}))'
+    eps=r'(?:(non[- ]GAAP|GAAP)\s+)?(?:diluted\s+)?(?:(?:earnings|net income) per (?:diluted )?share|EPS)\s+(?:attributable to [^$\n]{1,100}?\s+)?(?:(?:is expected to be|to be|of)\s+)?(?:in (?:the )?range of\s+)?(?:approximately\s+)?\$([0-9]+\.[0-9]+)\s*(?:[-–—]|to)\s*\$?([0-9]+\.[0-9]+)'
     for scope in re.finditer(annual,text,re.I):
         body=text[scope.end():scope.end()+1600]
         if not re.search(r'\b(?:expect|guidance|outlook|anticipat|raising)\w*',body[:350],re.I):continue

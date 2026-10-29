@@ -67,5 +67,13 @@ class GuidanceTests(unittest.TestCase):
         self.assertEqual(valuation.guidance_eps(text.replace('For fiscal year 2041','For fiscal Q3 2041'),source,prices),[])
         self.assertEqual(valuation.guidance_eps(text.replace('For fiscal year 2041','For the full year 2041. For the third quarter'),source,prices),[])
 
+    def test_full_fiscal_year_net_income_per_share_keeps_the_quoted_share_basis(self):
+        text='Earnings Call: Q2 2041\nAugust 6, 2040\nFor the full fiscal year 2041, we expect growth. Assuming 100 million weighted-average diluted shares, we expect non-GAAP net income per share attributable to FictionalCo to be in the range of $1.25 to $1.26.'
+        source={'document_id':'fictional','sha256':'a'*64};prices=[{'document_id':'fictional','symbol':'FAKE','currency':'USD'}]
+        rows=valuation.guidance_eps(text,source,prices)
+        self.assertEqual([(r['fiscal_year'],r['low'],r['high']) for r in rows],[(2041,'1.25','1.26')])
+        self.assertIn('weighted-average diluted shares',rows[0]['text'])
+        self.assertEqual(valuation.guidance_eps(text.replace('For the full fiscal year 2041','For the third quarter of fiscal 2041'),source,prices),[])
+
 
 if __name__=='__main__':unittest.main()
