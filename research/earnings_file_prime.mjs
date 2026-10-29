@@ -8,16 +8,16 @@ import {instrumentFetch, completionStage} from './earnings_transport_diagnostics
 import {configureWorkerConnections} from './earnings_transport_connection.mjs';
 configureWorkerConnections();
 const [sdkRoot, job, mode] = process.argv.slice(2);
+const request = JSON.parse(fs.readFileSync(path.join(job, 'request.json'), 'utf8'));
 const transportFailures=[];
 const originalFetch=globalThis.fetch;
 globalThis.fetch=instrumentFetch(originalFetch,(value)=>{if(transportFailures.length<16)transportFailures.push(value);}, value=>{
   if(mode !== '--probe') fs.appendFileSync(path.join(job,'transport-lifecycle.jsonl'),JSON.stringify(value)+'\n',{mode:0o600});
-});
+}, request.bindings?.workflow==='simple-report-v1' && request.direct_input===true);
 
 const {AuthStorage, ModelRegistry, SettingsManager, DefaultResourceLoader,
   SessionManager, createAgentSession} = await import(pathToFileURL(path.join(sdkRoot, 'dist/index.js')));
 const {getOAuthProvider} = await import(pathToFileURL(path.join(sdkRoot, 'node_modules/@earendil-works/pi-ai/dist/oauth.js')));
-const request = JSON.parse(fs.readFileSync(path.join(job, 'request.json'), 'utf8'));
 const expectedTools=request.direct_input?[]:['ipython'];
 if (request.version !== 'file-prime-role-v1' || JSON.stringify(request.tool_names)!==JSON.stringify(expectedTools)) throw Error('file_role_contract');
 const save = (name, value) => fs.writeFileSync(path.join(job, name), JSON.stringify(value, null, 2)+'\n', {flag:'wx', mode:0o600});

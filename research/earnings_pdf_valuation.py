@@ -61,8 +61,9 @@ def unique_pair(inventory):
     prices=inventory['prices']
     if len(prices)!=1 or Decimal(prices[0]['value'])<=0:return None
     price=prices[0]
-    eligible=[e for e in inventory['annual_eps'] if e.get('kind')=='annual_reported_pdf'
-              and e.get('security_binding')=='exact-cover-ticker-and-share-class' and e.get('basis')=='GAAP'
+    eligible=[e for e in inventory['annual_eps'] if (e.get('kind'),e.get('security_binding')) in {
+              ('annual_reported_pdf','exact-cover-ticker-and-share-class'),('annual_reported_release','matched-release-listing-and-quote')}
+              and e.get('basis')=='GAAP'
               and e['symbol']==price['symbol'] and e['currency']==price['currency']
               and e['period_end']<=price['date'] and Decimal(e['value'])>0]
     if not eligible:return None

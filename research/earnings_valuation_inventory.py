@@ -66,9 +66,9 @@ def build(bundle):
     if bundle.get('valuation_inventory') is not None:
         return deepcopy(bundle['valuation_inventory'])
     sources=bundle['manifest']['sources']
-    inputs=[s for s in sources if (s['kind']=='filing' and s['representation']=='raw') or (s['kind']=='transcript' and s['representation']=='text')]
+    inputs=[s for s in sources if (s['kind'] in ('filing','release') and s['representation']=='raw') or (s['kind']=='transcript' and s['representation']=='text')]
     # Recheck bytes even when the parsed result is cached in this process.
-    text_sources=[s for s in sources if s['kind']=='filing' and s['representation']=='text']
+    text_sources=[s for s in sources if s['kind'] in ('filing','release') and s['representation']=='text']
     for s in [*inputs,*text_sources]:
         if storage.sha(s['path'])!=s['sha256']:raise ValueError('Valuation source changed')
     key=storage.digest([*inputs,*text_sources])
@@ -76,7 +76,7 @@ def build(bundle):
     prices=[];earnings=[];pdf_sources=[]
     for s in inputs:
         data=Path(s['path']).read_bytes()
-        if s['kind']=='filing' and data.startswith(b'%PDF'):
+        if s['kind'] in ('filing','release') and data.startswith(b'%PDF'):
             pdf_sources.append(s);continue
         try:raw=data.decode('utf-8')
         except UnicodeDecodeError:continue
@@ -129,7 +129,11 @@ def build(bundle):
         matching=[s for s in text_sources if s['document_id']==source['document_id']]
         if len(matching)==1:
             text_source=matching[0]
-            earnings.extend(earnings_pdf_valuation.annual_eps(Path(text_source['path']).read_bytes().decode('utf-8'),text_source,prices))
+            text=Path(text_source['path']).read_bytes().decode('utf-8')
+            earnings.extend(earnings_pdf_valuation.annual_eps(text,text_source,prices))
+            if source['kind']=='release':
+                from . import earnings_release_eps
+                earnings.extend(earnings_release_eps.extract(text,text_source,prices))
     result={'prices':prices,'annual_eps':earnings,'scope':'Reparsed frozen filings and recognized dated source headers. Core financial facts are unchanged. Selection and interpretation remain independently reviewed.'}
     _CACHE[key]=result
     return deepcopy(result)

@@ -1,6 +1,7 @@
 """Official report-only collection with explicit absent transcript, never a fake call."""
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 import re
 from . import earnings_source_case as case, financial_evidence as financial
 from . import earnings_financial_analysis_report as finance
@@ -15,7 +16,8 @@ def require(value,message):
 def candidates(body,url,as_of):
     """Read disclosed labels; never construct a guessed report URL."""
     result=[]
-    for link in page(body,url).links:
+    from . import earnings_archive_context
+    for link in [*page(body,url).links,*earnings_archive_context.links(body,url)]:
         label=link.get('title','');target=link.get('url','')
         match=re.search(r'(20\d{2})\s*年?\s*第?\s*([1-4])\s*季',label)
         if not match:
@@ -28,7 +30,8 @@ def candidates(body,url,as_of):
         else:continue
         from calendar import monthrange
         end=date(year,quarter*3,monthrange(year,quarter*3)[1])
-        if end<=as_of:result.append({'year':year,'quarter':quarter,'end':end.isoformat(),'url':target,'label':label})
+        if end<=as_of:result.append({'year':year,'quarter':quarter,'end':end.isoformat(),'url':target,'label':label,
+                                    **({'label_evidence':link['label_evidence']} if 'label_evidence' in link else {})})
     require(result,'No dated consolidated report links found on official archive')
     latest=max((x['year'],x['quarter']) for x in result)
     selected=[x for x in result if (x['year'],x['quarter'])==latest]
@@ -54,8 +57,15 @@ def qualify(text,profile,event):
     labels=[str(year),str(year-1911),roc]
     ordinal=['','一','二','三','四'][quarter]
     title=re.search(r'(?:民國\s*)?(?:'+ '|'.join(labels)+r')\s*年[^\n]{0,45}(?:第?'+ordinal+r'季|第?'+str(quarter)+r'季|Q'+str(quarter)+('|'+'半年度' if quarter==2 else '')+r')',opening,re.I)
-    require(title,'Original report heading does not confirm discovered year and quarter')
-    return {'issuer_quote':quote,'period_quote':title.group(),'language':'Chinese' if chinese else 'English',
+    period_quote=title.group() if title else None
+    if not period_quote and english:
+        # English statements often print an endpoint, not a Q-number. Require
+        # the original opening date to equal the discovered calendar endpoint.
+        from .earnings_events import DATE,read_date
+        dated=re.search(r'(?:three|six|nine|twelve)\s+months?\s+ended\s+('+DATE+r')',opening,re.I)
+        if dated and read_date(dated[1]).isoformat()==event['end']:period_quote=dated[0]
+    require(period_quote,'Original report heading does not confirm discovered year and quarter')
+    return {'issuer_quote':quote,'period_quote':period_quote,'language':'Chinese' if chinese else 'English',
             'basis':'quarter_and_cumulative','end':event['end']}
 
 def prepare(output,spec,*,client=None):
@@ -78,6 +88,8 @@ def prepare(output,spec,*,client=None):
         try:event=candidates(body,profile['official_index'],as_of)
         except ValueError as exc:
             if str(exc)!='No dated consolidated report links found on official archive':raise
+            if not any(urlsplit(x['url']).hostname=='www.cninfo.com.cn' and urlsplit(x['url']).path=='/new/disclosure/stock'
+                       for x in page(body,profile['official_index']).links):raise
             from .earnings_disclosure_archive import discover
             archive,archive_url=discover(body,profile['official_index'],as_of,fetch)
             event=candidates(archive,archive_url,as_of)

@@ -227,3 +227,33 @@ can render original tables with explicit date-normalization gaps; normalized fin
 facts still require exact quarter dates. Existing extraction, arithmetic, independent
 review and publication checks remain in force. These rules supersede the initial
 calendar-year-only adapter and exact event-slug restrictions described above.
+
+### Shared format repairs
+
+Earnings-release PDFs enter the same supplemental valuation inventory as filings.
+An original primary income statement can supply reported annual diluted EPS when its
+explicit annual duration and ordered comparative-year columns distinguish it from
+quarterly EPS and weighted shares. The narrow dollar-release route requires a matched
+NYSE/NASDAQ listing, USD quote, GAAP context and no alternative-currency, IFRS,
+depositary or share-class ambiguity. Its contextual currency binding is stated explicitly
+for independent review. It does not annualize quarterly values or invent a currency
+conversion. Raw EPS and security evidence remain attached to the original document.
+
+Call turns and Q&A exchanges use short CALL/QA addresses in model-facing metadata.
+Code expands only exact addresses from the frozen call index before validation and
+publication; raw outputs and mapping receipts remain preserved. Altered or unknown
+hashes still fail. Report text, financial figures and original source bytes are unchanged.
+
+Official PDF archives may expose year, quarter and report title in separate elements.
+Discovery reads bounded original DOM blocks that contain one distinct PDF target,
+including duplicate links to that same target. It never combines sibling report cards,
+guesses filenames or takes a year from a URL. English report-only statements can bind
+the period through their exact original calendar endpoint. A provider-specific archive
+fallback runs only when the issuer archive actually links that provider.
+
+Simple tool-free roles may retry one closed HTTP 429/503 JSON rejection carrying an
+explicit server_overloaded/rate_limit_exceeded code and no response/output/usage.
+The same request and role budget apply; the sanitized rejection is retained. Network
+errors, SSE errors, partial responses, timeouts and missing final receipts remain
+uncertain and never authorize retry. Historical uncertain runs are not reconciled to
+zero or relaunched by this change.

@@ -98,6 +98,9 @@ def resolve_citations(value, bundle, known):
         canonical='document-source-'+source['document_id'][:20]
         document_ids.setdefault(canonical,set()).add(source['document_id'])
     aliases={}
+    from . import earnings_call_aliases
+    for alias,canonical in earnings_call_aliases.aliases(bundle).items():
+        if canonical in known:aliases[alias]={'alias':alias,'source_id':canonical,'rule':'exact-frozen-call-address-v1'}
     for source in bundle['manifest']['sources']:
         canonical='document-source-'+source['document_id'][:20]
         if (canonical in known and len(document_ids.get(canonical,set()))==1
@@ -132,6 +135,8 @@ def resolve_citations(value, bundle, known):
     def visit(node,path=''):
         if isinstance(node,dict):
             for key,child in node.items():
+                if key=='exchange_id' and isinstance(child,str) and child.startswith('QA') and child in aliases:
+                    changes.append({'path':path+'/'+key,**aliases[child]});node[key]=aliases[child]['source_id'];continue
                 if key=='citations' and isinstance(child,list):
                     citations=[]
                     for index,identifier in enumerate(child):
@@ -272,6 +277,10 @@ def model_call(root, state, bundle, role, payload, invoke, checkpoint):
             payload.pop('transcript',None);payload.pop('transcript_index',None)
             payload['instructions']+='\nThis is a deterministic valuation-only repair. All other author content is unchanged from the bound initial independent review. The original dated quote is supplied verbatim in valuation_inventory; verify it with the annual EPS, share class, currency, accounting basis and Decimal multiple against the original financial report. Use the prior review for unchanged call-based claims. Do not waive any unresolved material error.'
     number=len(state['attempts']);directory=root/'roles'/str(number)
+    if role!='source_verification':
+        from . import earnings_call_aliases
+        payload=earnings_call_aliases.project(payload,bundle)
+        payload['citation_rules']=payload.get('citation_rules','')+' Call turns use exact CALL-number addresses and Q&A exchanges use exact QA-number addresses. Copy these short addresses from the supplied call index; they resolve to frozen original IDs. Never reconstruct or alter a hash.'
     if role=='source_verification':
         from . import earnings_source_verification
         index=earnings_source_verification.assemble(payload,root/'contexts'/str(number))
