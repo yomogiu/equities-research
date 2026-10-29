@@ -1,0 +1,46 @@
+# Common report evidence
+
+The finite runner supplies every captured document body and the complete call to
+both author and independent reviewer. Annual MD&A, financial statements and notes
+remain present even when an index repeats Item 8 near the end of a filing. A
+correction and final check reuse this compact original view instead of expanding
+document citations into uncompressed duplicate filings. No new source search occurs
+after authorship. Frozen sources, hashes and numerical extraction are unchanged.
+
+For positional PDF tables, the author receives every selectable row ID with its
+original visible source-line address. Original page text is supplied once, with
+horizontal whitespace compacted and blank layout lines omitted. The published
+table uses the original selected lines in a scrollable preformatted block, keeping
+printed year, unit, duration and sparse-column alignment. An otherwise empty prior
+page containing a detached statement heading is retained as quoted context. No
+currency, scale, accounting period or financial amount is inferred by rendering.
+
+Known optional metric gaps use the same metric vocabulary as selections. Required
+coverage, unknown-ID rejection, source citations and selected-versus-missing checks
+remain enforced. Missing normalization is distinct from missing disclosure.
+
+Full-year EPS guidance ranges may enter the supplemental valuation inventory only
+when quoted from the bound call with an explicit annual scope, fiscal label,
+accounting basis, call date and recognized matching USD security. The renderer
+computes the range and midpoint forward P/E using Decimal arithmetic and retains
+the historical quote and guidance dates. Quarterly EPS is never annualized.
+Independent review must still verify accounting, share and ADR basis.
+
+Document-defined fiscal labels need not share a year with calendar endpoints.
+An exact quoted endpoint can establish a fiscal report date when it matches the
+original opening period and precedes the matched call. Contradictions still fail.
+
+Report-only collection recognizes simplified and traditional Chinese statement
+headings and quarter labels. Issuer-linked CNINFO disclosure archives use their
+public stock/organization-scoped query, with bounded pages and fresh PDF retrieval.
+Returned issuer IDs, dates, original titles and download URLs are checked. Summary,
+forecast and unrelated financial-adviser reports are not quarterly statements.
+The caller retains the archive responses and request bindings. This is upstream
+discovery, never a post-draft repair or an older-period substitution.
+
+All live tests remain new immutable runs. A historical failure is never edited or
+re-entered. New explicitly authorized retests bind historical outcome and cost
+receipts, retain the standard company ceiling, independent review, one correction
+and exact private publication, and do not reset the Terra campaign ledger.
+Recurring automation remains paused during validation and after successful tests
+until separately authorized.

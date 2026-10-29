@@ -73,7 +73,18 @@ def qualify(text,issuer,period,provenance,verify=None,*,always_verify=False):
     year,quarter=period;kind=answer.get('basis')
     require(kind in ('quarter','half_year','nine_months','full_year','second_half'),'Unknown report duration')
     require(kind=='quarter' or {'half_year':2,'nine_months':3,'full_year':4,'second_half':4}[kind]==quarter,'Report duration contradicts event')
-    require(str(year) in dated['text'],'Dated reporting evidence required')
+    dated_label=str(year) in dated['text']
+    if not dated_label and calendar=='document_defined':
+        # A non-calendar FY label can differ from the actual endpoint's year.
+        # Require the quoted original date to match the report's real endpoint
+        # and precede the independently matched call; never invent quarter dates.
+        from .earnings_events import DATE,read_date
+        end=identity.document_end(text)
+        published=provenance.get('event',{}).get('published_on')
+        quoted={read_date(m[0]).isoformat() for m in re.finditer(DATE,dated['text'],re.I)}
+        dated_label=bool(end and end in quoted and published and
+                         0<=(date.fromisoformat(published)-date.fromisoformat(end)).days<=150)
+    require(dated_label,'Dated reporting evidence required')
     if basis:require(kind==basis['basis'],'Model cannot override deterministic document duration')
     else:
         start=(quarter-1)*3+1 if kind=='quarter' else 7 if kind=='second_half' else 1

@@ -15,6 +15,45 @@ EPS_CONCEPTS={'us-gaap:EarningsPerShareDiluted','us-gaap:EarningsPerShareBasicAn
               'us-gaap:IncomeLossFromContinuingOperationsPerDilutedShare','ifrs-full:DilutedEarningsLossPerShare'}
 _CACHE={}
 
+def guidance_eps(text,source,prices):
+    """Extract quoted full-year USD EPS ranges, retaining the original scope.
+
+    No estimates are inferred from quarterly EPS. The matched call supplies its
+    disclosed fiscal label and date; accounting/share basis still gets review.
+    """
+    from .earnings_events import DATE,read_date
+    header=re.search(r'Earnings Call:\s*Q[1-4]\s+(20\d{2})\s*\n\s*('+DATE+r')',text[:2500],re.I)
+    quotes={(p['symbol'],p['currency']) for p in prices if p['document_id']==source['document_id']}
+    if not header or len(quotes)!=1:return []
+    symbol,currency=next(iter(quotes))
+    if currency!='USD':return []
+    result=[]
+    annual=r'\bFor\s+the\s+full[ -]year(?:\s+(?:of\s+|fiscal\s+)?(20\d{2}))?'
+    eps=r'(?:(non[- ]GAAP|GAAP)\s+)?(?:diluted\s+)?(?:earnings per (?:diluted )?share|EPS)\s+(?:of\s+|in the range of\s+|to be\s+|is expected to be\s+)?(?:approximately\s+)?\$([0-9]+\.[0-9]+)\s*(?:[-–—]|to)\s*\$?([0-9]+\.[0-9]+)'
+    for scope in re.finditer(annual,text,re.I):
+        body=text[scope.end():scope.end()+1600]
+        if not re.search(r'\b(?:expect|guidance|outlook|anticipat|raising)\w*',body[:350],re.I):continue
+        match=re.search(eps,body,re.I)
+        if not match:continue
+        prefix=body[:match.start()]
+        if re.search(r'\b(?:For\s+(?:the\s+)?(?:first|second|third|fourth)\s+quarter|For\s+Q[1-4])\b',prefix,re.I):continue
+        basis=match[1]
+        if not basis:
+            preceding=text[max(0,scope.start()-1400):scope.start()]
+            if re.search(r'these (?:numbers|figures) are all on a non[- ]GAAP basis',preceding,re.I):basis='non-GAAP'
+        if not basis:continue
+        low,high=map(financial._decimal,(match[2],match[3]))
+        if not 0<low<=high:continue
+        end=scope.end()+match.end();start=scope.start()
+        row={'kind':'annual_guidance','symbol':symbol,'currency':currency,'value':str((low+high)/2),
+             'low':str(low),'high':str(high),'fiscal_year':int(scope[1] or header[1]),
+             'guidance_date':read_date(header[2]).isoformat(),'basis':basis,'source_id':'transcript-source',
+             'document_id':source['document_id'],'source_sha256':source['sha256'],'start':start,'end':end,
+             'text':text[start:end],'period_start':None,'period_end':None,
+             'notice':'Management full-year guidance, not realized annual EPS. Verify original accounting and share basis; quote and guidance dates differ.'}
+        row['id']='E-'+storage.digest(row)[:20];result.append(row)
+    return result
+
 
 def source_id(document_id): return 'document-source-'+document_id[:20]
 
@@ -50,6 +89,7 @@ def build(bundle):
                      'date':datetime.strptime(quoted,'%b %d, %Y').date().isoformat(),'source_id':'transcript-source',
                      'document_id':s['document_id'],'source_sha256':s['sha256'],'start':match.start(),'end':match.end(),'text':match[0]}
                 row['id']='P-'+storage.digest(row)[:20];prices.append(row)
+            earnings.extend(guidance_eps(raw,s,prices))
             continue
         extracted=financial.extract_inline_xbrl(raw,{'document_id':s['document_id'],'raw_sha256':s['sha256']})
         parser=financial._Parser(raw);parser.feed(raw);parser.close()
@@ -104,5 +144,6 @@ def resolve(row,bundle,inventory=None):
     if len(prices)!=1 or len(eps)!=1:raise ValueError('Valuation selection must bind unique deterministic price and annual EPS observations')
     price,eps=prices[0],eps[0]
     if price['symbol']!=eps['symbol'] or price['currency']!=eps['currency']:raise ValueError('Price and filed EPS security/currency differ')
-    if eps['period_end']>price['date'] or financial._decimal(price['value'])<=0:raise ValueError('Positive dated price and previously reported annual earnings required')
+    cutoff=eps['guidance_date'] if eps.get('kind')=='annual_guidance' else eps['period_end']
+    if cutoff>price['date'] or financial._decimal(price['value'])<=0:raise ValueError('Positive dated price and previously reported annual earnings required')
     return {'price':price,'eps':eps,'accounting_basis':row['accounting_basis']}

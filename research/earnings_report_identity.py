@@ -197,7 +197,7 @@ def document_end(text):
     """An explicit opening reporting endpoint, never a calendar-quarter guess."""
     from .earnings_events import DATE, read_date
     opening=front(text)
-    pattern=r'(?:for\s+the\s+)?(?:quarterly\s+period|(?:fiscal\s+)?quarter|(?:three|six|nine|twelve)\s+months?|year)\s+ended\s+('+DATE+r')'
+    pattern=r'(?:for\s+the\s+)?(?:quarterly\s+period|(?:(?:first|second|third|fourth)\s+)?(?:fiscal\s+)?quarter(?:\s+(?:of\s+)?(?:fiscal\s+)?20\d{2})?|(?:three|six|nine|twelve)\s+months?|(?:fiscal\s+)?year)\s+ended\s+('+DATE+r')'
     match=re.search(pattern,opening,re.I)
     if not match:return None
     return read_date(match[1]).isoformat()

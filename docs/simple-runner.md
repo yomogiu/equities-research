@@ -1,5 +1,12 @@
 # Finite earnings-report runner
 
+The current evidence contract uses one complete captured-document view for author,
+independent reviewer, correction and final check. This supersedes the annual
+MD&A omissions described below. Repeated annual Item 8 headings cannot truncate
+the source. PDF tables are selected through original line addresses and published
+in their printed alignment; numerical columns are never repositioned heuristically.
+See `docs/simple-evidence-contract.md` for the current contract.
+
 `research.earnings_simple_runner` is the default execution path for new reports. It does not import
 any sequential controller, single-author controller, recovery graph or handoff.
 `earnings_report_content` holds shared report schemas, period resolution and rendering;

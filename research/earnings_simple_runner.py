@@ -35,30 +35,21 @@ def save(path, value):
 
 
 def packet(bundle):
-    """Complete current materials + annual financial sections + full fact inventory.
+    """One common original-source view for author, reviewer and correction.
 
-    Annual business/risk prose is explicitly outside this event-update context.
-    Never drop facts or source tables. Preserve original offsets for cited spans.
+    Table selection can cite any captured page, including annual MD&A. Therefore
+    no heading heuristic may remove those pages from the independent review.
     """
     value=content.packet(bundle)
     value['version']=VERSION
-    for doc in value['documents']:
-        text=doc['text']
-        if doc['kind']!='filing' or not re.search(r'FORM\s+10-K\b',text[:4000],re.I):continue
-        headings=list(re.finditer(r'(?im)^\s*item\s+8[.\s]+financial\s+statements',text))
-        if len(headings)<2:continue  # ambiguous layout: keep original body
-        start=headings[-1].start()
-        doc['start']+=start;doc['text']=text[start:]
-        doc['omitted_prefix']='Annual business/risk/MD&A prose omitted from event-update context; complete extracted facts and original tables retained. Financial-statement section through document end supplied.'
-    value['document_scopes']=[row for row in value['document_scopes'] if row[2]>=value['documents'][row[1]]['start']]
     # Preserve every call-index field/value once, without repeating object keys.
     for name,rows in value['transcript_index'].items():
         if rows and all(set(row)==set(rows[0]) for row in rows):
             columns=list(rows[0])
             value['transcript_index'][name]={'columns':columns,'rows':[[row[k] for k in columns] for row in rows]}
-    value['source_policy']='All extracted facts and captured tables; full current filing, release/presentation and call; annual financial-statement sections and appendices. Annual business/risk/MD&A prose is outside the writing context. Originals remain archived. Missingness is explicit, not evidence of issuer nondisclosure.'
+    value['source_policy']='All extracted facts and captured tables; complete captured filing, release/presentation and call, including annual MD&A, financial statements and notes. Author and independent reviewer receive the same original document view. Missingness is explicit, not evidence of issuer nondisclosure.'
     from . import earnings_report_display
-    return earnings_report_display.compact(value)
+    return earnings_report_display.compact(value,bundle)
 
 
 def validate_review(value, known):
@@ -169,56 +160,19 @@ def changed_claims(before, after):
 
 
 def revision_packet(bundle, original, value, review, include_inventory=False, before=None):
-    """Full call plus complete original scopes for claims and findings, interned once."""
-    findings=[f for f in review['findings'] if f['severity']=='blocking']
-    locations={f['location'] for f in findings}
-    if before is not None:
-        claims=changed_claims(before,value)
-    else:
-        analysis=value['analysis']
-        claims={k:analysis.get(k,analysis['sections'].get(k)) for k in locations}
-        if 'valuation' in locations:claims['valuation']=analysis['report_support']['valuation']
-    ids=content.cited(claims)|content.cited(findings)
-    # Financial corrections get the complete inventory, not all unrelated old
-    # narrative sources again. Final checking sources every changed claim.
-    if before is None and 'financial_tables' in locations:ids=content.cited(findings)
-    if before is not None:
-        changed_selection=claims.get('financial_selection',{})
-        def rows(key):
-            value=changed_selection.get(key,[])
-            return value.get('removed',[]) if isinstance(value,dict) else value
-        for row in rows('rows'):ids.update(row.get('fact_ids',[]))
-        tables={t['id']:t for t in bundle['packet_inventory']['tables']}
-        for row in rows('reported_tables'):ids.add(tables[row['table_id']]['source_id'])
-    # Complete transcript already supplies all exchanges, sections and turns.
-    ids={i for i in ids if i.startswith(('D','F','document-source-'))}
-    records={};support=[]
-    for row in evidence.source_slices(bundle['manifest'],sorted(ids)):
-        bound={'id':row['id'],'spans':[]}
-        for span in row['spans']:
-            key=storage.digest(span)
-            records.setdefault(key,span);bound['spans'].append(key)
-        if 'observation' in row:bound['observation']=row['observation']
-        support.append(bound)
-    result={k:deepcopy(original[k]) for k in ('transcript','transcript_source_id','transcript_index','scope_notes')}
-    result.update(original_support=support,original_records=records,
-        source_policy='Complete original scopes for blocking findings and changed components, plus full call. Unchanged components retain their initial independent full-packet review; every changed component receives original evidence. Final checking covers the full report and every criterion. No external retrieval or new source material.',
-        supplied_scope_ids=sorted(ids|{i for i in evidence._scopes(bundle) if not i.startswith(('D','F','document-source-'))}))
-    if include_inventory:result['financial_inventory']=original['financial_inventory']
-    return result
+    """Reuse the common compact source view; never expand document citations.
+
+    Expanding a document citation to an uncompressed annual filing duplicated
+    evidence and could make a small correction exceed the original author input.
+    The shared view retains every original page once and all original source IDs.
+    """
+    return {k:deepcopy(v) for k,v in original.items()
+            if include_inventory or k!='financial_inventory'}
 
 
 def validation_packet(original):
-    """Mapping correction needs the full inventory, not repeated annual prose."""
-    result=deepcopy(original)
-    retained=[];remap={}
-    for index,doc in enumerate(result['documents']):
-        if str(doc.get('omitted_prefix','')).startswith('Annual business/'):continue
-        remap[index]=len(retained);retained.append(doc)
-    result['documents']=retained
-    result['document_scopes']=[[i,remap[d],a,b] for i,d,a,b in result['document_scopes'] if d in remap]
-    result['source_policy']='Compiler correction: complete fact inventory and captured original tables from every document; complete current materials and call. Annual narrative was supplied to the author and is omitted here; preserve its existing claims. Final independent review receives the original financial-statement context.'
-    return result
+    """Compiler corrections use the same originals and complete inventory."""
+    return deepcopy(original)
 
 
 def known_sources(payload,bundle):
@@ -390,6 +344,7 @@ def run_batch(root, manifest, prepare, publish, persist, *, invoke=transport.run
             results.append(result)
             save(root/'summary.json',{'version':VERSION,'code_commit':manifest['code_commit'],'results':results,
                 'tokens_used':sum(r['tokens_used'] for r in results),'usage_complete':all(r['usage_complete'] for r in results),
+                'historical_tokens_used':sum(r['tokens_used']+r.get('recovery_tokens',0) for r in manifest.get('historical_outcomes',[])),
                 'complete':len(results)==len(manifest['companies']),'all_published':all(r['status']=='published' for r in results),
                 'automation':manifest.get('automation','PAUSED')})
             persist([root/spec['job_key'],root/'summary.json'])

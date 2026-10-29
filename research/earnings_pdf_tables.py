@@ -32,7 +32,7 @@ def tables(text, source):
             else:clusters.append([position])
         anchors=[sorted(c)[len(c)//2] for c in clusters if len(c)>=2]
         if len(anchors)<2:continue
-        rows=[];cells=[]
+        rows=[];cells=[];source_lines=[]
         for base,body,pieces in lines:
             if not pieces:continue
             ids=[];used=set()
@@ -57,11 +57,23 @@ def tables(text, source):
                     'tagged':False,'nested_table':False,'layout':'pdf_unresolved_line'})
                 ids=[identifier]
             rows.append({'id':'R'+str(len(rows)+1),'cells':ids})
+            source_lines.append({'row_id':rows[-1]['id'],'text':body,'start':base,'end':base+len(body)})
+        preceding=[]
+        if ordinal>1:
+            previous=pages[ordinal-2]
+            previous_text=text[previous.end():marker.start()]
+            # A PDF sometimes places the statement title/units on an otherwise
+            # empty page immediately before its numbers. Preserve that heading
+            # as quoted context, never infer a currency or scale from it.
+            if len(previous_text)<3500 and not re.search(r'\d[\d,.]*[ \t]{2,}\(?[\d,]+\.\d',previous_text):
+                preceding=[{'text':previous_text.strip(),'start':previous.end(),'end':marker.start(),
+                            'raw_span_sha256':financial.digest(previous_text.encode())}]
         result.append({'id':'T-'+storage.digest([source['document_id'],source['sha256'],marker.start()])[:20],
             'document_id':source['document_id'],'source_sha256':source['sha256'],
             'source_id':'document-source-'+source['document_id'][:20],'start':marker.start(),'end':end,
             'raw_span_sha256':financial.digest(text[marker.start():end].encode()),'rows':rows,'cells':cells,'ordinal':ordinal,
-            'context':[{'text':marker.group().strip(),
+            'source_lines':source_lines,
+            'context':[*preceding,{'text':marker.group().strip(),
                         'start':marker.start(),'end':marker.end(),'raw_span_sha256':financial.digest(marker.group().encode())}],
             'representation':'pdf_layout_text','limitation':'Positional extraction; wrapped or ambiguous rows retained verbatim. Verify against complete original page.'})
     return result
@@ -75,7 +87,7 @@ def render(table):
     """
     from . import earnings_markdown_render as markdown
     cells={c['id']:c for c in table['cells']};chosen=set(table['selected_row_ids'])
-    width=max(c['column']+c['colspan'] for c in cells.values());rows=[]
+    width=max(c['column']+c['colspan'] for c in cells.values());rows=[];kept=[]
     for row in table['rows']:
         values=[cells[i] for i in row['cells']]
         numeric=sum(bool(NUMBER.fullmatch(c['text'])) for c in values)
@@ -83,11 +95,23 @@ def render(table):
         header=bool(re.search(r'^\W*(?:amounts?|note|currency|units?|USD|EUR|NOK|GBP|SEK|CHF)\b',label,re.I)
                     or '單位' in label
                     or re.match(r'^\s*\(?in\s+(?:[€£$]|USD|EUR|NOK|GBP|SEK|CHF|thousands?|millions?|billions?|percent)',label,re.I))
+        numeric_cells=[c['text'] for c in values if NUMBER.fullmatch(c['text'])]
+        header=header or bool(numeric_cells and all(re.fullmatch(r'20\d{2}',s) for s in numeric_cells)) or bool(re.search(r'民國|民国|年度|months? ended|quarter ended|year ended',label,re.I))
         data=not header and numeric>=2 and any(re.search('[A-Za-z\u3400-\u9fff]',c['text']) for c in values)
         if data and row['id'] not in chosen:continue
+        kept.append(row['id'])
         line=['']*width
         for c in values:line[c['column']]=c['text']
         rows.append(line)
+    if table.get('source_lines'):
+        # Positional heuristics are useful for discovery, but must not move
+        # numeric cells under guessed columns in the published report.
+        lines=[*[c['text'] for c in table['context']],*[s['text'] for s in table['source_lines'] if s['row_id'] in kept]]
+        block='\n'.join(lines)
+        fence='`'*max(3,max((len(s) for s in re.findall(r'`+',block)),default=0)+1)
+        return ['### Reported financial detail','',
+                'Original PDF layout; selected rows retain their printed alignment, units and period headings.',
+                '',markdown.refs([table['source_id']]),'',fence+'text',*lines,fence,'']
     columns=[i for i in range(width) if any(r[i] for r in rows)]
     lines=['### Reported financial detail','',*[c['text'] for c in table['context']],
            'Verbatim PDF rows; original units and period headers retained.','',markdown.refs([table['source_id']]),'',

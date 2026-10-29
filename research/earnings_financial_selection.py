@@ -169,7 +169,7 @@ def validate(value,bundle):
         require(len(signatures)==1,'A row cannot mix entities, currencies, share classes or segments')
     gaps=set()
     for row in value['gaps']:
-        require(set(row)=={'metric','reason','citations'} and row['metric'] in REQUIRED,'Known completeness gap required')
+        require(set(row)=={'metric','reason','citations'} and row['metric'] in REQUIRED|METRICS,'Known completeness gap required')
         require(row['metric'] not in gaps,'Duplicate completeness gap');gaps.add(row['metric']);text(row['reason']);citations(row['citations'])
     covered|={'gross_margin'} if {'gross_profit','revenue'}<=covered or {'cost_of_revenue','revenue'}<=covered else set()
     covered|={'total_debt'} if {'current_debt','noncurrent_debt'}<=covered else set()

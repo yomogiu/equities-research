@@ -50,6 +50,18 @@ class SourceVerificationTests(unittest.TestCase):
     def test_short_period_heading_is_valid(self):
         self.assertEqual(self.qualify({**self.answer,'period_quote':'Q3 2040'})['decision_method'],'bounded_model')
 
+    def test_fiscal_label_may_differ_from_explicit_calendar_endpoint(self):
+        text='[Page 1]\nThis report presents Fictional Widget continuing operations.\nFor the second quarter ended July 31, 2040\n'
+        p={**self.provenance,'report_text_sha256':hashlib.sha256(text.encode()).hexdigest(),
+           'event':{'fiscal_calendar':'document_defined','published_on':'2040-08-20'}}
+        answer={**self.answer,'issuer_quote':'Fictional Widget continuing operations.',
+                'period_quote':'second quarter ended July 31, 2040'}
+        result=v.qualify(text,'Fictional Widget',(2041,2),p,Mock(return_value=answer))
+        self.assertEqual(result['report_period']['end'],'2040-07-31')
+        self.assertIsNone(result['report_period']['start'])
+        with self.assertRaisesRegex(ValueError,'Dated reporting'):
+            v.qualify(text,'Fictional Widget',(2041,2),p,Mock(return_value={**answer,'period_quote':'This report presents Fictional Widget'}))
+
     def test_transport_binding_and_tamper_detection(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);raw=root/'raw.txt';raw.write_text(self.text)

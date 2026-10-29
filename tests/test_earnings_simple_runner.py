@@ -197,11 +197,12 @@ class SimpleRunnerTests(unittest.TestCase):
         after['financial_selection']['notes']=[{'text':'Fictional revised basis.','citations':['D001']}]
         review=simple.read(self.job/'review.json');review['findings']=[{'severity':'blocking','location':'cash','citations':[]}]
         result=simple.revision_packet(bundle,original,after,review,before=value)
-        self.assertEqual([row['id'] for row in result['original_support']],['D001'])
+        self.assertEqual(result['documents'],original['documents'])
+        self.assertNotIn('original_records',result)
         self.assertNotIn('financial_inventory',result)
         review['findings'][0]['location']='financial_tables'
         correction=simple.revision_packet(bundle,original,value,review,True)
-        self.assertEqual(correction['original_support'],[])
+        self.assertEqual(correction['documents'],original['documents'])
         self.assertEqual(correction['financial_inventory'],original['financial_inventory'])
         self.assertEqual(simple.changed_claims({'a':1,'b':2},{'a':1}),{'b':{'removed':2}})
 

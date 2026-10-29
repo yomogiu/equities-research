@@ -20,8 +20,12 @@ def candidates(body,url,as_of):
         match=re.search(r'(20\d{2})\s*年?\s*第?\s*([1-4])\s*季',label)
         if not match:
             match=re.search(r'(20\d{2})\s*[- ]?\s*Q([1-4])',label,re.I)
-        if not match or not re.search(r'合併財務|consolidated|financial report',label,re.I):continue
-        year,quarter=map(int,match.groups())
+        chinese=re.search(r'(20\d{2})\s*年\s*(?:第?([一二三四1234])季(?:度)?|半年度)报告(?:全文)?\s*$',label)
+        if re.search(r'摘要|预告|預告|募集|督导|督導',label):continue
+        if chinese:
+            year=int(chinese[1]);quarter=2 if chinese[2] is None else int(chinese[2]) if chinese[2].isdigit() else '一二三四'.index(chinese[2])+1
+        elif match and re.search(r'合併財務|consolidated|financial report',label,re.I):year,quarter=map(int,match.groups())
+        else:continue
         from calendar import monthrange
         end=date(year,quarter*3,monthrange(year,quarter*3)[1])
         if end<=as_of:result.append({'year':year,'quarter':quarter,'end':end.isoformat(),'url':target,'label':label})
@@ -39,7 +43,8 @@ def qualify(text,profile,event):
     require(quote,'Official report issuer identity missing from opening pages')
     require(len(text)>10000 and re.search(r'\[Page \d+\]',text),'Complete extracted report required')
     english=all(re.search(x,text,re.I) for x in [r'balance sheet|financial position',r'income|profit|operations',r'cash flows?'])
-    chinese=all(x in text for x in ['資產負債表','綜合損益表','現金流量表'])
+    chinese=(all(x in text for x in ['資產負債表','綜合損益表','現金流量表']) or
+             all(x in text for x in ['资产负债表','利润表','现金流量表']))
     require(english or chinese,'Financial statements absent from report')
     year,quarter=event['year'],event['quarter']
     # Republic of China dates on Taiwan statements are explicit calendar years,
@@ -48,7 +53,7 @@ def qualify(text,profile,event):
     roc=''.join(digits[int(x)] for x in str(year-1911))
     labels=[str(year),str(year-1911),roc]
     ordinal=['','一','二','三','四'][quarter]
-    title=re.search(r'(?:民國\s*)?(?:'+ '|'.join(labels)+r')\s*年[^\n]{0,45}(?:第'+ordinal+r'季|第'+str(quarter)+r'季|Q'+str(quarter)+r')',opening,re.I)
+    title=re.search(r'(?:民國\s*)?(?:'+ '|'.join(labels)+r')\s*年[^\n]{0,45}(?:第?'+ordinal+r'季|第?'+str(quarter)+r'季|Q'+str(quarter)+('|'+'半年度' if quarter==2 else '')+r')',opening,re.I)
     require(title,'Original report heading does not confirm discovered year and quarter')
     return {'issuer_quote':quote,'period_quote':title.group(),'language':'Chinese' if chinese else 'English',
             'basis':'quarter_and_cumulative','end':event['end']}
@@ -61,11 +66,21 @@ def prepare(output,spec,*,client=None):
     collection=output/'collection';require(not collection.exists(),'Fresh collection directory required');collection.mkdir()
     client=client or Client(collection,set(profile['allowed_hosts']),PUBLIC_USER_AGENT,max_requests=8,max_bytes=64*1024*1024)
     ledger=[]
-    def fetch(url,kind):
-        b,e=client.get(url,0);ledger.append({'url':url,'kind':kind,'status':'retrieved',**e});return b,e
+    def fetch(url,kind,*,form=None):
+        from .fetch import FetchError
+        try:
+            b,e=client.get(url,0,form=form) if form is not None else client.get(url,0)
+            ledger.append({'url':url,'kind':kind,'status':'retrieved',**e,**({'public_form':form} if form else {})});return b,e
+        except FetchError as exc:
+            ledger.append({'url':url,'kind':kind,'status':'failed','reason':exc.code});raise
     try:
         body,_=fetch(profile['official_index'],'official_discovery')
-        event=candidates(body,profile['official_index'],as_of)
+        try:event=candidates(body,profile['official_index'],as_of)
+        except ValueError as exc:
+            if str(exc)!='No dated consolidated report links found on official archive':raise
+            from .earnings_disclosure_archive import discover
+            archive,archive_url=discover(body,profile['official_index'],as_of,fetch)
+            event=candidates(archive,archive_url,as_of)
         raw,http=fetch(event['url'],'official_report')
         require(raw.startswith(b'%PDF'),'Original financial PDF required')
         text,_,status=extract(raw,http['content_type'],event['url'])

@@ -4,9 +4,10 @@ import ipaddress
 import json
 import socket
 import time
+from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit, parse_qsl
+from urllib.parse import urlsplit, parse_qsl, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 # Public-site compatibility syntax, retaining the actual automated client identity.
@@ -102,22 +103,24 @@ class Client:
             raise FetchError('cache_integrity_error')
         return data
 
-    def _request(self, url, headers):
+    def _request(self, url, headers, data=None):
         if self.transport:
-            return self.transport(url, headers)
-        req = Request(url, headers=headers)
+            return self.transport(url, headers, data) if data is not None else self.transport(url, headers)
+        req = Request(url, headers=headers, data=data)
         try:
             with build_opener(Redirects(self.hosts)).open(req, timeout=25) as response:
                 body = response.read(self.max_document_bytes + 1)
                 return response.status, dict(response.headers.items()), body, response.url
         except HTTPError as exc:
             return exc.code, dict(exc.headers.items()), b'', url
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError, HTTPException) as exc:
             raise FetchError('network_error') from exc
 
-    def get(self, url, fresh_seconds=900):
+    def get(self, url, fresh_seconds=900, *, form=None):
         check_url(url, self.hosts, resolve=self.transport is None)
-        entry = self.cache.get(url)
+        data=None if form is None else urlencode(form).encode()
+        key=url if data is None else url+'#POST-'+hashlib.sha256(data).hexdigest()
+        entry = self.cache.get(key)
         cached = self._cached(entry)
         now = time.time()
         if cached is not None and now - entry.get('checked_at', 0) < fresh_seconds:
@@ -125,6 +128,7 @@ class Client:
             return cached, entry
         headers = {'User-Agent': self.user_agent, 'Accept-Encoding': 'identity',
                    'Accept': 'application/json,text/html,application/pdf,text/plain,application/xml,*/*'}
+        if data is not None:headers['Content-Type']='application/x-www-form-urlencoded; charset=UTF-8'
         if cached is not None:
             if entry.get('etag'):
                 headers['If-None-Match'] = entry['etag']
@@ -136,7 +140,7 @@ class Client:
             self.sleep(max(0, self.interval - (time.monotonic() - self.last_request)))
             self.requests += 1
             self.last_request = time.monotonic()
-            status, result_headers, body, final_url = self._request(url, headers)
+            status, result_headers, body, final_url = self._request(url, headers, data) if data is not None else self._request(url, headers)
             check_url(final_url, self.hosts, resolve=self.transport is None)
             h = {k.lower(): v for k, v in result_headers.items()}
             if status == 304 and cached is not None:
@@ -164,7 +168,8 @@ class Client:
                      'content_type': h.get('content-type', ''), 'etag': h.get('etag'),
                      'last_modified': h.get('last-modified'), 'final_url': final_url,
                      'checked_at': now}
-            self.cache[url] = entry
+            if data is not None:entry.update(request_method='POST',request_body_sha256=hashlib.sha256(data).hexdigest())
+            self.cache[key] = entry
             save_json(self.path, self.cache)
             return body, entry
         raise FetchError('retry_later')

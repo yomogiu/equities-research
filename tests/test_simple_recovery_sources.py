@@ -60,10 +60,10 @@ class RecoverySources(unittest.TestCase):
                 'financial_inventory':{'cells':['12,345','10,000','(100)','(90)']},'source_policy':'Financial event update.'}
         out=display.compact(packet);shown=out['documents'][0]['text']
         self.assertIn('12,345\t10,000',shown);self.assertIn('Material weakness disclosed.',shown)
-        self.assertNotIn('Proxy material.',shown)
+        self.assertIn('Proxy material.',shown)
         self.assertEqual(out['financial_inventory'],packet['financial_inventory'])
         self.assertEqual(packet['documents'][0]['text'],text)
-        self.assertEqual([x[0] for x in out['document_scopes']],['D1'])
+        self.assertEqual([x[0] for x in out['document_scopes']],['D1','D2'])
         packet['financial_inventory']['original_tables']={'rows':[['R1',[[0,'Revenue       12,345'],[1,'10,000']]]]}
         out=display.compact(packet)
         self.assertEqual(out['financial_inventory']['original_tables']['rows'],[['R1',[[0,'Revenue\t12,345'],[1,'10,000']]]])

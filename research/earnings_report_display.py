@@ -1,9 +1,29 @@
 """Compact layout in the model view; frozen originals and table cells stay exact."""
 from copy import deepcopy
 import hashlib,re
+from bisect import bisect_right
 
-def compact(packet):
+def compact(packet, bundle=None):
     result=deepcopy(packet)
+    addressed={}
+    if bundle:
+        # PDF cell text already occurs in the complete original document. Index
+        # every selectable row to a visible original line instead of printing
+        # that entire table a second time. Raw cells and extraction stay frozen.
+        for doc in result['documents']:
+            if any(t.get('representation')=='pdf_layout_text' and t['source_id']==doc['source_id']
+                   for t in bundle.get('packet_inventory',{}).get('tables',[])):
+                addressed[doc['source_id']]=[doc['start'],*[doc['start']+m.end() for m in re.finditer('\n',doc['text'])]]
+        raw_tables={t['id']:t for t in bundle.get('packet_inventory',{}).get('tables',[])}
+        tables=result.get('financial_inventory',{}).get('original_tables',{})
+        for table in tables.get('tables',[]):
+            raw=raw_tables.get(table['id']);starts=addressed.get(table['source_id'])
+            if not raw or not starts:continue
+            cells={c['id']:c for c in raw['cells']}
+            table['rows']=[[row['id'],bisect_right(starts,min(cells[i]['start'] for i in row['cells']))]
+                           for row in raw['rows']]
+            table['row_format']='[row_id, source_line_number]; read LN in the document with this source_id. Values, headers and units appear there once. These are original line addresses, not calculated values.'
+            table['representation']='pdf_original_line_index'
     def table_view(value):
         if isinstance(value,str):return re.sub(r'[ \t]{2,}','\t',value)
         if isinstance(value,list):return [table_view(x) for x in value]
@@ -13,20 +33,16 @@ def compact(packet):
         result['financial_inventory']['original_tables']=table_view(result['financial_inventory']['original_tables'])
     for doc in result['documents']:
         original=doc['text'];end=doc['start']+len(original)
-        if str(doc.get('omitted_prefix','')).startswith('Annual business/'):
-            # Financial statements and controls remain. Directors, proxy and
-            # exhibit appendices are outside this financial event-update view.
-            suffix=re.search(r'(?im)^\s*Item\s+10[.\s]+Directors\b',original)
-            if suffix:
-                original=original[:suffix.start()];end=doc['start']+len(original)
-                doc['omitted_suffix']='Annual directors, proxy and exhibit appendices omitted from model view. Full original and complete extracted table inventory remain frozen.'
         shown=re.sub(r'[ \t]{2,}','\t',original)
         if re.sub(r'[ \t]','',shown)!=re.sub(r'[ \t]','',original):raise ValueError('Display compaction changed source characters')
+        if doc.get('source_id') in addressed:
+            shown='\n'.join('L'+str(i)+': '+line.strip(' \t') for i,line in enumerate(shown.split('\n'),1)
+                            if line.strip(' \t'))
         doc['text']=shown
         doc['display_projection']={'rule':'horizontal-layout-v1','original_start':doc['start'],'original_end':end,
             'original_span_sha256':hashlib.sha256(original.encode()).hexdigest(),
-            'notice':'Repeated horizontal layout spaces are displayed as tabs in documents and table text; line breaks and non-layout characters are unchanged. Offsets refer to the frozen original, not this display. Original table IDs and positions are unchanged. Financial selection and rendering use the frozen original cells, units and dates.'}
+            'notice':'Horizontal layout spaces are compacted; original PDF lines are visibly addressed as LN, with blank layout lines omitted. All non-layout source characters remain. Offsets refer to frozen originals. Financial selection and rendering use original cells, units and dates.'}
     result['document_scopes']=[row for row in result['document_scopes']
         if row[2]>=result['documents'][row[1]]['start'] and row[3]<=result['documents'][row[1]]['display_projection']['original_end']]
-    result['source_policy']+=' Model document views compact horizontal layout and omit annual directors/proxy/exhibit appendices after financial statements and controls. Complete original files and extracted table inventory remain unchanged; no metric or source absence is inferred from this view.'
+    result['source_policy']+=' Model views compact layout only and retain all captured document content. Original files and extracted tables remain unchanged; no metric or source absence is inferred from display formatting.'
     return result

@@ -43,6 +43,13 @@ def render(markdown, *, status='draft', original_exchanges=None):
     while i<len(lines):
         line=lines[i]
         if not line.strip():i+=1;continue
+        fence=re.fullmatch(r'(`{3,})(?:text)?',line)
+        if fence:
+            close=fence[1];rows=[];i+=1
+            while i<len(lines) and lines[i]!=close:rows.append(lines[i]);i+=1
+            if i==len(lines):raise ValueError('Unclosed original-layout block')
+            parts.append('<div class="table-scroll"><pre class="source-layout">'+html.escape('\n'.join(rows))+'</pre></div>')
+            i+=1;continue
         exchange=re.fullmatch(r':::original-qa ([A-Za-z0-9_-]+)',line)
         if exchange:
             identifier=exchange[1]
@@ -88,7 +95,7 @@ def render(markdown, *, status='draft', original_exchanges=None):
             while i<len(lines) and lines[i].startswith('- '):rows.append(lines[i][2:]);i+=1
             parts.append('<ul>'+''.join('<li>'+inline(x)+'</li>' for x in rows)+'</ul>');continue
         rows=[line];i+=1
-        while i<len(lines) and lines[i].strip() and not re.match(r'^(#{1,3} |> |- |\| |\[\^|:::original-qa )',lines[i]):rows.append(lines[i]);i+=1
+        while i<len(lines) and lines[i].strip() and not re.match(r'^(#{1,3} |> |- |\| |\[\^|:::original-qa |`{3,})',lines[i]):rows.append(lines[i]);i+=1
         text='\n'.join(rows)
         tone=next((key for name,key in [('Improving','up'),('Deteriorating','down'),('Conditional','conditional'),('Unresolved','flat')] if text.startswith(name+' · ')),None)
         parts.append('<p'+(' class="signal-label '+tone+'"' if tone else '')+'>'+inline(text)+'</p>')

@@ -53,7 +53,13 @@ def validate(support, analysis, manifest):
         with localcontext() as ctx:
             ctx.prec=40
             multiple=str((Decimal(price['value'])/Decimal(eps['value'])).quantize(Decimal('0.01'))) if Decimal(eps['value'])>0 else None
-        computed.append({**row,'multiple':multiple})
+        values={}
+        if eps.get('kind')=='annual_guidance':
+            with localcontext() as ctx:
+                ctx.prec=40
+                values={'range_low':str((Decimal(price['value'])/Decimal(eps['high'])).quantize(Decimal('0.01'))),
+                        'range_high':str((Decimal(price['value'])/Decimal(eps['low'])).quantize(Decimal('0.01')))}
+        computed.append({**row,'multiple':multiple,**values})
     return computed
 
 
@@ -66,7 +72,11 @@ def render(support,analysis,manifest):
                 '| --- | --- | --- | --- | --- | --- |']
         for row in computed:
             refs=markdown.refs([row['price']['source_id'],row['eps']['source_id']])
-            values=[row['price']['symbol']+' / filed share class',row['price']['date'],row['price']['currency']+' '+row['price']['value'],row['eps']['value']+' / '+row['accounting_basis'],'annual '+row['eps']['period_start']+' – '+row['eps']['period_end'],(row['multiple']+'×' if row['multiple'] is not None else 'N/M (nonpositive earnings)')+' '+refs]
+            forward=row['eps'].get('kind')=='annual_guidance'
+            period=('FY'+str(row['eps']['fiscal_year'])+' management guidance, issued '+row['eps']['guidance_date']) if forward else 'annual '+row['eps']['period_start']+' – '+row['eps']['period_end']
+            eps_value=(row['eps']['low']+'–'+row['eps']['high']) if forward else row['eps']['value']
+            multiple=(row['range_low']+'–'+row['range_high']+'× forward; '+row['multiple']+'× midpoint') if forward else (row['multiple']+'×' if row['multiple'] is not None else 'N/M (nonpositive earnings)')
+            values=[row['price']['symbol']+' / source share basis',row['price']['date'],row['price']['currency']+' '+row['price']['value'],eps_value+' / '+row['accounting_basis'],period,multiple+' '+refs]
             lines.append('| '+' | '.join(markdown.cell(v) for v in values)+' |')
         lines.append('')
     if not computed and support['valuation']['gap'].strip():lines += [support['valuation']['gap']+' '+markdown.refs(support['valuation']['citations']),'']
