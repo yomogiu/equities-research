@@ -1,10 +1,12 @@
 # Finite earnings-report runner
 
-The current evidence contract uses one complete captured-document view for author,
-independent reviewer, correction and final check. This supersedes the annual
-MD&A omissions described below. Repeated annual Item 8 headings cannot truncate
-the source. PDF tables are selected through original line addresses and published
-in their printed alignment; numerical columns are never repositioned heuristically.
+The current evidence contract uses the same original financial source view for
+author, independent reviewer, correction and final check. Annual MD&A, financial
+statements, notes and every captured table remain present. Repeated annual Item 8
+headings cannot truncate MD&A. Explicitly bounded large annual views omit other
+pages while retaining the complete original archive. PDF rows have short bound
+selection IDs printed beside their values and publish in their original alignment;
+numerical columns are never repositioned heuristically.
 See `docs/simple-evidence-contract.md` for the current contract.
 
 `research.earnings_simple_runner` is the default execution path for new reports. It does not import
@@ -28,9 +30,9 @@ candidates remain immutable. Unknown usage stays unknown.
 
 The author receives the complete extracted financial inventory and captured tables,
 full current-quarter filing/release/presentation/call, and annual financial statements,
-notes and appendices. Annual business/risk/MD&A prose is explicitly excluded when
-standard repeated Item 8 headings identify the financial-statement section. Ambiguous
-layouts retain the full original body. All original files and numeric extraction remain
+notes and MD&A. A large SEC annual view requires substantive Item 7 -> Item 8 -> Item 9
+boundaries before omitting other annual pages; every captured table page stays present.
+Unrecognized layouts retain the full original body. All original files and numeric extraction remain
 archived. An author selects existing IDs; code computes tables and multiples. Missing
 inputs remain visible gaps; source collection is upstream and no post-draft search occurs.
 
