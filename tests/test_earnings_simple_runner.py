@@ -57,6 +57,24 @@ class SimpleRunnerTests(unittest.TestCase):
     def test_publish_without_correction_and_terminal_reentry(self):
         value=self.run_one();self.assertEqual(value['status'],'published',value.get('reason'));self.assertEqual(value['tokens_used'],200)
         self.assertEqual(self.calls,['author','review']);self.assertEqual(self.run_one(),value);self.assertEqual(len(self.calls),2)
+    def test_eps_register_reaches_both_roles_and_renders_without_an_extra_model_call(self):
+        from test_earnings_eps_contract import HEADER,NOTE
+        raw=self.root/'eps.pdf';raw.write_bytes(b'%PDF fictional EPS source')
+        text=self.root/'eps.txt';text.write_text(HEADER+NOTE)
+        case=simple.read(self.case)
+        case['sources'] += [{'document_id':'fictional-eps','kind':'filing','representation':kind,'path':str(path),'sha256':simple.storage.sha(path)} for kind,path in [('raw',raw),('text',text)]]
+        simple.save(self.case,case);original=self.invoke;registries=[]
+        def invoke(directory,prompt,model,effort,bindings,index,**options):
+            packet=context.Evidence(index,self.root/'unused.jsonl',_replay=True).artifacts['single_report_packet']
+            registry=packet['eps_validation'];registries.append(registry)
+            self.assertTrue(registry['read_only']);self.assertTrue(any(r['value']=='2.00' and r['dilution']=='diluted' for r in registry['records']))
+            if bindings['role']=='single_report_review':self.assertIn('Reported diluted EPS',packet['candidate'])
+            return original(directory,prompt,model,effort,bindings,index,**options)
+        result=simple.run_company(self.job,self.spec,self.prepare,self.publish,invoke=invoke)
+        self.assertEqual(result['status'],'published',result.get('reason'));self.assertEqual(self.calls,['author','review'])
+        self.assertEqual(registries[0],registries[1]);self.assertEqual(simple.read(self.job/'eps-validation.json'),registries[0])
+        self.assertIn('Matches disclosed earnings and diluted shares',(self.job/'report.md').read_text())
+
     def test_advisory_does_not_trigger_correction(self):
         self.finding='advisory';value=self.run_one();self.assertEqual(value['status'],'published',value.get('reason'));self.assertEqual(len(self.calls),2)
     def test_one_correction_and_fresh_check(self):

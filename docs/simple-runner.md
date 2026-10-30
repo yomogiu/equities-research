@@ -269,3 +269,28 @@ page, including exact dates and units, when the current page starts with continu
 data. New current-page statements prevent stale header inheritance. Selected source
 qualifications are rendered in the report's source/calculation notes, not left only
 in hidden selector metadata. Neither path infers values or changes arithmetic.
+
+### Source-bound EPS qualification
+
+Before authorship, `earnings_eps_contract` builds a read-only EPS register from
+qualified tagged facts and recognized original PDF rows. Currency, duration/end,
+basic versus diluted, accounting basis, share class, exact source row/column and
+provenance remain separate fields. Missing calendar starts are not invented.
+PDF comparison headers may be wrapped; ambiguous columns, currency or class stay
+unqualified. Original basic/unspecified EPS remains in the original inventory.
+
+Code renders reported diluted EPS and compatible QoQ/YoY comparisons. It never
+annualizes quarterly EPS, subtracts cumulative EPS or uses closing shares as
+weighted-average diluted shares. Comparisons require matching bases and the same
+reported document perimeter; cross-document split/class equivalence is not inferred.
+An optional EPS-specific numerator/share reconciliation uses explicit scales and
+rounding intervals. Generic net income is not substituted. Conflicts retain the
+reported EPS, show the discrepancy and suppress dependent comparisons/multiples.
+A missing reconciliation is a local limitation, not a failed company.
+
+The author, reviewer and correction/check receive the same register. Eligible
+annual valuation inputs are filtered before authoring and checked again at
+compilation. Unspecified-dilution guidance remains captured but cannot fund a
+diluted-EPS multiple. Interim, basic and continuing-operations-only EPS are not
+annual total diluted EPS. Corporate actions absent from the collected sources
+remain an independent-review limitation. No model stage or paid retry is added.

@@ -79,7 +79,11 @@ def complete(value,bundle):
     support=value.get('analysis',{}).get('report_support',{}) if isinstance(value,dict) else {}
     valuation=support.get('valuation') if isinstance(support,dict) else None
     if not isinstance(valuation,dict) or set(valuation)!={'rows','gap','citations'} or valuation['rows']!=[]:return value,[]
-    available=inventory.build(bundle);proposal=unique_pair(available)
+    available=inventory.build(bundle)
+    if bundle.get('packet_inventory'):
+        from . import earnings_eps_contract
+        available=earnings_eps_contract.valuation_view(bundle,earnings_eps_contract.build(bundle))
+    proposal=unique_pair(available)
     if not proposal:return value,[]
     bound=inventory.resolve(proposal,bundle,available)
     result=deepcopy(value)

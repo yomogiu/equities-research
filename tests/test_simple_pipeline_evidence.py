@@ -176,7 +176,7 @@ class SourceParity(unittest.TestCase):
         packet={'version':'old','documents':[{'id':'fake','kind':'filing','start':0,'text':text}],
                 'document_scopes':[['D001',0,0,len(text)]], 'transcript_index':{},
                 'financial_inventory':{},'source_policy':''}
-        with patch.object(simple.content,'packet',return_value=packet):value=simple.packet({})
+        with patch.object(simple.content,'packet',return_value=packet),patch('research.earnings_eps_contract.build',return_value={'records':[]}):value=simple.packet({})
         self.assertIn('obligations mature',value['documents'][0]['text'])
         self.assertIn('Revenue 100 90',value['documents'][0]['text'])
         self.assertEqual(value['document_scopes'],[['D001',0,0,len(text)]])

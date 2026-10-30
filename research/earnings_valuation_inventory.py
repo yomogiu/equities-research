@@ -12,7 +12,7 @@ from . import financial_evidence as financial
 from . import earnings_runtime_common as storage
 
 EPS_CONCEPTS={'us-gaap:EarningsPerShareDiluted','us-gaap:EarningsPerShareBasicAndDiluted',
-              'us-gaap:IncomeLossFromContinuingOperationsPerDilutedShare','ifrs-full:DilutedEarningsLossPerShare'}
+              'ifrs-full:DilutedEarningsLossPerShare'}
 _CACHE={}
 
 def guidance_eps(text,source,prices):
@@ -47,7 +47,8 @@ def guidance_eps(text,source,prices):
         end=scope.end()+match.end();start=scope.start()
         row={'kind':'annual_guidance','symbol':symbol,'currency':currency,'value':str((low+high)/2),
              'low':str(low),'high':str(high),'fiscal_year':int(scope[1] or scope[2] or header[1]),
-             'guidance_date':read_date(header[2]).isoformat(),'basis':basis,'source_id':'transcript-source',
+             'guidance_date':read_date(header[2]).isoformat(),'basis':basis,'dilution':'diluted' if re.search(r'\bdiluted\b',match[0],re.I) else 'unspecified','months':12,
+             'security_binding':'ambiguous-depositary-or-class' if re.search(r'\bADRs?\b|\bADSs?\b|depositary|\bClass\s+[A-Z]\b',text[:10000],re.I) else 'matched-call-symbol-unambiguous-class','source_id':'transcript-source',
              'document_id':source['document_id'],'source_sha256':source['sha256'],'start':start,'end':end,
              'text':text[start:end],'period_start':None,'period_end':None,
              'notice':'Management full-year guidance, not realized annual EPS. Verify original accounting and share basis; quote and guidance dates differ.'}
@@ -157,6 +158,8 @@ def resolve(row,bundle,inventory=None):
         eps=[e for e in inventory['annual_eps'] if e['document_id']==source_ids[1][0]['document_id'] and e['period_start']==row['period_start'] and e['period_end']==row['period_end'] and financial._decimal(e['value'])==financial._decimal(row['eps']['token']) and e['currency']==row['eps']['currency'] and re.match(re.escape(e['symbol'])+r'(?:\s|$)',row['eps']['security'])]
     if len(prices)!=1 or len(eps)!=1:raise ValueError('Valuation selection must bind unique deterministic price and annual EPS observations')
     price,eps=prices[0],eps[0]
+    from . import earnings_eps_contract
+    earnings_eps_contract.validate_annual(eps,bundle)
     if price['symbol']!=eps['symbol'] or price['currency']!=eps['currency']:raise ValueError('Price and filed EPS security/currency differ')
     cutoff=eps['guidance_date'] if eps.get('kind')=='annual_guidance' else eps['period_end']
     if cutoff>price['date'] or financial._decimal(price['value'])<=0:raise ValueError('Positive dated price and previously reported annual earnings required')

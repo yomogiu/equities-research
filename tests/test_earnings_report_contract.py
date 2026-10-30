@@ -6,7 +6,7 @@ from research import earnings_report_contract as contract,earnings_valuation_inv
 class ReportContractTests(unittest.TestCase):
     def setUp(self):
         self.price={'id':'P-fake','symbol':'FAKE','currency':'USD','value':'48.00','date':'2041-01-02','source_id':'D001'}
-        self.eps={'id':'E-fake','symbol':'FAKE','currency':'USD','value':'2.00','period_start':'2040-01-01','period_end':'2040-12-31','source_id':'D001'}
+        self.eps={'concept':'us-gaap:EarningsPerShareDiluted','id':'E-fake','symbol':'FAKE','currency':'USD','value':'2.00','period_start':'2040-01-01','period_end':'2040-12-31','source_id':'D001'}
         self.analysis={'sections':{section:{'text':'Disclosed fictional constraint.'} for section,_ in contract.COVERAGE.values()}}
         self.support={'coverage':{key:{'status':'addressed','report_excerpt':'Disclosed fictional constraint.','reason':'Fictional disclosure.','citations':['D001']} for key in contract.COVERAGE},'valuation':{'rows':[{'price_id':'P-fake','eps_id':'E-fake','accounting_basis':'GAAP'}],'gap':'','citations':['D001']}}
         for name,value in [('load_bundle',{}),('_scopes',{'D001':{}})]:
